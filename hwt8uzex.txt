@@ -27,7 +27,7 @@ local LocalPlayer = Players.LocalPlayer
 local Library = {}
 
 Library.Flags = {}
-Library.Windows ="{}
+Library.Windows = {}
 
 local function normalize(source, map)
     local opts = {}
@@ -23282,7 +23282,7 @@ local Window = Library:CreateWindow({
 -- go through the new library, including restoring a minimized window.
 do
     local LogoGui = Instance.new("ScreenGui")
-    LogoGui.Name = "IzenLogoGui"
+    LogoGui.Name = "CybrionLogoGui"
     LogoGui.ResetOnSpawn = false
     LogoGui.DisplayOrder = 10000
     pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
