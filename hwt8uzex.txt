@@ -1,3 +1,5 @@
+local loadstring = loadstring or function(code) return function() return nil end end
+local getcustomasset = getcustomasset or function(path) return "rbxassetid://0" end
 local ProtectionConfig = {
     SecretKey = "2009",
     
