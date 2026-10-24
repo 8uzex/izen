@@ -9,7 +9,7 @@ local ProtectionConfig = {
 -- 👇 YOUR MAIN SCRIPT CODE STARTS HERE 👇
 -------------------------------------------------------------------------------
 
-print(ProtectionConfig.HubName .. " Loaded Successfully!")
+print(ProtectionConfig.HubName .. "izen Loaded Successfully!")
 
 local Library = (function()
 local TweenService = game:GetService("TweenService")
@@ -27,7 +27,7 @@ local LocalPlayer = Players.LocalPlayer
 local Library = {}
 
 Library.Flags = {}
-Library.Windows = {}
+Library.Windows = "}
 
 local function normalize(source, map)
     local opts = {}
@@ -419,11 +419,11 @@ pcall(function()
     if type(writefile) ~= "function" or typeof(getcustomasset) ~= "function" then
         return
     end
-    local folder = "CybrionAssets"
+    local folder = "izenAssets"
     if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(folder) then
         makefolder(folder)
     end
-    local path = folder .. "/CybrionLogo.png"
+    local path = folder .. "/izenLogo.png"
     local png = decodeBase64(EMBEDDED_LOGO)
     local fresh = type(isfile) == "function" and type(readfile) == "function" and isfile(path) and readfile(path) == png
     if not fresh then
@@ -19843,7 +19843,7 @@ return Library
 end)()
 
 --------------------------------------------------------------------------------
--- Cybrion application
+-- izen application
 --------------------------------------------------------------------------------
 
 local Players = game:GetService("Players")
@@ -19924,7 +19924,7 @@ local Config = {
     AutoEquipBestBait = false
 }
 
-local SAVE_FOLDER = "Cybrion"
+local SAVE_FOLDER = "izen"
 local SAVE_FILE = SAVE_FOLDER .. "/HeavyweighFishingConfig.json"
 
 local function SaveConfig()
@@ -19979,8 +19979,8 @@ task.spawn(function()
     local allow = true
     pcall(function()
         if isfile then
-            if isfile("Cybrion/HeavyweighFishingConfig.json") then
-                local dec = HttpService:JSONDecode(readfile("Cybrion/HeavyweighFishingConfig.json"))
+            if isfile("izen/HeavyweighFishingConfig.json") then
+                local dec = HttpService:JSONDecode(readfile("izen/HeavyweighFishingConfig.json"))
                 allow = (type(dec) == "table" and dec.AutoExecute == true)
             else
                 allow = false
@@ -21649,7 +21649,7 @@ local function clearPlayerESP()
         if char then
             local head = char:FindFirstChild("Head")
             if head then
-                local esp = head:FindFirstChild("CybrionESP")
+                local esp = head:FindFirstChild("izenESP")
                 if esp then esp:Destroy() end
             end
         end
@@ -21665,11 +21665,11 @@ local function updateESP()
                 local head = char:FindFirstChild("Head")
                 local hum = char:FindFirstChildOfClass("Humanoid")
                 if head and hum then
-                    local esp = head:FindFirstChild("CybrionESP")
+                    local esp = head:FindFirstChild("izenESP")
                     if hum.Health > 0 then
                         if not esp then
                             esp = Instance.new("BillboardGui")
-                            esp.Name = "CybrionESP"
+                            esp.Name = "izenESP"
                             esp.Adornee = head
                             esp.Size = UDim2.new(0, 200, 0, 25)
                             esp.StudsOffset = Vector3.new(0, 2.5, 0)
@@ -23240,27 +23240,27 @@ ApplyLightingSettings()
 
 -- Native window from the supplied UI library. The existing JSON config
 -- remains authoritative; the library's example/config-manager is not loaded.
--- Replace this placeholder with the real Cybrion Discord invite when it is available.
+-- Replace this placeholder with the real izen Discord invite when it is available.
 -- The Home tab exposes this URL and copies it when its link button is pressed.
-local DISCORD_INVITE = "https://discord.gg/pzVJV34AH8"
+local DISCORD_INVITE = "https://discord.gg/zaEv3msCw"
 
 local Window = Library:CreateWindow({
-    Name = "Cybrion",
+    Name = "izen",
     Subtitle = "Heavyweigh Fishing",
     Icon = Library.Assets.Logo,
     Size = UDim2.fromOffset(640, 460),
     MinSize = Vector2.new(480, 360),
     SidebarWidth = 170,
-    DefaultTheme = "Cybrion",
+    DefaultTheme = "izen",
     ToggleUIKeybind = Enum.KeyCode.LeftControl,
     ConfigurationSaving = { Enabled = false, FolderName = SAVE_FOLDER },
     SaveSize = false,
     Home = {
         Name = "Home",
-        Title = "Cybrion",
+        Title = "izen",
         Desc = "Heavyweigh Fishing",
         Discord = DISCORD_INVITE,
-        DiscordTitle = "Cybrion Discord",
+        DiscordTitle = "izen Discord",
         DiscordIcon = "message-circle",
         Features = false,
     },
@@ -23278,11 +23278,11 @@ local Window = Library:CreateWindow({
     OpenButton = false
 })
 
--- Keep the draggable Cybrion logo; all window visibility changes
+-- Keep the draggable izen logo; all window visibility changes
 -- go through the new library, including restoring a minimized window.
 do
     local LogoGui = Instance.new("ScreenGui")
-    LogoGui.Name = "CybrionLogoGui"
+    LogoGui.Name = "izenLogoGui"
     LogoGui.ResetOnSpawn = false
     LogoGui.DisplayOrder = 10000
     pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
