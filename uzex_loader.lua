@@ -4,7 +4,7 @@
 --   loadstring(game:HttpGet("https://link-toi-file-nay"))()
 
 ---------------- CẤU HÌNH (chủ bot sửa) ----------------
-local API_URL        = "https://ea0d59df28efd2.lhr.life/verify?key=abc&hwid=abc"   -- địa chỉ công khai của bot (API_PORT)
+local API_URL        = "https://equipment-barrel-hardcover.ngrok-free.dev"   -- địa chỉ công khai của bot (API_PORT)
 local SCRIPT_PREMIUM = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/uzex_loader.lua"
 local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/uzex_loader.lua"
 ---------------------------------------------------------
