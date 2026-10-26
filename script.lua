@@ -5,8 +5,8 @@
 
 ---------------- CẤU HÌNH (chủ bot sửa) ----------------
 local API_URL        = "https://equipment-barrel-hardcover.ngrok-free.dev"   -- link ngrok cố định của bot
-local SCRIPT_PREMIUM = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/uzexhub.lua"
-local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/uzexhub.lua"
+local SCRIPT_PREMIUM = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
+local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
 ---------------------------------------------------------
 
 local HttpService = game:GetService("HttpService")
