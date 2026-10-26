@@ -420,6 +420,68 @@ function Tab:CreateParagraph(o)
 end
 Tab.CreateLabel = Tab.CreateParagraph
 
+function Tab:CreateStatGrid(o)
+    o = opt(o)
+    local items = o.Items or {}
+    local columns = math.max(1, tonumber(o.Columns) or 3)
+    local grid = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+    })
+    new("UIGridLayout", {
+        CellSize = UDim2.new(1 / columns, -math.ceil(8 * (columns - 1) / columns), 0, 62),
+        CellPadding = UDim2.fromOffset(8, 8),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, grid)
+
+    local valueLabels = {}
+    for index, item in ipairs(items) do
+        local card = new("Frame", {
+            BackgroundColor3 = Theme.Surface,
+            BorderSizePixel = 0,
+            LayoutOrder = index,
+        }, grid)
+        round(card, 10)
+        outline(card, Theme.Stroke, 1, 0.4)
+        local bar = new("Frame", {
+            Position = UDim2.new(0, 12, 0, 10),
+            Size = UDim2.fromOffset(18, 2),
+            BackgroundColor3 = item.Color or Theme.Accent,
+            BorderSizePixel = 0,
+        }, card)
+        round(bar, 1)
+        valueLabels[item.Key] = text(card, {
+            Position = UDim2.new(0, 12, 0, 18),
+            Size = UDim2.new(1, -24, 0, 22),
+            Font = FONT_BOLD,
+            TextSize = 15,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Text = tostring(item.Value or "-"),
+        })
+        text(card, {
+            Position = UDim2.new(0, 12, 0, 40),
+            Size = UDim2.new(1, -24, 0, 14),
+            TextSize = 10,
+            TextColor3 = Theme.Muted,
+            Text = string.upper(tostring(item.Label or item.Key)),
+        })
+    end
+    self:_add(grid)
+
+    local el = {}
+    function el:Set(key, value)
+        local label = valueLabels[key]
+        if label then
+            local s = tostring(value)
+            if label.Text ~= s then
+                label.Text = s
+            end
+        end
+    end
+    return register(o, el)
+end
+
 function Tab:CreateButton(o)
     o = opt(o)
     local desc = descOf(o)
@@ -1374,6 +1436,10 @@ function Library:CreateWindow(o)
     local home = o.Home
     if type(home) == "table" then
         local tab = window:CreateTab({ Name = home.Name or "Home" })
+        if type(home.Stats) == "table" then
+            tab:CreateSection(tostring(home.StatsTitle or "Session"))
+            window.Stats = tab:CreateStatGrid({ Items = home.Stats, Columns = 3 })
+        end
         tab:CreateParagraph({
             Title = tostring(home.Title or o.Name or ""),
             Content = tostring(home.Desc or o.Subtitle or ""),
@@ -1456,6 +1522,7 @@ local Config = {
     AutoSkill = false,
     SkillOrder = {"Z", "X", "C", "V"},
     AutoSell = false,
+    AutoSellMethod = "Spam",
     SellDelay = 1,
     SelectedBuyBait = "",
     BuyBaitAmount = 1,
@@ -1492,11 +1559,15 @@ local Config = {
     WebhookUrl = "",
     WebhookInterval = 0,
     WebhookOnCatch = false,
+    HideId = true,
+    FakeNameEnabled = false,
+    FakeName = "Player",
+    FakeIdEnabled = false,
+    FakeId = "",
     AutoFarmIsland = false,
     SelectedFarmIsland = "Beginning Isle",
     AutoTicketQuest = false,
     TicketQuestMode = "Hard",
-    AutoZengTianguoQuest = false,
     AutoEquipBestBait = false
 }
 
@@ -3192,10 +3263,14 @@ task.spawn(function()
                     local char = cachedChar
                     if char then
                         if char:GetAttribute("Type") ~= "Fishing Rod" then
-                            lastCastTry = now
-                            pcall(function()
-                                ToggleHotbar:InvokeServer("1")
-                            end)
+                            -- Auto Cast no longer equips the rod by itself (equip it manually).
+                            -- Auto Farm Island still needs the rod, so it keeps equipping it.
+                            if Config.AutoFarmIsland then
+                                lastCastTry = now
+                                pcall(function()
+                                    ToggleHotbar:InvokeServer("1")
+                                end)
+                            end
                         elseif not char:GetAttribute("Fishing") then
                             local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
                             if hrp then
@@ -3356,18 +3431,167 @@ local function DoBuyBait(baitName, amount)
     end
 end
 
-task.spawn(function()
-    while task.wait(0.8) do
-        if Config.AutoSell then
-            local delaySec = math.clamp(tonumber(Config.SellDelay) or 1, 1, 10) * 60
-            local now = os.clock()
-            if now - lastSellTime >= delaySec then
-                lastSellTime = now
-                pcall(function()
-                    SellFish:FireServer("All")
-                end)
+-------------------------------------------------------------------------------
+-- Auto Sell Fish
+--   Spam      : sells all fish again and again
+--   When full : sells all fish once the fish storage is full
+-------------------------------------------------------------------------------
+do
+    local SPAM_INTERVAL = 0.5
+    local FULL_COOLDOWN = 2
+    local FALLBACK_INTERVAL = 60
+    local STORAGE_WORDS = { "inventory", "backpack", "bag", "storage", "capacity" }
+
+    local counterLabel = nil
+    local lastCounterScan = 0
+    local lastMessageScan = 0
+    local messageSeen = false
+    local warnedFallback = false
+
+    local function SellAllFish()
+        lastSellTime = os.clock()
+        pcall(function()
+            SellFish:FireServer("All")
+        end)
+    end
+
+    local function ParseFraction(str)
+        local a, b = string.match(tostring(str or ""), "([%d%.,]+)%s*/%s*([%d%.,]+)")
+        a = tonumber((tostring(a or ""):gsub(",", "")))
+        b = tonumber((tostring(b or ""):gsub(",", "")))
+        if a and b and b > 0 then
+            return a, b
+        end
+        return nil
+    end
+
+    local function HasStorageWord(str)
+        str = string.lower(tostring(str or ""))
+        for _, w in ipairs(STORAGE_WORDS) do
+            if string.find(str, w, 1, true) then
+                return true
             end
         end
+        return false
+    end
+
+    local function IsShown(obj)
+        local p = obj
+        while p do
+            if p:IsA("GuiObject") and not p.Visible then
+                return false
+            end
+            if p:IsA("ScreenGui") and not p.Enabled then
+                return false
+            end
+            p = p.Parent
+        end
+        return true
+    end
+
+    local function InStorageGui(obj, root)
+        local p, depth = obj, 0
+        while p and p ~= root and depth < 6 do
+            if HasStorageWord(p.Name) then
+                return true
+            end
+            p = p.Parent
+            depth = depth + 1
+        end
+        return false
+    end
+
+    -- a label such as "45/50" that sits inside the inventory / backpack / storage UI
+    local function FindCounter(playerGui)
+        for _, d in ipairs(playerGui:GetDescendants()) do
+            if (d:IsA("TextLabel") or d:IsA("TextButton")) and d.Text ~= "" and ParseFraction(d.Text)
+                and InStorageGui(d, playerGui) and not (FishingGui and d:IsDescendantOf(FishingGui)) then
+                return d
+            end
+        end
+        return nil
+    end
+
+    -- an on-screen message such as "Inventory is full"
+    local function FullMessageVisible(playerGui)
+        for _, d in ipairs(playerGui:GetDescendants()) do
+            if d:IsA("TextLabel") and d.Text ~= "" and d.TextTransparency < 0.9 then
+                local t = string.lower(d.Text)
+                if string.find(t, "full", 1, true) and HasStorageWord(t) and IsShown(d) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    -- true = full, false = not full, nil = cannot tell
+    local function IsFishStorageFull()
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then
+            return nil
+        end
+        local now = os.clock()
+
+        if not (counterLabel and counterLabel.Parent) and now - lastCounterScan >= 5 then
+            lastCounterScan = now
+            counterLabel = FindCounter(playerGui)
+        end
+        if counterLabel and counterLabel.Parent then
+            local cur, cap = ParseFraction(counterLabel.Text)
+            if cur and cap then
+                return cur >= cap
+            end
+        end
+
+        if now - lastMessageScan >= 1 then
+            lastMessageScan = now
+            messageSeen = FullMessageVisible(playerGui)
+        end
+        if messageSeen then
+            return true
+        end
+        return nil
+    end
+
+    task.spawn(function()
+        while task.wait(0.5) do
+            if Config.AutoSell then
+                local now = os.clock()
+                if Config.AutoSellMethod == "When full" then
+                    if now - lastSellTime >= FULL_COOLDOWN then
+                        local ok, full = pcall(IsFishStorageFull)
+                        if not ok then
+                            full = nil
+                        end
+                        if full == true then
+                            SellAllFish()
+                        elseif full == nil then
+                            -- could not read the storage at all: sell on a timer so fish never pile up
+                            if not warnedFallback then
+                                warnedFallback = true
+                                Library:Notify({
+                                    Title = "Auto Sell Fish",
+                                    Content = "Couldn't read the capacity counter, so this method sells every 60s instead.",
+                                    Type = "warning",
+                                    Duration = 6,
+                                })
+                            end
+                            if now - lastSellTime >= FALLBACK_INTERVAL then
+                                SellAllFish()
+                            end
+                        end
+                    end
+                elseif now - lastSellTime >= SPAM_INTERVAL then
+                    SellAllFish()
+                end
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.8) do
         if Config.AutoBuyBait and Config.SelectedBuyBait ~= "" then
             local delaySec = math.max(1, tonumber(Config.BuyBaitDelay) or 1) * 60
             local now = os.clock()
@@ -4164,9 +4388,6 @@ task.spawn(function()
         if Config.AutoTicketQuest then
             StepSmartTicketQuest()
         end
-        if Config.AutoZengTianguoQuest then
-            StepSmartZengTianguoQuest()
-        end
         if Config.AutoEquipBestBait then
             StepAutoEquipBestBait()
         end
@@ -4878,6 +5099,21 @@ local Window = Library:CreateWindow({
         DiscordTitle = "Uzex Hub Discord",
         DiscordIcon = "message-circle",
         Features = false,
+        Stats = {
+            { Key = "Level", Label = "Level", Value = "-", Color = Color3.fromRGB(206, 172, 108) },
+            { Key = "Balance", Label = "Balance", Value = "-", Color = Color3.fromRGB(130, 172, 178) },
+            { Key = "Session", Label = "Session", Value = "-", Color = Color3.fromRGB(150, 182, 150) },
+            { Key = "Rod", Label = "Rod", Value = "-", Color = Color3.fromRGB(240, 212, 60) },
+            { Key = "Crystal", Label = "Crystal", Value = "-", Color = Color3.fromRGB(92, 190, 240) },
+            { Key = "Essence", Label = "Essence", Value = "-", Color = Color3.fromRGB(240, 100, 190) },
+            { Key = "Bait", Label = "Bait", Value = "-", Color = Color3.fromRGB(120, 200, 120) },
+            { Key = "FishCaught", Label = "Fish Caught", Value = "-", Color = Color3.fromRGB(212, 170, 72) },
+            { Key = "Ticket", Label = "Ticket", Value = "-", Color = Color3.fromRGB(172, 132, 222) },
+            { Key = "TraitReroll", Label = "Trait Reroll", Value = "-", Color = Color3.fromRGB(232, 132, 132) },
+            { Key = "HeaviestFish", Label = "Heaviest Fish", Value = "-", Color = Color3.fromRGB(236, 166, 50) },
+            { Key = "BaseHP", Label = "Base HP", Value = "-", Color = Color3.fromRGB(226, 90, 90) },
+        },
+        StatsTitle = "Session",
     },
     Backdrop = {
         Weather = "Snow",
@@ -5043,18 +5279,6 @@ Tabs.Main:CreateDropdown({
     AllowNone = false,
     Callback = function(Value)
         Config.TicketQuestMode = Value or "Hard"
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateSection("Zeng Tianguo Quest")
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoZengTianguoQuestToggle",
-    Name = "Auto Claim Zeng Tianguo Quest",
-    CurrentValue = Config.AutoZengTianguoQuest,
-    Callback = function(Value)
-        Config.AutoZengTianguoQuest = Value
         SaveConfig()
     end
 })
@@ -5542,7 +5766,7 @@ Tabs.Shop:CreateSection("Selling")
 
 Tabs.Shop:CreateToggle({
     Flag = "AutoSellToggle",
-    Name = "Auto Sell All",
+    Name = "Auto Sell Fish",
     CurrentValue = Config.AutoSell,
     Callback = function(Value)
         Config.AutoSell = Value
@@ -5553,30 +5777,16 @@ Tabs.Shop:CreateToggle({
     end
 })
 
-Tabs.Shop:CreateInput({
-    Flag = "AutoSellDelayInput",
-    Name = "Sell Delay Min",
-    CurrentValue = tostring(Config.SellDelay or 1),
-    Numeric = true,
-    Finished = false,
-    Placeholder = "1",
+Tabs.Shop:CreateDropdown({
+    Flag = "AutoSellMethodDropdown",
+    Name = "Method Sell #1",
+    Options = {"Spam", "When full"},
+    CurrentOption = Config.AutoSellMethod or "Spam",
+    MultipleOptions = false,
+    AllowNone = false,
     Callback = function(Value)
-        Config.SellDelay = math.clamp(math.floor(tonumber(Value) or 1), 1, 60)
+        Config.AutoSellMethod = Value or "Spam"
         SaveConfig()
-    end
-})
-
-Tabs.Shop:CreateButton({
-    Name = "Sell All Fish",
-    Callback = function()
-        SellFish:FireServer("All")
-    end
-})
-
-Tabs.Shop:CreateButton({
-    Name = "Sell One Fish",
-    Callback = function()
-        SellFish:FireServer("One")
     end
 })
 
@@ -6146,6 +6356,8 @@ do
                     return
                 end
                 fishCaught = fishCaught + 1
+                Library.Session = Library.Session or {}
+                Library.Session.fish = fishCaught
                 lastFish = tostring(fishName or "")
                 if Config.WebhookOnCatch then
                     task.spawn(
@@ -6385,6 +6597,451 @@ do
                     Duration = 4,
                 })
             end)
+        end
+    })
+end
+
+-------------------------------------------------------------------------------
+-- Privacy: hide or fake the ID number shown in the top-right corner, and show
+-- a fake name. Everything here is client-side: only your own screen changes.
+-------------------------------------------------------------------------------
+do
+    local CoreGui = game:GetService("CoreGui")
+    local realName = LocalPlayer.Name
+    local realDisplay = LocalPlayer.DisplayName
+    local realId = tostring(LocalPlayer.UserId)
+
+    local function digitsOnly(text)
+        return (tostring(text or ""):gsub("%D", ""))
+    end
+
+    -- A fake ID is generated once and saved, so it stays the same between runs.
+    if digitsOnly(Config.FakeId) == "" then
+        local digits = { "1" }
+        for _ = 1, 10 do
+            digits[#digits + 1] = tostring(math.random(0, 9))
+        end
+        Config.FakeId = table.concat(digits)
+        SaveConfig()
+    end
+
+    local function fakeName()
+        local text = tostring(Config.FakeName or "")
+        return text ~= "" and text or "Player"
+    end
+
+    local function fakeId()
+        local digits = digitsOnly(Config.FakeId)
+        return digits ~= "" and digits or "10000000001"
+    end
+
+    local function replacePlain(text, target, replacement)
+        local out, from = {}, 1
+        while true do
+            local s, e = string.find(text, target, from, true)
+            if not s then
+                break
+            end
+            out[#out + 1] = string.sub(text, from, s - 1)
+            out[#out + 1] = replacement
+            from = e + 1
+        end
+        out[#out + 1] = string.sub(text, from)
+        return table.concat(out)
+    end
+
+    -- Longest name first so "Bob123" is not half-replaced by "Bob".
+    local names = { realName, realDisplay }
+    if #realDisplay > #realName then
+        names = { realDisplay, realName }
+    end
+
+    local function disguise(text)
+        local out = text
+        if Config.FakeNameEnabled then
+            local fake = fakeName()
+            for _, name in ipairs(names) do
+                -- Skipping names that appear inside the fake one keeps a label from growing forever.
+                if name ~= "" and name ~= fake and not string.find(fake, name, 1, true) then
+                    out = replacePlain(out, name, fake)
+                end
+            end
+        end
+        if Config.FakeIdEnabled then
+            local fake = fakeId()
+            if realId ~= fake and not string.find(fake, realId, 1, true) then
+                out = replacePlain(out, realId, fake)
+            end
+        end
+        return out
+    end
+
+    local tracked = setmetatable({}, { __mode = "k" })   -- label -> { original, shown }
+    local hidden = setmetatable({}, { __mode = "k" })    -- label -> its Visible before we hid it
+    local watched = setmetatable({}, { __mode = "k" })
+    local roots = setmetatable({}, { __mode = "k" })
+
+    local function refresh(label)
+        local entry = tracked[label]
+        local source = label.Text
+        if entry and source == entry.shown then
+            source = entry.original
+        end
+
+        -- 1) hide any label that shows your real ID
+        local hasId = string.find(source, realId, 1, true) ~= nil
+        if Config.HideId and hasId then
+            if hidden[label] == nil then
+                hidden[label] = label.Visible
+            end
+            if label.Visible then
+                label.Visible = false
+            end
+        elseif hidden[label] ~= nil then
+            label.Visible = hidden[label]
+            hidden[label] = nil
+        end
+
+        -- 2) swap your name / ID for the fake ones
+        local want = source
+        if Config.FakeNameEnabled or Config.FakeIdEnabled then
+            want = disguise(source)
+        end
+        if want ~= source then
+            if entry and entry.original == source then
+                entry.shown = want
+            else
+                tracked[label] = { original = source, shown = want }
+            end
+            if label.Text ~= want then
+                label.Text = want
+            end
+        else
+            if entry and label.Text == entry.shown then
+                label.Text = entry.original
+            end
+            tracked[label] = nil
+        end
+    end
+
+    local function isOurs(inst)
+        return inst:FindFirstAncestor("UzexHubUI") ~= nil or inst:FindFirstAncestor("UzexKeyPrompt") ~= nil
+    end
+
+    local function watch(inst)
+        if watched[inst] or not (inst:IsA("TextLabel") or inst:IsA("TextButton")) or isOurs(inst) then
+            return
+        end
+        watched[inst] = true
+        refresh(inst)
+        inst:GetPropertyChangedSignal("Text"):Connect(function()
+            refresh(inst)
+        end)
+        -- The game may show a hidden label again; keep it hidden.
+        inst:GetPropertyChangedSignal("Visible"):Connect(function()
+            if hidden[inst] ~= nil and inst.Visible then
+                refresh(inst)
+            end
+        end)
+    end
+
+    local function watchRoot(root)
+        if not root or roots[root] then
+            return
+        end
+        roots[root] = true
+        for _, descendant in ipairs(root:GetDescendants()) do
+            watch(descendant)
+        end
+        root.DescendantAdded:Connect(watch)
+    end
+
+    ---------------------------------------------------------------- fake display name above the head
+    local function applyDisplay(char)
+        local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            pcall(function()
+                humanoid.DisplayName = Config.FakeNameEnabled and fakeName() or realDisplay
+            end)
+        end
+    end
+
+    local function applyAll()
+        for label in pairs(watched) do
+            if label.Parent then
+                refresh(label)
+            end
+        end
+        applyDisplay(LocalPlayer.Character)
+    end
+
+    ---------------------------------------------------------------- start watching
+    pcall(function()
+        watchRoot(LocalPlayer:WaitForChild("PlayerGui"))
+    end)
+    task.spawn(function()
+        pcall(function()
+            watchRoot(CoreGui:WaitForChild("PlayerList", 60))
+        end)
+    end)
+    task.spawn(function()
+        pcall(function()
+            watchRoot(CoreGui:WaitForChild("ExperienceChat", 60))
+        end)
+    end)
+    local function onCharacter(char)
+        watchRoot(char)
+        task.wait(0.5)
+        applyDisplay(char)
+    end
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        task.spawn(onCharacter, char)
+    end)
+    if LocalPlayer.Character then
+        task.spawn(onCharacter, LocalPlayer.Character)
+    end
+
+    ---------------------------------------------------------------- settings UI
+    Tabs.Settings:CreateSection("Privacy")
+
+    Tabs.Settings:CreateToggle({
+        Flag = "HideIdToggle",
+        Name = "Hide My ID (Top Right)",
+        Description = "Hides the number that shows your user ID",
+        CurrentValue = Config.HideId,
+        Callback = function(Value)
+            Config.HideId = Value
+            SaveConfig()
+            applyAll()
+        end
+    })
+
+    Tabs.Settings:CreateToggle({
+        Flag = "FakeIdToggle",
+        Name = "Fake ID",
+        Description = "Shows another number instead of your ID (turn Hide off to see it)",
+        CurrentValue = Config.FakeIdEnabled,
+        Callback = function(Value)
+            Config.FakeIdEnabled = Value
+            SaveConfig()
+            applyAll()
+        end
+    })
+
+    Tabs.Settings:CreateInput({
+        Flag = "FakeIdInput",
+        Name = "Fake ID Number",
+        CurrentValue = fakeId(),
+        PlaceholderText = "12345678901",
+        Numeric = true,
+        Callback = function(Value)
+            local digits = string.sub(digitsOnly(Value), 1, 16)
+            if digits ~= "" then
+                Config.FakeId = digits
+                SaveConfig()
+                applyAll()
+            end
+        end
+    })
+
+    Tabs.Settings:CreateToggle({
+        Flag = "FakeNameToggle",
+        Name = "Fake Name",
+        Description = "Shows another name for you on your own screen",
+        CurrentValue = Config.FakeNameEnabled,
+        Callback = function(Value)
+            Config.FakeNameEnabled = Value
+            SaveConfig()
+            applyAll()
+        end
+    })
+
+    Tabs.Settings:CreateInput({
+        Flag = "FakeNameInput",
+        Name = "Fake Name Text",
+        CurrentValue = Config.FakeName,
+        PlaceholderText = "Player",
+        Callback = function(Value)
+            local text = (tostring(Value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+            Config.FakeName = string.sub(text, 1, 20)
+            SaveConfig()
+            applyAll()
+        end
+    })
+end
+
+-------------------------------------------------------------------------------
+-- Home: live Session panel (level, balance, rod, bait, fish ...)
+-------------------------------------------------------------------------------
+do
+    local sessionStart = os.time()
+    local values = {}        -- cached ValueBase objects of the player data, shallow ones first
+    local lastScan = -1e9
+
+    local function norm(name)
+        return (string.lower(tostring(name)):gsub("[%s_%-]", ""))
+    end
+
+    local function scan()
+        lastScan = os.clock()
+        local list = {}
+        if PlayerData then
+            for _, d in ipairs(PlayerData:GetDescendants()) do
+                if d:IsA("ValueBase") then
+                    local depth, p = 0, d.Parent
+                    while p and p ~= PlayerData do
+                        depth = depth + 1
+                        p = p.Parent
+                    end
+                    list[#list + 1] = { inst = d, depth = depth, name = norm(d.Name) }
+                end
+            end
+        end
+        table.sort(list, function(a, b)
+            return a.depth < b.depth
+        end)
+        values = list
+    end
+
+    local function resolve(keys, exclude)
+        for _, key in ipairs(keys) do
+            for _, v in ipairs(values) do
+                if v.name == key and v.inst.Parent then
+                    return v.inst
+                end
+            end
+        end
+        for _, key in ipairs(keys) do
+            for _, v in ipairs(values) do
+                if v.inst.Parent and string.find(v.name, key, 1, true)
+                    and not (exclude and string.find(v.name, exclude, 1, true)) then
+                    return v.inst
+                end
+            end
+        end
+        return nil
+    end
+
+    local function fmtNumber(n)
+        n = tonumber(n)
+        if not n then
+            return nil
+        end
+        if n ~= math.floor(n) then
+            return string.format("%.1f", n)
+        end
+        local s, k = string.format("%d", n), nil
+        repeat
+            s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+        until k == 0
+        return s
+    end
+
+    local function fmtTime(seconds)
+        return string.format("%02d:%02d:%02d", seconds // 3600, (seconds % 3600) // 60, seconds % 60)
+    end
+
+    local STATS = {
+        { key = "Level", keys = { "level" } },
+        { key = "Balance", keys = { "cash", "money", "balance", "coins", "gold" } },
+        { key = "Crystal", keys = { "crystals", "crystal" } },
+        { key = "Essence", keys = { "essence" } },
+        { key = "Ticket", keys = { "tickets", "ticket" }, exclude = "quest" },
+        { key = "TraitReroll", keys = { "traitrerolls", "traitreroll", "reroll" } },
+        { key = "FishCaught", keys = { "fishcaught", "totalfishcaught", "caught", "fishcount" } },
+        { key = "HeaviestFish", keys = { "heaviestfish", "heaviest", "biggestfish", "maxfishweight" } },
+        { key = "BaseHP", keys = { "basehp", "basehealth" } },
+    }
+
+    local function readBait()
+        local hotbar = PlayerData and PlayerData:FindFirstChild("Hotbar")
+        local baitInfo = Info and Info:FindFirstChild("Bait")
+        if hotbar then
+            for _, slot in ipairs(hotbar:GetChildren()) do
+                local nameValue = slot:FindFirstChild("ValueName")
+                local name = nameValue and tostring(nameValue.Value) or ""
+                if name ~= "" and ((baitInfo and baitInfo:FindFirstChild(name)) or string.find(string.lower(name), "bait", 1, true)) then
+                    local qty = slot:FindFirstChild("Quantity")
+                    local count = qty and fmtNumber(qty.Value)
+                    return count and (name .. " x" .. count) or name
+                end
+            end
+        end
+        local equipped = PlayerData and (PlayerData:FindFirstChild("EquippedBait") or PlayerData:FindFirstChild("CurrentBait"))
+        if equipped and tostring(equipped.Value) ~= "" then
+            return tostring(equipped.Value)
+        end
+        return "None"
+    end
+
+    local function update()
+        local stats = Window.Stats
+        if not stats then
+            return
+        end
+        if os.clock() - lastScan > 20 then
+            scan()
+        end
+
+        stats:Set("Session", fmtTime(os.time() - sessionStart))
+
+        for _, def in ipairs(STATS) do
+            local inst = resolve(def.keys, def.exclude)
+            local shown = "-"
+            if inst then
+                shown = fmtNumber(inst.Value) or tostring(inst.Value)
+            end
+            stats:Set(def.key, shown)
+        end
+
+        -- fall-backs
+        local session = Library.Session
+        if session and session.fish and not resolve(STATS[7].keys) then
+            stats:Set("FishCaught", fmtNumber(session.fish))
+        end
+        if not resolve(STATS[9].keys) then
+            local char = LocalPlayer.Character
+            local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                stats:Set("BaseHP", fmtNumber(humanoid.MaxHealth))
+            end
+        end
+
+        local rod = PlayerData and PlayerData:FindFirstChild("FishingRod")
+        stats:Set("Rod", (rod and tostring(rod.Value) ~= "") and tostring(rod.Value) or "None")
+        stats:Set("Bait", readBait())
+    end
+
+    task.spawn(function()
+        while true do
+            pcall(update)
+            task.wait(1)
+        end
+    end)
+
+    -- Helps match the panel to this game: copies every stat name the script can see.
+    Tabs.Settings:CreateButton({
+        Name = "Copy Player Data Names",
+        Description = "For support: copies the stat names found in your game data",
+        Callback = function()
+            scan()
+            local lines = {}
+            for _, v in ipairs(values) do
+                if v.depth <= 2 then
+                    lines[#lines + 1] = v.inst:GetFullName():gsub("^.-%.Data%.%d+%.", "") .. " = " .. tostring(v.inst.Value)
+                end
+            end
+            local dump = table.concat(lines, "\n")
+            if #dump > 6000 then
+                dump = string.sub(dump, 1, 6000)
+            end
+            local copied = type(setclipboard) == "function" and pcall(setclipboard, dump)
+            Library:Notify({
+                Title = "Player Data",
+                Content = copied and ("Copied " .. #lines .. " names to the clipboard.") or "Could not copy to the clipboard.",
+                Type = copied and "success" or "error",
+                Duration = 4,
+            })
         end
     })
 end
