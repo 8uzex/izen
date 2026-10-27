@@ -2672,12 +2672,9 @@ end
 
 -- returns isBoss, isSecret, shownName for the fish currently on the line
 function UzexFilter.Classify()
-    local isBoss, isSecret, shown = false, false, ""
+    local isBoss, isSecret, shown, known = false, false, "", false
     pcall(function()
         local names = {}
-        if BossFightBar and BossFightBar.Parent and BossFightBar.Visible then
-            isBoss = true
-        end
         local fishId = LocalPlayer:GetAttribute("FishID")
         local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(tostring(fishId)) or nil
         if fishObj then
@@ -2696,10 +2693,6 @@ function UzexFilter.Classify()
                     if lk == "secret" or lk == "issecret" then isSecret = true end
                 end
             end
-            if fishObj:FindFirstChild(LocalPlayer.UserId .. "_PlayerHealth")
-                or fishObj:GetAttribute("FinalPhase") ~= nil then
-                isBoss = true
-            end
         end
         local pb = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
         if pb then
@@ -2716,9 +2709,10 @@ function UzexFilter.Classify()
                 local data = UzexFishData(clean)
                 if data then
                     shown = clean
+                    known = true
                     if data.Boss == true then isBoss = true end
-                    if data.Secret == true or data.Rarity == "Secret"
-                        or (data.Boss == true and (tonumber(data.Chance) or 100) <= 1) then
+                    -- secret only when the game says so (no guessing from drop chance)
+                    if data.Secret == true or data.Rarity == "Secret" then
                         isSecret = true
                     end
                     if type(data.Rarity) == "string" and string.lower(data.Rarity) == "boss" then
@@ -2733,7 +2727,7 @@ function UzexFilter.Classify()
             end
         end
     end)
-    return isBoss, isSecret, shown
+    return isBoss, isSecret, shown, known
 end
 
 -- Drop the rod (cancels a normal fish), equip it again, then cast
@@ -2741,20 +2735,36 @@ function UzexFilter.Recycle()
     if UzexFilter.Busy then return end
     UzexFilter.Busy = true
     task.spawn(function()
-        pcall(function()
-            ToggleHotbar:InvokeServer("1")
-        end)
-        task.wait(0.4)
-        local char = LocalPlayer.Character
-        if char and char:GetAttribute("Type") ~= "Fishing Rod" then
+        local function holdingRod()
+            local c = LocalPlayer.Character
+            return c and c:GetAttribute("Type") == "Fishing Rod"
+        end
+        -- drop the rod (cancels the normal fish)
+        if holdingRod() then
             pcall(function()
                 ToggleHotbar:InvokeServer("1")
             end)
-            task.wait(0.3)
+            local t = 0
+            while holdingRod() and t < 0.6 do
+                task.wait(0.03)
+                t = t + 0.03
+            end
         end
-        char = LocalPlayer.Character
+        -- equip it again right away
+        if not holdingRod() then
+            pcall(function()
+                ToggleHotbar:InvokeServer("1")
+            end)
+            local t = 0
+            while not holdingRod() and t < 0.6 do
+                task.wait(0.03)
+                t = t + 0.03
+            end
+        end
+        -- cast
+        local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp and char:GetAttribute("Type") == "Fishing Rod" and not char:GetAttribute("Fishing") then
+        if hrp and holdingRod() and not char:GetAttribute("Fishing") then
             pcall(function()
                 FishingEvent:FireServer(hrp.CFrame)
             end)
@@ -3369,6 +3379,7 @@ task.spawn(function()
     local fightAllowed = false
     local fightStart = nil
     local cancelStage = 0
+    local fightKey = nil
     while task.wait(0.08) do
         local now = os.clock()
         RefreshGuiCache()
@@ -3380,47 +3391,51 @@ task.spawn(function()
         -- Fish filter: only fight Boss / Secret Boss fish, drop every other fish and recast
         local filterOn = (Config.FilterBossFish or Config.FilterSecretFish)
             and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
-        if filterOn and isMinigame then
-            if not fightStart then
+        local curFishId = LocalPlayer:GetAttribute("FishID")
+        if filterOn and (isMinigame or curFishId ~= nil) then
+            -- every new fish on the line starts a new decision (decided as soon as the fish is known)
+            local key = tostring(curFishId or "gui")
+            if key ~= fightKey then
+                fightKey = key
                 fightStart = now
+                fightAllowed = false
                 cancelStage = 0
             end
-            if not fightAllowed then
-                local isBoss, isSecret, shown = UzexFilter.Classify()
-                if (Config.FilterBossFish and (isBoss or isSecret)) or (Config.FilterSecretFish and isSecret) then
+            if not fightAllowed and cancelStage == 0 then
+                local isBoss, isSecret, shown, known = UzexFilter.Classify()
+                local waited = now - fightStart
+                if (Config.FilterBossFish and isBoss and not isSecret) or (Config.FilterSecretFish and isSecret) then
                     fightAllowed = true
                     pcall(function()
                         Library:Notify({
                             Title = "Fish Filter",
-                            Content = "Found: " .. (shown ~= "" and shown or "boss fish"),
+                            Content = "Found: " .. (shown ~= "" and shown or "boss fish") .. (isSecret and " (secret)" or " (boss)"),
                             Duration = 4,
                         })
                     end)
-                else
-                    local waited = now - fightStart
-                    if waited > 1.5 and cancelStage == 0 then
-                        cancelStage = 1
-                        if now - UzexFilter.LastNotify > 10 then
-                            UzexFilter.LastNotify = now
-                            pcall(function()
-                                Library:Notify({
-                                    Title = "Fish Filter",
-                                    Content = "Skipped: " .. (shown ~= "" and shown or "unknown fish"),
-                                    Duration = 2,
-                                })
-                            end)
-                        end
-                        UzexFilter.Recycle()
-                    elseif waited > 7 and cancelStage == 1 then
-                        cancelStage = 2
-                        UzexFilter.Recycle()
+                elseif (known and waited > 0.05) or waited > 0.4 then
+                    cancelStage = 1
+                    if now - UzexFilter.LastNotify > 3 then
+                        UzexFilter.LastNotify = now
+                        pcall(function()
+                            Library:Notify({
+                                Title = "Fish Filter",
+                                Content = "Skipped: " .. (shown ~= "" and shown or "unknown fish") .. (isSecret and " [secret]" or (isBoss and " [boss]" or " [normal]")),
+                                Duration = 2,
+                            })
+                        end)
                     end
+                    UzexFilter.Recycle()
                 end
+            elseif cancelStage == 1 and isMinigame and (now - fightStart) > 4 then
+                cancelStage = 2
+                UzexFilter.Recycle()
             end
             UzexFilter.Skip = not fightAllowed
         else
             fightAllowed = false
             fightStart = nil
+            fightKey = nil
             cancelStage = 0
             UzexFilter.Skip = false
         end
