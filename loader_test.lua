@@ -2320,8 +2320,8 @@ local isLockingBar = false
 local barPosConn = nil
 local boundBar = nil
 
--- Fish filter state (Auto Cast chi xu ly ca Boss / Secret Boss)
-local UzexFilter = { Skip = false }
+-- Fish filter: Auto Cast keeps casting until a Boss / Secret Boss fish bites
+local UzexFilter = { Skip = false, Cache = {}, LastNotify = 0 }
 
 local function LockFishingBar()
     if isLockingBar then return end
@@ -2641,67 +2641,147 @@ local function IsSecretBossEntity(obj)
     return false
 end
 
--- Nhan dien ca dang can: returns isBoss, isSecret
+local function UzexCleanName(name)
+    name = tostring(name or "")
+    name = string.gsub(name, "<[^>]+>", "")
+    name = string.gsub(name, "%s*[xX]%s*%d+$", "")
+    name = string.gsub(name, "^%s+", "")
+    name = string.gsub(name, "%s+$", "")
+    return name
+end
+
+local function UzexFishData(name)
+    local key = string.lower(name)
+    if key == "" then return nil end
+    local cached = UzexFilter.Cache[key]
+    if cached ~= nil then return cached or nil end
+    local inv = Info:FindFirstChild("Inventory")
+    local mod = inv and inv:FindFirstChild(name)
+    if not mod and inv then
+        for _, child in ipairs(inv:GetChildren()) do
+            if string.lower(child.Name) == key then
+                mod = child
+                break
+            end
+        end
+    end
+    local data = mod and GetModuleData(mod) or nil
+    UzexFilter.Cache[key] = data or false
+    return data
+end
+
+-- returns isBoss, isSecret, shownName for the fish currently on the line
 function UzexFilter.Classify()
-    local isBoss, isSecret = false, false
+    local isBoss, isSecret, shown = false, false, ""
     pcall(function()
+        local names = {}
         if BossFightBar and BossFightBar.Parent and BossFightBar.Visible then
             isBoss = true
         end
         local fishId = LocalPlayer:GetAttribute("FishID")
         local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(tostring(fishId)) or nil
         if fishObj then
-            if fishObj:FindFirstChild(LocalPlayer.UserId .. "_PlayerHealth")
-                or fishObj:GetAttribute("FinalPhase") ~= nil
-                or fishObj:GetAttribute("Boss") == true then
-                isBoss = true
+            table.insert(names, fishObj.Name)
+            for k, v in pairs(fishObj:GetAttributes()) do
+                local lk = string.lower(tostring(k))
+                if type(v) == "string" then
+                    table.insert(names, v)
+                    if lk == "rarity" then
+                        local lv = string.lower(v)
+                        if lv == "secret" then isSecret = true end
+                        if lv == "boss" then isBoss = true end
+                    end
+                elseif v == true then
+                    if lk == "boss" or lk == "isboss" then isBoss = true end
+                    if lk == "secret" or lk == "issecret" then isSecret = true end
+                end
             end
-            if IsSecretBossEntity(fishObj) then
-                isSecret = true
+            if fishObj:FindFirstChild(LocalPlayer.UserId .. "_PlayerHealth")
+                or fishObj:GetAttribute("FinalPhase") ~= nil then
+                isBoss = true
             end
         end
         local pb = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
-        local lbl = pb and pb:FindFirstChild("FishName")
-        local name = lbl and lbl.Text or ""
-        if name ~= "" then
-            local inv = Info:FindFirstChild("Inventory")
-            local data = GetModuleData(inv and inv:FindFirstChild(name))
-            if data then
-                if data.Boss == true then isBoss = true end
-                if data.Secret == true or data.Rarity == "Secret"
-                    or (data.Boss == true and (tonumber(data.Chance) or 100) <= 1) then
+        if pb then
+            for _, d in ipairs(pb:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Text ~= "" then
+                    table.insert(names, d.Text)
+                end
+            end
+        end
+        for _, raw in ipairs(names) do
+            local clean = UzexCleanName(raw)
+            if clean ~= "" then
+                if shown == "" then shown = clean end
+                local data = UzexFishData(clean)
+                if data then
+                    shown = clean
+                    if data.Boss == true then isBoss = true end
+                    if data.Secret == true or data.Rarity == "Secret"
+                        or (data.Boss == true and (tonumber(data.Chance) or 100) <= 1) then
+                        isSecret = true
+                    end
+                    if type(data.Rarity) == "string" and string.lower(data.Rarity) == "boss" then
+                        isBoss = true
+                    end
+                end
+                local lower = string.lower(clean)
+                if string.find(lower, "secret", 1, true) or string.find(lower, "diaohai", 1, true)
+                    or string.find(lower, "wuzhi", 1, true) then
                     isSecret = true
                 end
             end
-            local lower = string.lower(name)
-            if string.find(lower, "secret", 1, true) or string.find(lower, "diaohai", 1, true)
-                or string.find(lower, "wuzhi", 1, true) then
-                isSecret = true
-            end
         end
     end)
-    return isBoss, isSecret
+    return isBoss, isSecret, shown
+end
+
+-- Drop the rod (cancels a normal fish), equip it again, then cast
+function UzexFilter.Recycle()
+    if UzexFilter.Busy then return end
+    UzexFilter.Busy = true
+    task.spawn(function()
+        pcall(function()
+            ToggleHotbar:InvokeServer("1")
+        end)
+        task.wait(0.4)
+        local char = LocalPlayer.Character
+        if char and char:GetAttribute("Type") ~= "Fishing Rod" then
+            pcall(function()
+                ToggleHotbar:InvokeServer("1")
+            end)
+            task.wait(0.3)
+        end
+        char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp and char:GetAttribute("Type") == "Fishing Rod" and not char:GetAttribute("Fishing") then
+            pcall(function()
+                FishingEvent:FireServer(hrp.CFrame)
+            end)
+        end
+        UzexFilter.Busy = false
+    end)
+end
+
+local function IsLongDiaoHaiName(obj)
+    local raw = string.lower(tostring(obj:GetAttribute("Name") or obj:GetAttribute("FishName") or obj.Name))
+    raw = string.gsub(raw, "%s+", "")
+    return string.find(raw, "diaohai", 1, true) ~= nil or string.find(raw, "longdiao", 1, true) ~= nil
 end
 
 local function FindBossTarget(wantSecret)
     local npcFolder = workspace:FindFirstChild("NPC")
     local bossFolder = npcFolder and npcFolder:FindFirstChild("Boss")
 
-    if bossFolder then
-        for _, boss in ipairs(bossFolder:GetChildren()) do
-            local part = GetModelPart(boss)
-            if part then
-                local isSec = IsSecretBossEntity(boss)
-                if wantSecret and isSec then
-                    return boss, part
-                elseif not wantSecret and not isSec then
+    if not wantSecret then
+        if bossFolder then
+            for _, boss in ipairs(bossFolder:GetChildren()) do
+                local part = GetModelPart(boss)
+                if part and not IsSecretBossEntity(boss) and not IsLongDiaoHaiName(boss) then
                     return boss, part
                 end
             end
         end
-    end
-
-    if not wantSecret then
         local wsBoss = workspace:FindFirstChild("Boss") or workspace:FindFirstChild("BossZone")
         if wsBoss then
             local part = GetModelPart(wsBoss)
@@ -2709,8 +2789,44 @@ local function FindBossTarget(wantSecret)
                 return wsBoss, part
             end
         end
+        return nil, nil
     end
 
+    -- Secret boss (Long DiaoHai) can live in several folders, so check all of them
+    local containers = {}
+    if bossFolder then table.insert(containers, bossFolder) end
+    if npcFolder then
+        local god = npcFolder:FindFirstChild("God")
+        if god then table.insert(containers, god) end
+    end
+    for _, n in ipairs({"God", "BossSetUp"}) do
+        local f = workspace:FindFirstChild(n)
+        if f then table.insert(containers, f) end
+    end
+    for _, c in ipairs(containers) do
+        for _, boss in ipairs(c:GetChildren()) do
+            if IsLongDiaoHaiName(boss) or IsSecretBossEntity(boss) then
+                local part = GetModelPart(boss)
+                if part then
+                    return boss, part
+                end
+            end
+        end
+    end
+    -- last resort: search by name inside the NPC folders
+    for _, n in ipairs({"NPC", "God", "BossSetUp"}) do
+        local f = workspace:FindFirstChild(n)
+        if f then
+            for _, d in ipairs(f:GetDescendants()) do
+                if d:IsA("Model") and IsLongDiaoHaiName(d) then
+                    local part = GetModelPart(d)
+                    if part then
+                        return d, part
+                    end
+                end
+            end
+        end
+    end
     return nil, nil
 end
 
@@ -3230,6 +3346,14 @@ local function StepAutoBoss(char, isMinigame)
             pcall(function()
                 ToggleHotbar:InvokeServer("1")
             end)
+        elseif char and not char:GetAttribute("Fishing") then
+            -- boss summoned and rod in hand: cast so the boss fight starts
+            local castHrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
+            if castHrp then
+                pcall(function()
+                    FishingEvent:FireServer(castHrp.CFrame)
+                end)
+            end
         end
     end
 end
@@ -3244,7 +3368,7 @@ task.spawn(function()
     local wasMinigameActive = false
     local fightAllowed = false
     local fightStart = nil
-    local skipCancelled = false
+    local cancelStage = 0
     while task.wait(0.08) do
         local now = os.clock()
         RefreshGuiCache()
@@ -3253,34 +3377,51 @@ task.spawn(function()
             lastMinigameEndTick = now
         end
         wasMinigameActive = isMinigame
-        -- Loc ca: chi dau voi ca Boss / Secret Boss, ca thuong thi bo qua (khong khoa thanh, khong reel, khong skill)
+        -- Fish filter: only fight Boss / Secret Boss fish, drop every other fish and recast
         local filterOn = (Config.FilterBossFish or Config.FilterSecretFish)
             and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
         if filterOn and isMinigame then
+            if not fightStart then
+                fightStart = now
+                cancelStage = 0
+            end
             if not fightAllowed then
-                local isBoss, isSecret = UzexFilter.Classify()
+                local isBoss, isSecret, shown = UzexFilter.Classify()
                 if (Config.FilterBossFish and (isBoss or isSecret)) or (Config.FilterSecretFish and isSecret) then
                     fightAllowed = true
+                    pcall(function()
+                        Library:Notify({
+                            Title = "Fish Filter",
+                            Content = "Found: " .. (shown ~= "" and shown or "boss fish"),
+                            Duration = 4,
+                        })
+                    end)
+                else
+                    local waited = now - fightStart
+                    if waited > 1.5 and cancelStage == 0 then
+                        cancelStage = 1
+                        if now - UzexFilter.LastNotify > 10 then
+                            UzexFilter.LastNotify = now
+                            pcall(function()
+                                Library:Notify({
+                                    Title = "Fish Filter",
+                                    Content = "Skipped: " .. (shown ~= "" and shown or "unknown fish"),
+                                    Duration = 2,
+                                })
+                            end)
+                        end
+                        UzexFilter.Recycle()
+                    elseif waited > 7 and cancelStage == 1 then
+                        cancelStage = 2
+                        UzexFilter.Recycle()
+                    end
                 end
             end
             UzexFilter.Skip = not fightAllowed
-            if not fightStart then
-                fightStart = now
-                skipCancelled = false
-            end
-            -- normal fish that does not escape by itself: drop the rod so the loop can recast
-            if UzexFilter.Skip and not skipCancelled and (now - fightStart) > 6 then
-                skipCancelled = true
-                task.spawn(function()
-                    pcall(function()
-                        ToggleHotbar:InvokeServer("1")
-                    end)
-                end)
-            end
         else
             fightAllowed = false
             fightStart = nil
-            skipCancelled = false
+            cancelStage = 0
             UzexFilter.Skip = false
         end
         local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
@@ -3355,7 +3496,7 @@ task.spawn(function()
                         if char:GetAttribute("Type") ~= "Fishing Rod" then
                             -- Auto Cast no longer equips the rod by itself (equip it manually).
                             -- Auto Farm Island still needs the rod, so it keeps equipping it.
-                            if Config.AutoFarmIsland or Config.FilterBossFish or Config.FilterSecretFish then
+                            if Config.AutoFarmIsland then
                                 lastCastTry = now
                                 pcall(function()
                                     ToggleHotbar:InvokeServer("1")
@@ -5458,11 +5599,41 @@ Tabs.Main:CreateToggle({
 Tabs.Main:CreateSection("Fishing")
 
 Tabs.Main:CreateToggle({
+    Flag = "AutoReelToggle",
+    Name = "Lock catch bar",
+    CurrentValue = Config.AutoReel,
+    Callback = function(Value)
+        Config.AutoReel = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
     Flag = "AutoCastToggle",
     Name = "Auto Cast",
     CurrentValue = Config.AutoCast,
     Callback = function(Value)
         Config.AutoCast = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "FilterBossFishToggle",
+    Name = "Auto Farm Boss",
+    CurrentValue = Config.FilterBossFish,
+    Callback = function(Value)
+        Config.FilterBossFish = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "FilterSecretFishToggle",
+    Name = "Auto Farm Secret Boss",
+    CurrentValue = Config.FilterSecretFish,
+    Callback = function(Value)
+        Config.FilterSecretFish = Value
         SaveConfig()
     end
 })
@@ -5480,26 +5651,6 @@ Tabs.Main:CreateDropdown({
     end
 })
 
-Tabs.Main:CreateToggle({
-    Flag = "FilterBossFishToggle",
-    Name = "Farm Boss",
-    CurrentValue = Config.FilterBossFish,
-    Callback = function(Value)
-        Config.FilterBossFish = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "FilterSecretFishToggle",
-    Name = "Farm Secret Boss",
-    CurrentValue = Config.FilterSecretFish,
-    Callback = function(Value)
-        Config.FilterSecretFish = Value
-        SaveConfig()
-    end
-})
-
 Tabs.Main:CreateSlider({
     Flag = "CastDelaySlider",
     Name = "Cast Delay",
@@ -5508,16 +5659,6 @@ Tabs.Main:CreateSlider({
     Increment = 0.1,
     Callback = function(Value)
         Config.CastDelay = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoReelToggle",
-    Name = "Lock catch bar",
-    CurrentValue = Config.AutoReel,
-    Callback = function(Value)
-        Config.AutoReel = Value
         SaveConfig()
     end
 })
