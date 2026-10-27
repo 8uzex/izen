@@ -482,42 +482,6 @@ function Tab:CreateStatGrid(o)
     return register(o, el)
 end
 
-function Tab:CreateStatus(o)
-    o = opt(o)
-    local f = self:_row(48)
-    text(f, {
-        Size = UDim2.new(0.4, -14, 1, 0),
-        Position = UDim2.new(0, 14, 0, 0),
-        Text = titleOf(o),
-    })
-    local pill = new("Frame", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -10, 0.5, 0),
-        Size = UDim2.new(0.55, 0, 0, 30),
-        BackgroundColor3 = Theme.Surface3,
-        BorderSizePixel = 0,
-    }, f)
-    round(pill, 8)
-    local value = text(pill, {
-        Size = UDim2.fromScale(1, 1),
-        TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Center,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Text = tostring(o.Value or ""),
-    })
-    local el = {}
-    function el:Set(v)
-        local s = tostring(v)
-        if value.Text ~= s then
-            value.Text = s
-        end
-    end
-    function el:Get()
-        return value.Text
-    end
-    return register(o, el)
-end
-
 function Tab:CreateButton(o)
     o = opt(o)
     local desc = descOf(o)
@@ -1202,7 +1166,7 @@ function Window:CreateTab(o)
         BackgroundTransparency = 1,
         AutoButtonColor = false,
         Text = "",
-        LayoutOrder = o.Order or (#self._tabs + 1),
+        LayoutOrder = #self._tabs + 1,
     }, self._tabList)
     round(button, 8)
     local indicator = new("Frame", {
@@ -1270,15 +1234,25 @@ function Window:Toggle(force)
         show = not self._visible
     end
     self._visible = show
+    self._toggleToken = (self._toggleToken or 0) + 1
+    local token = self._toggleToken
     local main = self._main
+    -- cancel the previous animation so quick toggles never jump or stutter
+    if self._toggleTween then
+        pcall(function() self._toggleTween:Cancel() end)
+        self._toggleTween = nil
+    end
     if show then
-        main.Visible = true
-        main.Position = self._basePos + UDim2.fromOffset(0, 12)
-        tween(main, 0.3, { GroupTransparency = 0, Position = self._basePos })
+        if not main.Visible then
+            main.GroupTransparency = 1
+            main.Position = self._basePos + UDim2.fromOffset(0, 8)
+            main.Visible = true
+        end
+        self._toggleTween = tween(main, 0.16, { GroupTransparency = 0, Position = self._basePos }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     else
-        tween(main, 0.2, { GroupTransparency = 1, Position = self._basePos + UDim2.fromOffset(0, 8) })
-        task.delay(0.22, function()
-            if not self._visible then
+        self._toggleTween = tween(main, 0.1, { GroupTransparency = 1, Position = self._basePos + UDim2.fromOffset(0, 6) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        task.delay(0.11, function()
+            if token == self._toggleToken and not self._visible then
                 main.Visible = false
             end
         end)
@@ -1549,6 +1523,8 @@ local EquipBaitEvent = Events:WaitForChild("EquipBait", 9e9)
 local Config = {
     AutoCast = false,
     AutoCastMethod = "Instant",
+    FilterBossFish = false,
+    FilterSecretFish = false,
     CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
@@ -1591,12 +1567,6 @@ local Config = {
     AutoTPPos = false,
     AutoExecute = false,
     AutoRejoin = true,
-    HopApiBase = "https://equipment-barrel-hardcover.ngrok-free.dev",
-    HopApiKey = "",
-    HopCategory = "Taoist",
-    HopWeather = "Thunderstorm",
-    HopShareInfo = true,
-    HopAuto = false,
     WebhookEnabled = false,
     WebhookUrl = "",
     WebhookInterval = 0,
@@ -1667,16 +1637,15 @@ task.spawn(function()
         lp = Players.LocalPlayer
     end
     repeat task.wait(0.2) until lp.Character and lp:FindFirstChild("PlayerGui")
-    local allow = true
+    local allow = false
     pcall(function()
         if isfile then
             allow = false
-            if isfile("UzexHub/rejoin.flag") then
-                allow = true
-                if delfile then
-                    pcall(delfile, "UzexHub/rejoin.flag")
-                end
-            elseif isfile("UzexHub/HeavyweighFishingConfig.json") then
+            if isfile("UzexHub/rejoin.flag") and delfile then
+                pcall(delfile, "UzexHub/rejoin.flag")
+            end
+            -- only run when Auto Execute is ON in the saved config
+            if isfile("UzexHub/HeavyweighFishingConfig.json") then
                 local dec = HttpService:JSONDecode(readfile("UzexHub/HeavyweighFishingConfig.json"))
                 allow = (type(dec) == "table" and dec.AutoExecute == true)
             end
@@ -1710,7 +1679,7 @@ end)
 
 local function QueueAutoExecute(force)
     if not queueTeleport then return end
-    if not (force or Config.AutoExecute) then return end
+    if not Config.AutoExecute then return end
     if autoExecQueued and not force then return end
     if autoExecPayload:find("YOUR-USER", 1, true) then
         pcall(function()
@@ -2351,8 +2320,12 @@ local isLockingBar = false
 local barPosConn = nil
 local boundBar = nil
 
+-- Fish filter state (Auto Cast chi xu ly ca Boss / Secret Boss)
+local UzexFilter = { Skip = false }
+
 local function LockFishingBar()
     if isLockingBar then return end
+    if UzexFilter.Skip then return end
     if not FishingGui or not FishingGui.Visible or not FishingBar then return end
     if not (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) then return end
     isLockingBar = true
@@ -2666,6 +2639,48 @@ local function IsSecretBossEntity(obj)
         return true
     end
     return false
+end
+
+-- Nhan dien ca dang can: returns isBoss, isSecret
+function UzexFilter.Classify()
+    local isBoss, isSecret = false, false
+    pcall(function()
+        if BossFightBar and BossFightBar.Parent and BossFightBar.Visible then
+            isBoss = true
+        end
+        local fishId = LocalPlayer:GetAttribute("FishID")
+        local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(tostring(fishId)) or nil
+        if fishObj then
+            if fishObj:FindFirstChild(LocalPlayer.UserId .. "_PlayerHealth")
+                or fishObj:GetAttribute("FinalPhase") ~= nil
+                or fishObj:GetAttribute("Boss") == true then
+                isBoss = true
+            end
+            if IsSecretBossEntity(fishObj) then
+                isSecret = true
+            end
+        end
+        local pb = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
+        local lbl = pb and pb:FindFirstChild("FishName")
+        local name = lbl and lbl.Text or ""
+        if name ~= "" then
+            local inv = Info:FindFirstChild("Inventory")
+            local data = GetModuleData(inv and inv:FindFirstChild(name))
+            if data then
+                if data.Boss == true then isBoss = true end
+                if data.Secret == true or data.Rarity == "Secret"
+                    or (data.Boss == true and (tonumber(data.Chance) or 100) <= 1) then
+                    isSecret = true
+                end
+            end
+            local lower = string.lower(name)
+            if string.find(lower, "secret", 1, true) or string.find(lower, "diaohai", 1, true)
+                or string.find(lower, "wuzhi", 1, true) then
+                isSecret = true
+            end
+        end
+    end)
+    return isBoss, isSecret
 end
 
 local function FindBossTarget(wantSecret)
@@ -3227,6 +3242,7 @@ task.spawn(function()
     local skillSeqIndex = 1
     local pendingSkillKey = nil
     local wasMinigameActive = false
+    local fightAllowed = false
     while task.wait(0.08) do
         local now = os.clock()
         RefreshGuiCache()
@@ -3235,9 +3251,24 @@ task.spawn(function()
             lastMinigameEndTick = now
         end
         wasMinigameActive = isMinigame
-        local activeReel = Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
+        -- Loc ca: chi dau voi ca Boss / Secret Boss, ca thuong thi bo qua (khong khoa thanh, khong reel, khong skill)
+        local filterOn = (Config.FilterBossFish or Config.FilterSecretFish)
+            and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
+        if filterOn and isMinigame then
+            if not fightAllowed then
+                local isBoss, isSecret = UzexFilter.Classify()
+                if (Config.FilterBossFish and (isBoss or isSecret)) or (Config.FilterSecretFish and isSecret) then
+                    fightAllowed = true
+                end
+            end
+            UzexFilter.Skip = not fightAllowed
+        else
+            fightAllowed = false
+            UzexFilter.Skip = false
+        end
+        local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
         local activeCast = Config.AutoCast or Config.AutoFarmIsland
-        local activeSkill = Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland
+        local activeSkill = (Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
 
         if not isMinigame then
             skillSeqIndex = 1
@@ -3330,7 +3361,7 @@ task.spawn(function()
 end)
 
 Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
-    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and remote then
+    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip and remote then
         task.wait(0.05)
         local handled = false
         pcall(function()
@@ -3358,7 +3389,7 @@ Events:WaitForChild("Slam").OnClientEvent:Connect(function(remote)
 end)
 
 Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
-    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and remote then
+    if (Config.AutoMiniGame or Config.AutoReel or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip and remote then
         task.wait(1.05)
         pcall(function()
             local tc = FishingGui and FishingGui:FindFirstChild("TrashCan")
@@ -5182,15 +5213,15 @@ do
     if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
     local LogoFrame = Instance.new("Frame")
-    LogoFrame.Size = UDim2.new(0, 46, 0, 46)
-    LogoFrame.Position = UDim2.new(0, 8, 0.5, -23)
+    LogoFrame.Size = UDim2.new(0, 36, 0, 36)
+    LogoFrame.Position = UDim2.new(0, 8, 0.5, -18)
     LogoFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
     LogoFrame.BorderSizePixel = 0
     LogoFrame.Parent = LogoGui
     Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
 
     local logoStroke = Instance.new("UIStroke", LogoFrame)
-    logoStroke.Thickness = 1.8
+    logoStroke.Thickness = 1.5
     logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
     local logoGrad = Instance.new("UIGradient", logoStroke)
     logoGrad.Color = ColorSequence.new({
@@ -5201,8 +5232,8 @@ do
     task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
 
     local LogoImg = Instance.new("ImageLabel")
-    LogoImg.Size = UDim2.new(1, -6, 1, -6)
-    LogoImg.Position = UDim2.new(0, 3, 0, 3)
+    LogoImg.Size = UDim2.new(1, -4, 1, -4)
+    LogoImg.Position = UDim2.new(0, 2, 0, 2)
     LogoImg.BackgroundTransparency = 1
     LogoImg.Image = Library.Assets.Logo
     LogoImg.ScaleType = Enum.ScaleType.Fit
@@ -5404,6 +5435,26 @@ Tabs.Main:CreateDropdown({
     end
 })
 
+Tabs.Main:CreateToggle({
+    Flag = "FilterBossFishToggle",
+    Name = "Filter Boss Fish",
+    CurrentValue = Config.FilterBossFish,
+    Callback = function(Value)
+        Config.FilterBossFish = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "FilterSecretFishToggle",
+    Name = "Filter Secret Boss Fish",
+    CurrentValue = Config.FilterSecretFish,
+    Callback = function(Value)
+        Config.FilterSecretFish = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Main:CreateSlider({
     Flag = "CastDelaySlider",
     Name = "Cast Delay",
@@ -5418,7 +5469,7 @@ Tabs.Main:CreateSlider({
 
 Tabs.Main:CreateToggle({
     Flag = "AutoReelToggle",
-    Name = "Auto Reel",
+    Name = "Lock catch bar",
     CurrentValue = Config.AutoReel,
     Callback = function(Value)
         Config.AutoReel = Value
@@ -5804,9 +5855,9 @@ do
     })
 end
 
-Tabs.Shop:CreateSection("Selling")
+Tabs.Main:CreateSection("Selling")
 
-Tabs.Shop:CreateToggle({
+Tabs.Main:CreateToggle({
     Flag = "AutoSellToggle",
     Name = "Auto Sell Fish",
     CurrentValue = Config.AutoSell,
@@ -5819,7 +5870,7 @@ Tabs.Shop:CreateToggle({
     end
 })
 
-Tabs.Shop:CreateDropdown({
+Tabs.Main:CreateDropdown({
     Flag = "AutoSellMethodDropdown",
     Name = "Method Sell #1",
     Options = {"Spam", "When full"},
@@ -7086,468 +7137,6 @@ do
             })
         end
     })
-end
-
--------------------------------------------------------------------------------
--- Server Hop tab: hop by event / weather through a relay, join by Job ID
---
--- The relay is a small web API that lists servers with their weather and event.
---   GET  <relay>/v1/servers?place_id=<id>   ->  { "servers": [ { job_id, playing, max_players,
---                                                   attributes = { weather, event, boss, npc } } ] }
---   POST <relay>/v1/servers/update          <-  this server's info (sent when "Share This Server" is on)
--- hop_relay.py adds both routes to the key bot. The address is set in Server Hop > Hop Relay.
--------------------------------------------------------------------------------
-do
-    local CATEGORIES = {
-        "Taoist",
-        "Maoshan",
-        "Spirit",
-        "Weather",
-        "Vermilion Birdblood",
-        "Black Tortoise Bloodline",
-    }
-    local WEATHERS = { "Thunderstorm", "Rainy", "Windy", "Snowy", "Foggy", "Blazing Sun" }
-    local lastHopAt = 0
-    local serverList = {}
-
-    local function notify(content, kind, duration)
-        pcall(function()
-            Library:Notify({ Title = "Server Hop", Content = content, Type = kind, Duration = duration or 3 })
-        end)
-    end
-
-    ---------------------------------------------------------------- relay
-    local function relayRequest(path, method, body)
-        local base = tostring(Config.HopApiBase or ""):gsub("/+$", "")
-        if base == "" then
-            return nil, "Set the Hop Relay URL first"
-        end
-        if not base:match("^https?://") then
-            return nil, "Relay URL must start with http:// or https://"
-        end
-        local req = request or http_request or (syn and syn.request) or (fluxus and fluxus.request) or (http and http.request)
-        if not req then
-            return nil, "This executor has no HTTP request function"
-        end
-        local headers = {
-            ["Content-Type"] = "application/json",
-            ["ngrok-skip-browser-warning"] = "1",
-        }
-        if tostring(Config.HopApiKey or "") ~= "" then
-            headers["X-API-Key"] = tostring(Config.HopApiKey)
-        end
-        local ok, res = pcall(req, { Url = base .. path, Method = method or "GET", Headers = headers, Body = body })
-        if not ok or type(res) ~= "table" then
-            return nil, "Relay request failed"
-        end
-        local code = tonumber(res.StatusCode or res.Status)
-        if code and (code < 200 or code >= 300) then
-            return nil, "Relay replied HTTP " .. tostring(code)
-        end
-        local good, data = pcall(function()
-            return HttpService:JSONDecode(res.Body or res.body or "")
-        end)
-        if not good or type(data) ~= "table" then
-            return nil, "Relay sent an invalid reply"
-        end
-        return data
-    end
-
-    ---------------------------------------------------------------- what this server looks like
-    local function readWeather()
-        local weather = workspace:GetAttribute("Weather")
-        if type(weather) == "string" and weather ~= "" then
-            return weather
-        end
-        local found
-        pcall(function()
-            local info = MainGui and MainGui:FindFirstChild("Info")
-            local details = info and info:FindFirstChild("Info")
-            local node = details and details:FindFirstChild("Weather")
-            local value = node and node:FindFirstChild("Value")
-            if value then
-                local raw = value:IsA("TextLabel") and value.Text or value.Value
-                found = (tostring(raw or ""):gsub("Weather:%s*", ""):gsub("^%s+", ""):gsub("%s+$", ""))
-            end
-        end)
-        if found and found ~= "" then
-            return found
-        end
-        pcall(function()
-            for _, d in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
-                if d:IsA("TextLabel") and string.sub(d.Text, 1, 8) == "Weather:" then
-                    found = (d.Text:gsub("^Weather:%s*", ""):gsub("%s+$", ""))
-                    return
-                end
-            end
-        end)
-        return found or "Clear"
-    end
-
-    local function scanTags()
-        local seen = {}
-        pcall(function()
-            for _, rootName in ipairs({ "Ocean", "Fishes", "NPC", "Map" }) do
-                local root = workspace:FindFirstChild(rootName)
-                if root then
-                    for _, inst in ipairs(root:GetDescendants()) do
-                        local name = string.lower(inst.Name)
-                        if name:find("taoist", 1, true) then seen.taoist = true end
-                        if name:find("maoshan", 1, true) then seen.maoshan = true end
-                        if name:find("spirit", 1, true) or name == "god" then seen.spirit = true end
-                        if name:find("vermilion", 1, true) or name:find("birdblood", 1, true) then seen.vermilion = true end
-                        if name:find("tortoise", 1, true) then seen.tortoise = true end
-                    end
-                end
-            end
-        end)
-        local tags = { event = "", boss = "", npc = "" }
-        if seen.vermilion then
-            tags.event = "VermilionBirdblood"
-            tags.boss = "Vermilion Birdblood"
-        end
-        if seen.tortoise then
-            tags.event = (tags.event ~= "" and tags.event .. "," or "") .. "BlackTortoise"
-            tags.boss = "Black Tortoise Bloodline"
-        end
-        local npcs = {}
-        if seen.taoist then npcs[#npcs + 1] = "Taoist" end
-        if seen.maoshan then npcs[#npcs + 1] = "Maoshan" end
-        if seen.spirit then npcs[#npcs + 1] = "God" end
-        tags.npc = table.concat(npcs, ",")
-        return tags
-    end
-
-    local function publishHeartbeat()
-        if tostring(Config.HopApiBase or "") == "" then
-            return
-        end
-        local tags = scanTags()
-        relayRequest("/v1/servers/update", "POST", HttpService:JSONEncode({
-            job_id = game.JobId,
-            place_id = game.PlaceId,
-            playing = #Players:GetPlayers(),
-            max_players = Players.MaxPlayers,
-            attributes = { weather = readWeather(), event = tags.event, boss = tags.boss, npc = tags.npc },
-            source = "uzex_hub",
-        }))
-    end
-
-    task.spawn(function()
-        task.wait(10)
-        while true do
-            if Config.HopShareInfo then
-                pcall(publishHeartbeat)
-            end
-            task.wait(60)
-        end
-    end)
-
-    ---------------------------------------------------------------- matching
-    local function kindOf(server)
-        local a = server.attributes or {}
-        local blob = string.lower(tostring(a.event or "") .. " " .. tostring(a.boss or "") .. " " .. tostring(a.npc or ""))
-        if blob:find("vermilion", 1, true) or blob:find("birdblood", 1, true) then
-            return "Vermilion Birdblood"
-        end
-        if blob:find("tortoise", 1, true) then
-            return "Black Tortoise Bloodline"
-        end
-        if blob:find("taoist", 1, true) then
-            return "Taoist"
-        end
-        if blob:find("maoshan", 1, true) then
-            return "Maoshan"
-        end
-        if blob:find("spirit", 1, true) or blob:find("god", 1, true) then
-            return "Spirit"
-        end
-        local weather = string.lower(tostring(a.weather or ""))
-        if weather ~= "" and weather ~= "clear" then
-            return "Weather"
-        end
-        return "Other"
-    end
-
-    local function simplify(text)
-        return (string.lower(tostring(text or "")):gsub("%-", " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
-    end
-
-    local function weatherMatches(server, wanted)
-        local want = simplify(wanted)
-        if want == "" then
-            return false
-        end
-        local weather = simplify((server.attributes or {}).weather)
-        return weather ~= "" and (weather == want or weather:find(want, 1, true) ~= nil or want:find(weather, 1, true) ~= nil)
-    end
-
-    local function serverMatches(server, category)
-        if category == "Weather" then
-            return weatherMatches(server, Config.HopWeather)
-        end
-        return kindOf(server) == category
-    end
-
-    local function isJoinable(server)
-        local job = tostring(server.job_id or server.jobId or server.id or "")
-        if job == "" or job == tostring(game.JobId) then
-            return false
-        end
-        local playing = tonumber(server.playing) or 0
-        local maxPlayers = tonumber(server.max_players or server.maxPlayers) or 0
-        return not (maxPlayers > 0 and playing >= maxPlayers)
-    end
-
-    local function matchedServers(category)
-        local list = {}
-        for _, server in ipairs(serverList) do
-            if isJoinable(server) and serverMatches(server, category) then
-                list[#list + 1] = server
-            end
-        end
-        return list
-    end
-
-    local function currentServerMatches(category)
-        local tags = scanTags()
-        return serverMatches({
-            attributes = { weather = readWeather(), event = tags.event, boss = tags.boss, npc = tags.npc },
-        }, category)
-    end
-
-    ---------------------------------------------------------------- joining
-    local function joinJob(job)
-        job = tostring(job or ""):gsub("%s+", "")
-        if job == "" then
-            notify("Enter a valid Job ID.", "warning")
-            return false
-        end
-        if job == tostring(game.JobId) then
-            notify("You are already in this server.", "warning")
-            return false
-        end
-        lastHopAt = os.clock()
-        notify("Joining " .. string.sub(job, 1, 10) .. "...")
-        local ok, err = pcall(function()
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, job, LocalPlayer)
-        end)
-        if not ok then
-            notify("Join failed: " .. tostring(err), "error", 4)
-            return false
-        end
-        return true
-    end
-
-    local function hopTo(matched, category)
-        local target = matched[math.random(1, #matched)]
-        local job = tostring(target.job_id or target.jobId or target.id or "")
-        notify(string.format(
-            "%s | %d/%d | %s",
-            category,
-            tonumber(target.playing) or 0,
-            tonumber(target.max_players or target.maxPlayers) or 0,
-            string.sub(job, 1, 8)
-        ))
-        return joinJob(job)
-    end
-
-    ---------------------------------------------------------------- tab + UI
-    local hopTab = Window:CreateTab({ Name = "Server Hop", Order = 4.5 })
-
-    hopTab:CreateSection("List Server Hop")
-
-    local statusRow
-
-    local function updateStatus()
-        if not statusRow then
-            return
-        end
-        local category = tostring(Config.HopCategory or "Taoist")
-        statusRow:Set(string.format("%d server(s) | %s", #matchedServers(category), category))
-    end
-
-    local function refreshList()
-        local data, err = relayRequest("/v1/servers?place_id=" .. tostring(game.PlaceId))
-        if not data or type(data.servers) ~= "table" then
-            serverList = {}
-            if statusRow then
-                statusRow:Set(err or "No server list")
-            end
-            return false, err
-        end
-        serverList = data.servers
-        updateStatus()
-        return true
-    end
-
-    hopTab:CreateDropdown({
-        Flag = "HopCategoryDropdown",
-        Name = "Server Hop",
-        Options = CATEGORIES,
-        CurrentOption = Config.HopCategory,
-        Callback = function(Value)
-            Config.HopCategory = tostring(Value)
-            SaveConfig()
-            task.spawn(function()
-                if #serverList == 0 then
-                    refreshList()
-                else
-                    updateStatus()
-                end
-            end)
-        end
-    })
-
-    hopTab:CreateDropdown({
-        Flag = "HopWeatherDropdown",
-        Name = "Weather Target",
-        Options = WEATHERS,
-        CurrentOption = Config.HopWeather,
-        Callback = function(Value)
-            Config.HopWeather = tostring(Value)
-            SaveConfig()
-            updateStatus()
-        end
-    })
-
-    statusRow = hopTab:CreateStatus({ Name = "Status", Value = "Press Refresh Server List" })
-
-    hopTab:CreateToggle({
-        Flag = "HopAutoToggle",
-        Name = "Auto Hop Confirmed Events",
-        Description = "Hops until this server matches the category (Auto Execute keeps it going after each hop)",
-        CurrentValue = Config.HopAuto,
-        Callback = function(Value)
-            Config.HopAuto = Value
-            SaveConfig()
-            if Value then
-                pcall(function()
-                    QueueAutoExecute(true)
-                end)
-            end
-        end
-    })
-
-    hopTab:CreateButton({
-        Name = "Refresh Server List",
-        Callback = function()
-            task.spawn(function()
-                local ok, err = refreshList()
-                if not ok then
-                    notify("Could not load the list" .. (err and (" (" .. err .. ")") or ""), "error", 4)
-                end
-            end)
-        end
-    })
-
-    hopTab:CreateButton({
-        Name = "Hop Now",
-        Description = "Joins a random server that matches the category",
-        Callback = function()
-            task.spawn(function()
-                if os.clock() - lastHopAt < 2 then
-                    notify("Wait a moment...", "warning", 2)
-                    return
-                end
-                local category = tostring(Config.HopCategory or "Taoist")
-                local ok, err = refreshList()
-                if not ok then
-                    notify("No server found" .. (err and (" (" .. err .. ")") or ""), "error", 4)
-                    return
-                end
-                local matched = matchedServers(category)
-                if #matched == 0 then
-                    notify("No server found", "warning", 4)
-                    return
-                end
-                hopTo(matched, category)
-            end)
-        end
-    })
-
-    hopTab:CreateSection("Join Server")
-
-    local pendingJob = ""
-    hopTab:CreateInput({
-        Flag = "HopJobIdInput",
-        Name = "Job ID",
-        PlaceholderText = "Paste a Job ID",
-        Callback = function(Value)
-            pendingJob = tostring(Value or "")
-        end
-    })
-
-    hopTab:CreateButton({
-        Name = "Join Job ID",
-        Callback = function()
-            joinJob(pendingJob)
-        end
-    })
-
-    hopTab:CreateSection("Hop Relay")
-
-    hopTab:CreateInput({
-        Flag = "HopRelayUrlInput",
-        Name = "Hop Relay URL",
-        CurrentValue = Config.HopApiBase,
-        PlaceholderText = "https://your-relay.example",
-        Callback = function(Value)
-            Config.HopApiBase = (tostring(Value or ""):gsub("%s+", ""))
-            SaveConfig()
-        end
-    })
-
-    hopTab:CreateInput({
-        Flag = "HopRelayKeyInput",
-        Name = "Hop Relay Key",
-        CurrentValue = Config.HopApiKey,
-        PlaceholderText = "API key (optional)",
-        Callback = function(Value)
-            Config.HopApiKey = (tostring(Value or ""):gsub("%s+", ""))
-            SaveConfig()
-        end
-    })
-
-    hopTab:CreateToggle({
-        Flag = "HopShareInfoToggle",
-        Name = "Share This Server",
-        Description = "Sends this server's weather and event to the relay every minute",
-        CurrentValue = Config.HopShareInfo,
-        Callback = function(Value)
-            Config.HopShareInfo = Value
-            SaveConfig()
-        end
-    })
-
-    ---------------------------------------------------------------- auto hop
-    task.spawn(function()
-        task.wait(20)
-        while true do
-            task.wait(15)
-            if Config.HopAuto and os.clock() - lastHopAt > 20 then
-                local category = tostring(Config.HopCategory or "Taoist")
-                local here = false
-                pcall(function()
-                    here = currentServerMatches(category)
-                end)
-                if not here and refreshList() then
-                    local matched = matchedServers(category)
-                    if #matched > 0 then
-                        pcall(function()
-                            QueueAutoExecute(true)
-                        end)
-                        hopTo(matched, category)
-                    end
-                end
-            end
-        end
-    end)
-
-    task.spawn(function()
-        task.wait(3)
-        refreshList()
-    end)
 end
 
 Window:SelectTab(Tabs.Main)
