@@ -3243,6 +3243,8 @@ task.spawn(function()
     local pendingSkillKey = nil
     local wasMinigameActive = false
     local fightAllowed = false
+    local fightStart = nil
+    local skipCancelled = false
     while task.wait(0.08) do
         local now = os.clock()
         RefreshGuiCache()
@@ -3262,12 +3264,27 @@ task.spawn(function()
                 end
             end
             UzexFilter.Skip = not fightAllowed
+            if not fightStart then
+                fightStart = now
+                skipCancelled = false
+            end
+            -- normal fish that does not escape by itself: drop the rod so the loop can recast
+            if UzexFilter.Skip and not skipCancelled and (now - fightStart) > 6 then
+                skipCancelled = true
+                task.spawn(function()
+                    pcall(function()
+                        ToggleHotbar:InvokeServer("1")
+                    end)
+                end)
+            end
         else
             fightAllowed = false
+            fightStart = nil
+            skipCancelled = false
             UzexFilter.Skip = false
         end
         local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
-        local activeCast = Config.AutoCast or Config.AutoFarmIsland
+        local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish or Config.FilterSecretFish
         local activeSkill = (Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
 
         if not isMinigame then
@@ -3338,7 +3355,7 @@ task.spawn(function()
                         if char:GetAttribute("Type") ~= "Fishing Rod" then
                             -- Auto Cast no longer equips the rod by itself (equip it manually).
                             -- Auto Farm Island still needs the rod, so it keeps equipping it.
-                            if Config.AutoFarmIsland then
+                            if Config.AutoFarmIsland or Config.FilterBossFish or Config.FilterSecretFish then
                                 lastCastTry = now
                                 pcall(function()
                                     ToggleHotbar:InvokeServer("1")
@@ -5328,6 +5345,34 @@ local function toggleNoclip()
     end
 end
 
+Tabs.Main:CreateSection("Selling")
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoSellToggle",
+    Name = "Auto Sell Fish",
+    CurrentValue = Config.AutoSell,
+    Callback = function(Value)
+        Config.AutoSell = Value
+        if not Value then
+            lastSellTime = 0
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateDropdown({
+    Flag = "AutoSellMethodDropdown",
+    Name = "Method Sell #1",
+    Options = {"Spam", "When full"},
+    CurrentOption = Config.AutoSellMethod or "Spam",
+    MultipleOptions = false,
+    AllowNone = false,
+    Callback = function(Value)
+        Config.AutoSellMethod = Value or "Spam"
+        SaveConfig()
+    end
+})
+
 Tabs.Main:CreateSection("Auto Ticket Quest")
 
 Tabs.Main:CreateToggle({
@@ -5437,7 +5482,7 @@ Tabs.Main:CreateDropdown({
 
 Tabs.Main:CreateToggle({
     Flag = "FilterBossFishToggle",
-    Name = "Filter Boss Fish",
+    Name = "Farm Boss",
     CurrentValue = Config.FilterBossFish,
     Callback = function(Value)
         Config.FilterBossFish = Value
@@ -5447,7 +5492,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateToggle({
     Flag = "FilterSecretFishToggle",
-    Name = "Filter Secret Boss Fish",
+    Name = "Farm Secret Boss",
     CurrentValue = Config.FilterSecretFish,
     Callback = function(Value)
         Config.FilterSecretFish = Value
@@ -5854,34 +5899,6 @@ do
         end
     })
 end
-
-Tabs.Main:CreateSection("Selling")
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoSellToggle",
-    Name = "Auto Sell Fish",
-    CurrentValue = Config.AutoSell,
-    Callback = function(Value)
-        Config.AutoSell = Value
-        if not Value then
-            lastSellTime = 0
-        end
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateDropdown({
-    Flag = "AutoSellMethodDropdown",
-    Name = "Method Sell #1",
-    Options = {"Spam", "When full"},
-    CurrentOption = Config.AutoSellMethod or "Spam",
-    MultipleOptions = false,
-    AllowNone = false,
-    Callback = function(Value)
-        Config.AutoSellMethod = Value or "Spam"
-        SaveConfig()
-    end
-})
 
 Tabs.Shop:CreateSection("Buy Bait")
 
