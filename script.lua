@@ -8,7 +8,7 @@
 ---------------- CẤU HÌNH (chủ bot sửa) ----------------
 local API_URL        = "https://equipment-barrel-hardcover.ngrok-free.dev"   -- link ngrok cố định của bot
 local SCRIPT_PREMIUM = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
-local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/hub.lua"
+local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
 local GET_KEY_URL    = "https://izoki.bytecraft.workers.dev/uzexhub"          -- trang lấy key free
 local SAVE_FILE      = "UzexHub_Key.txt"                                       -- nơi lưu key đã nhập đúng
 ---------------------------------------------------------
