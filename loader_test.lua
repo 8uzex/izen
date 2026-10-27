@@ -1519,6 +1519,8 @@ local Config = {
     BossMode = "Normal",
     AutoBoss = false,
     AutoSecretBoss = false,
+    AutoCastBoss = false,
+    AutoCastSecretBoss = false,
     AutoSkill = false,
     SkillOrder = {"Z", "X", "C", "V"},
     AutoSell = false,
@@ -3252,6 +3254,24 @@ task.spawn(function()
 
         if Config.AutoBoss or Config.AutoSecretBoss then
             StepAutoBoss(cachedChar, isMinigame)
+
+            local bossCastEnabled = (Config.AutoBoss and Config.AutoCastBoss)
+                or (Config.AutoSecretBoss and Config.AutoCastSecretBoss)
+            if bossCastEnabled and not isMinigame
+                and (now - lastMinigameEndTick >= 0.05)
+                and (now - lastCastTry >= 0.05) then
+                local char = cachedChar
+                if char and char:GetAttribute("Type") == "Fishing Rod"
+                    and not char:GetAttribute("Fishing") then
+                    local hrp = cachedHrp or char:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        lastCastTry = now
+                        pcall(function()
+                            FishingEvent:FireServer(hrp.CFrame)
+                        end)
+                    end
+                end
+            end
         else
             if not isMinigame then
                 StepAutoTPPos(cachedChar)
@@ -5376,7 +5396,7 @@ Tabs.Main:CreateSlider({
 
 Tabs.Main:CreateToggle({
     Flag = "AutoReelToggle",
-    Name = "Lock catch bar",
+    Name = "Auto Reel",
     CurrentValue = Config.AutoReel,
     Callback = function(Value)
         Config.AutoReel = Value
@@ -5484,7 +5504,7 @@ end
 
 Tabs.Main:CreateToggle({
     Flag = "AutoBossToggle",
-    Name = "Auto Farm Boss",
+    Name = "Auto Enzo",
     CurrentValue = Config.AutoBoss,
     Callback = function(Value)
         Config.AutoBoss = Value
@@ -5499,7 +5519,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateToggle({
     Flag = "AutoSecretBossToggle",
-    Name = "Auto Farm Secret Boss",
+    Name = "Auto Long DiaoHai",
     CurrentValue = Config.AutoSecretBoss,
     Callback = function(Value)
         Config.AutoSecretBoss = Value
@@ -5509,6 +5529,26 @@ Tabs.Main:CreateToggle({
                 CheckBossStatusOnToggle(true)
             end)
         end
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoCastBossToggle",
+    Name = "Auto Cast Farm Boss",
+    CurrentValue = Config.AutoCastBoss,
+    Callback = function(Value)
+        Config.AutoCastBoss = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoCastSecretBossToggle",
+    Name = "Auto Cast Secret Boss",
+    CurrentValue = Config.AutoCastSecretBoss,
+    Callback = function(Value)
+        Config.AutoCastSecretBoss = Value
+        SaveConfig()
     end
 })
 
