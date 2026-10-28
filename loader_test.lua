@@ -5489,17 +5489,24 @@ do
     LogoBtn.ZIndex = 5
     LogoBtn.Parent = LogoFrame
 
+    local logoMoved = false -- true once the logo has been dragged, so releasing it never opens the menu
     do
         local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
         LogoBtn.InputBegan:Connect(function(input)
             if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                 dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+                logoMoved = false
             end
         end)
         UserInputService.InputChanged:Connect(function(input)
             if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
                 local delta = input.Position - dragStart
-                LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                if Vector2.new(delta.X, delta.Y).Magnitude > 8 then
+                    logoMoved = true
+                end
+                if logoMoved then
+                    LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                end
             end
         end)
         UserInputService.InputEnded:Connect(function(input)
@@ -5543,7 +5550,7 @@ do
             local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
             local now = tick()
             TweenService:Create(logoScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-            if dist < 10 and now - lastToggleTime >= 0.12 then
+            if not logoMoved and dist < 10 and now - lastToggleTime >= 0.12 then
                 lastToggleTime = now
                 pulseRing()
                 Window:Toggle()
