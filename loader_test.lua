@@ -1243,15 +1243,16 @@ function Window:Toggle(force)
         self._toggleTween = nil
     end
     if show then
+        -- open right away: the menu is already mostly visible on the first frame
+        main.Position = self._basePos
         if not main.Visible then
-            main.GroupTransparency = 1
-            main.Position = self._basePos + UDim2.fromOffset(0, 8)
+            main.GroupTransparency = 0.6
             main.Visible = true
         end
-        self._toggleTween = tween(main, 0.16, { GroupTransparency = 0, Position = self._basePos }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        self._toggleTween = tween(main, 0.08, { GroupTransparency = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
     else
-        self._toggleTween = tween(main, 0.1, { GroupTransparency = 1, Position = self._basePos + UDim2.fromOffset(0, 6) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-        task.delay(0.11, function()
+        self._toggleTween = tween(main, 0.07, { GroupTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        task.delay(0.08, function()
             if token == self._toggleToken and not self._visible then
                 main.Visible = false
             end
@@ -1523,6 +1524,10 @@ local EquipBaitEvent = Events:WaitForChild("EquipBait", 9e9)
 local Config = {
     AutoCast = false,
     AutoCastMethod = "Instant",
+    AntiStaff = false,
+    UpgradeOptions = {"Cash", "Level"},
+    UpgradeMethod = "Instant",
+    AutoRebirth = false,
     FilterBossFish = false,
     FilterSecretFish = false,
     CastDelay = 1,
@@ -1607,6 +1612,7 @@ local function LoadConfig()
 end
 
 LoadConfig()
+Config.AutoFarmIsland = false -- Auto Farm Fish was removed from the UI
 if type(Config.SkillOrder) ~= "table" then
     Config.SkillOrder = {"Z", "X", "C", "V"}
 else
@@ -2731,43 +2737,49 @@ function UzexFilter.Classify()
 end
 
 -- Drop the rod (cancels a normal fish), equip it again, then cast
+function UzexFilter.HoldingRod()
+    local c = LocalPlayer.Character
+    return c ~= nil and c:GetAttribute("Type") == "Fishing Rod"
+end
+
 function UzexFilter.Recycle()
     if UzexFilter.Busy then return end
     UzexFilter.Busy = true
+    UzexFilter.NeedRod = true
     task.spawn(function()
-        local function holdingRod()
-            local c = LocalPlayer.Character
-            return c and c:GetAttribute("Type") == "Fishing Rod"
-        end
-        -- drop the rod (cancels the normal fish)
-        if holdingRod() then
-            pcall(function()
-                ToggleHotbar:InvokeServer("1")
-            end)
+        local function waitFor(state, maxTime)
             local t = 0
-            while holdingRod() and t < 0.6 do
+            while UzexFilter.HoldingRod() ~= state and t < maxTime do
                 task.wait(0.03)
                 t = t + 0.03
             end
+            return UzexFilter.HoldingRod() == state
         end
-        -- equip it again right away
-        if not holdingRod() then
+        -- 1) drop the rod (cancels the normal fish)
+        if UzexFilter.HoldingRod() then
             pcall(function()
                 ToggleHotbar:InvokeServer("1")
             end)
-            local t = 0
-            while not holdingRod() and t < 0.6 do
-                task.wait(0.03)
-                t = t + 0.03
-            end
+            waitFor(false, 1.0)
         end
-        -- cast
+        -- 2) equip it again, retry until the rod is really in hand
+        for _ = 1, 3 do
+            if UzexFilter.HoldingRod() then break end
+            pcall(function()
+                ToggleHotbar:InvokeServer("1")
+            end)
+            if waitFor(true, 0.8) then break end
+        end
+        -- 3) cast
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp and holdingRod() and not char:GetAttribute("Fishing") then
+        if hrp and UzexFilter.HoldingRod() and not char:GetAttribute("Fishing") then
             pcall(function()
                 FishingEvent:FireServer(hrp.CFrame)
             end)
+        end
+        if UzexFilter.HoldingRod() then
+            UzexFilter.NeedRod = false
         end
         UzexFilter.Busy = false
     end)
@@ -3438,6 +3450,19 @@ task.spawn(function()
             fightKey = nil
             cancelStage = 0
             UzexFilter.Skip = false
+        end
+        -- after a skipped fish the rod must end up in hand again (only for that case, never otherwise)
+        if UzexFilter.NeedRod and not UzexFilter.Busy then
+            if not (Config.FilterBossFish or Config.FilterSecretFish) or UzexFilter.HoldingRod() then
+                UzexFilter.NeedRod = false
+            elseif now - (UzexFilter.LastEquip or 0) > 0.8 then
+                UzexFilter.LastEquip = now
+                task.spawn(function()
+                    pcall(function()
+                        ToggleHotbar:InvokeServer("1")
+                    end)
+                end)
+            end
         end
         local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
         local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish or Config.FilterSecretFish
@@ -5451,7 +5476,7 @@ do
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
             local now = tick()
-            if dist < 10 and now - lastToggleTime >= 0.3 then
+            if dist < 10 and now - lastToggleTime >= 0.12 then
                 lastToggleTime = now
                 Window:Toggle()
             end
@@ -5464,10 +5489,9 @@ end
 
 local Tabs = {
     Main = Window:CreateTab({ Name = "Main", Icon = "home" }),
-    Player = Window:CreateTab({ Name = "Player", Icon = "user" }),
     Teleport = Window:CreateTab({ Name = "Teleport", Icon = "map-pin" }),
     Shop = Window:CreateTab({ Name = "Shop", Icon = "shopping-cart" }),
-    ESP = Window:CreateTab({ Name = "ESP", Icon = "eye" }),
+    Upgrade = Window:CreateTab({ Name = "Upgrade", Icon = "arrow-up" }),
     Misc = Window:CreateTab({ Name = "Misc", Icon = "layers" }),
     Settings = Window:CreateTab({ Name = "Settings", Icon = "settings" })
 }
@@ -5557,48 +5581,9 @@ Tabs.Main:CreateDropdown({
     end
 })
 
-Tabs.Main:CreateSection("Auto Farm Fish")
+Tabs.Settings:CreateSection("General")
 
-do
-    local farmIslandList = GetIslandList()
-    if (Config.SelectedFarmIsland == "" or not table.find(farmIslandList, Config.SelectedFarmIsland)) and #farmIslandList > 0 then
-        Config.SelectedFarmIsland = farmIslandList[1]
-    end
-
-    Tabs.Main:CreateDropdown({
-        Flag = "SelectIslandFarmDropdown",
-        Name = "Select Island",
-        Options = farmIslandList,
-        CurrentOption = Config.SelectedFarmIsland ~= "" and Config.SelectedFarmIsland or farmIslandList[1],
-        MultipleOptions = false,
-        AllowNone = false,
-        Callback = function(Value)
-            Config.SelectedFarmIsland = Value or ""
-            SaveConfig()
-            if Config.AutoFarmIsland then
-                StepAutoFarmIsland(LocalPlayer.Character)
-            end
-        end
-    })
-end
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoFarmIslandToggle",
-    Name = "Auto Farm",
-    CurrentValue = Config.AutoFarmIsland,
-    Callback = function(Value)
-        Config.AutoFarmIsland = Value
-        SaveConfig()
-        if Value then
-            StepAutoFarmIsland(LocalPlayer.Character)
-            if LocalPlayer.Character then
-                ApplyAntiConfuse(LocalPlayer.Character)
-            end
-        end
-    end
-})
-
-Tabs.Main:CreateToggle({
+Tabs.Settings:CreateToggle({
     Flag = "AutoExecuteToggle",
     Name = "Auto Execute",
     CurrentValue = Config.AutoExecute,
@@ -5868,9 +5853,9 @@ Tabs.Main:CreateButton({
     end
 })
 
-Tabs.Player:CreateSection("Movement")
+Tabs.Settings:CreateSection("Movement")
 
-Tabs.Player:CreateToggle({
+Tabs.Settings:CreateToggle({
     Flag = "LoopSpeedToggle",
     Name = "Walk Speed",
     CurrentValue = Config.LoopSpeedEnabled,
@@ -5880,7 +5865,7 @@ Tabs.Player:CreateToggle({
     end
 })
 
-Tabs.Player:CreateSlider({
+Tabs.Settings:CreateSlider({
     Flag = "WalkSpeedSlider",
     Name = "Speed",
     CurrentValue = Config.WalkSpeed,
@@ -5892,7 +5877,7 @@ Tabs.Player:CreateSlider({
     end
 })
 
-FlyToggleObj = Tabs.Player:CreateToggle({
+FlyToggleObj = Tabs.Settings:CreateToggle({
     Flag = "FlyToggle",
     Name = "Fly",
     CurrentValue = Config.FlyEnabled,
@@ -5907,7 +5892,7 @@ FlyToggleObj = Tabs.Player:CreateToggle({
     end
 })
 
-Tabs.Player:CreateSlider({
+Tabs.Settings:CreateSlider({
     Flag = "FlySpeedSlider",
     Name = "Fly Speed",
     CurrentValue = Config.FlySpeed,
@@ -5919,7 +5904,7 @@ Tabs.Player:CreateSlider({
     end
 })
 
-NoclipToggleObj = Tabs.Player:CreateToggle({
+NoclipToggleObj = Tabs.Settings:CreateToggle({
     Flag = "NoclipToggle",
     Name = "Noclip",
     CurrentValue = Config.NoclipEnabled,
@@ -5929,7 +5914,7 @@ NoclipToggleObj = Tabs.Player:CreateToggle({
     end
 })
 
-Tabs.Player:CreateToggle({
+Tabs.Settings:CreateToggle({
     Flag = "InfJumpToggle",
     Name = "Infinite Jump",
     CurrentValue = Config.InfJumpEnabled,
@@ -6219,7 +6204,9 @@ Tabs.Shop:CreateButton({
     end
 })
 
-Tabs.ESP:CreateToggle({
+Tabs.Settings:CreateSection("ESP")
+
+Tabs.Settings:CreateToggle({
     Flag = "ESPPlayers",
     Name = "ESP Players",
     CurrentValue = Config.ESPEnabled,
@@ -6231,6 +6218,168 @@ Tabs.ESP:CreateToggle({
         end
     end
 })
+
+-------------------------------------------------------------------------------
+-- Upgrade tab
+-------------------------------------------------------------------------------
+do
+    local remoteCache = {}
+
+    local function FindRemote(patterns, skipPatterns)
+        local key = table.concat(patterns, "|")
+        local cached = remoteCache[key]
+        if cached and cached.Parent then return cached end
+        for _, root in ipairs({ Events, game:GetService("ReplicatedStorage") }) do
+            for _, d in ipairs(root:GetDescendants()) do
+                if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") then
+                    local n = string.lower(d.Name)
+                    local skip = false
+                    for _, sp in ipairs(skipPatterns or {}) do
+                        if string.find(n, sp, 1, true) then skip = true end
+                    end
+                    if not skip then
+                        for _, pat in ipairs(patterns) do
+                            if string.find(n, pat, 1, true) then
+                                remoteCache[key] = d
+                                return d
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function FireRemote(remote, ...)
+        local args = table.pack(...)
+        pcall(function()
+            if remote:IsA("RemoteFunction") then
+                remote:InvokeServer(table.unpack(args, 1, args.n))
+            else
+                remote:FireServer(table.unpack(args, 1, args.n))
+            end
+        end)
+    end
+
+    local aliases = {
+        cash = { "cash", "balance", "money", "coins" },
+        level = { "level", "lvl" },
+        crystal = { "crystal", "crystals", "gem", "gems" },
+        ticket = { "ticket", "tickets" },
+    }
+
+    local function ReadResource(name)
+        local list = aliases[string.lower(name)] or { string.lower(name) }
+        local roots = { PlayerData, LocalPlayer:FindFirstChild("leaderstats"), LocalPlayer }
+        for _, root in ipairs(roots) do
+            if root then
+                for _, child in ipairs(root:GetChildren()) do
+                    if child:IsA("ValueBase") then
+                        local n = string.lower(child.Name)
+                        for _, a in ipairs(list) do
+                            if n == a then return child.Value end
+                        end
+                    end
+                end
+                local attr = root:GetAttribute(name)
+                if attr ~= nil then return attr end
+            end
+        end
+        return nil
+    end
+
+    Tabs.Upgrade:CreateSection("Character Upgrade")
+
+    Tabs.Upgrade:CreateDropdown({
+        Flag = "UpgradeOptionsDropdown",
+        Name = "Select 2 upgrade options",
+        Options = { "Cash", "Level", "Crystal", "Ticket" },
+        CurrentOption = table.clone(type(Config.UpgradeOptions) == "table" and Config.UpgradeOptions or { "Cash", "Level" }),
+        MultipleOptions = true,
+        Callback = function(Value)
+            if type(Value) ~= "table" then return end
+            local picked = {}
+            for i, v in ipairs(Value) do
+                if i <= 2 then table.insert(picked, v) end
+            end
+            Config.UpgradeOptions = picked
+            SaveConfig()
+        end
+    })
+
+    Tabs.Upgrade:CreateDropdown({
+        Flag = "UpgradeMethodDropdown",
+        Name = "Upgrade Method",
+        Options = { "Instant" },
+        CurrentOption = "Instant",
+        MultipleOptions = false,
+        AllowNone = false,
+        Callback = function(Value)
+            Config.UpgradeMethod = "Instant"
+            SaveConfig()
+        end
+    })
+
+    Tabs.Upgrade:CreateToggle({
+        Flag = "AutoRebirthToggle",
+        Name = "Auto Rebirth",
+        CurrentValue = Config.AutoRebirth,
+        Callback = function(Value)
+            Config.AutoRebirth = Value
+            SaveConfig()
+        end
+    })
+
+    Tabs.Upgrade:CreateButton({
+        Name = "Check Resources",
+        Callback = function()
+            local parts = {}
+            for _, opt in ipairs({ "Cash", "Level", "Crystal", "Ticket" }) do
+                local v = ReadResource(opt)
+                table.insert(parts, opt .. ": " .. (v ~= nil and tostring(v) or "?"))
+            end
+            pcall(function()
+                Library:Notify({
+                    Title = "Resources",
+                    Content = #parts > 0 and table.concat(parts, "  |  ") or "No upgrade option selected",
+                    Duration = 5,
+                })
+            end)
+        end
+    })
+
+    task.spawn(function()
+        local warned = false
+        while true do
+            task.wait(0.5)
+            if Config.AutoRebirth then
+                local rebirth = FindRemote({ "rebirth" })
+                if rebirth then
+                    local upgrade = FindRemote({ "upgrade" }, { "skill" })
+                    if upgrade then
+                        for _, opt in ipairs(Config.UpgradeOptions or {}) do
+                            FireRemote(upgrade, opt)
+                        end
+                    end
+                    FireRemote(rebirth)
+                elseif not warned then
+                    warned = true
+                    pcall(function()
+                        Library:Notify({
+                            Title = "Auto Rebirth",
+                            Content = "Rebirth remote not found in this game",
+                            Type = "warning",
+                            Duration = 5,
+                        })
+                    end)
+                end
+            else
+                warned = false
+            end
+        end
+    end)
+end
 
 Tabs.Misc:CreateSection("Visual")
 
@@ -6782,7 +6931,102 @@ do
         end)
     end)
 
+    ---------------------------------------------------------------- anti staff
+    local STAFF_MIN_RANK = 200
+    local staffChecked = {}
+    local staffHandled = false
+
+    local function isStaffPlayer(plr)
+        if plr == LocalPlayer then return false end
+        local found = false
+        pcall(function()
+            for _, a in ipairs({ "Staff", "IsStaff", "Admin", "IsAdmin", "Moderator", "IsModerator" }) do
+                if plr:GetAttribute(a) == true then found = true end
+            end
+        end)
+        if found then return true end
+        pcall(function()
+            if game.CreatorType == Enum.CreatorType.Group
+                and plr:GetRankInGroup(game.CreatorId) >= STAFF_MIN_RANK then
+                found = true
+            end
+        end)
+        return found
+    end
+
+    local function LeaveForStaff(plr)
+        if staffHandled or not Config.AntiStaff then return end
+        staffHandled = true
+        pcall(function()
+            Library:Notify({
+                Title = "Anti Staff",
+                Content = "Staff detected: " .. plr.Name .. " - leaving server",
+                Type = "warning",
+                Duration = 6,
+            })
+        end)
+        local sent = false
+        task.spawn(function()
+            sendWebhook("Staff detected", plr.Name .. " is in the server.", COLOR_WARN, {
+                { name = "Action", value = "Leaving server", inline = true },
+            })
+            sent = true
+        end)
+        local waited = 0
+        while not sent and waited < 3 do
+            task.wait(0.25)
+            waited = waited + 0.25
+        end
+        rejoining = true -- stop Auto Rejoin from going back to this server
+        QueueAutoExecute(true)
+        pcall(function()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+        end)
+        task.wait(8)
+        pcall(function()
+            LocalPlayer:Kick("Anti Staff: " .. plr.Name)
+        end)
+        staffHandled = false
+    end
+
+    local function checkStaff(plr)
+        if staffChecked[plr] then return end
+        staffChecked[plr] = true
+        task.spawn(function()
+            if Config.AntiStaff and isStaffPlayer(plr) then
+                LeaveForStaff(plr)
+            end
+        end)
+    end
+
+    game:GetService("Players").PlayerAdded:Connect(checkStaff)
+    task.spawn(function()
+        while task.wait(5) do
+            if Config.AntiStaff then
+                for _, plr in ipairs(game:GetService("Players"):GetPlayers()) do
+                    checkStaff(plr)
+                end
+            end
+        end
+    end)
+
     ---------------------------------------------------------------- settings UI
+    Tabs.Settings:CreateSection("Anti Staff")
+
+    Tabs.Settings:CreateToggle({
+        Flag = "AntiStaffToggle",
+        Name = "Anti Staff",
+        Description = "Leaves the server when a staff member is in it",
+        CurrentValue = Config.AntiStaff,
+        Callback = function(Value)
+            Config.AntiStaff = Value
+            if Value then
+                table.clear(staffChecked)
+            end
+            SaveConfig()
+        end
+    })
+
     Tabs.Settings:CreateSection("Auto Rejoin")
 
     Tabs.Settings:CreateToggle({
