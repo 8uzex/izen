@@ -1605,7 +1605,8 @@ local Config = {
     SelectedFarmIsland = "Beginning Isle",
     AutoTicketQuest = false,
     TicketQuestMode = "Hard",
-    AutoEquipBestBait = false
+    AutoEquipBestBait = false,
+    AutoEquipRod = false
 }
 
 local SAVE_FOLDER = "UzexHub"
@@ -3699,6 +3700,7 @@ end)
 
 local lastSellTime = 0
 local lastBuyBaitTime = 0
+local StepAutoEquipBestBait
 local RemotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
 
 local function FindRemote(name)
@@ -4075,6 +4077,20 @@ do
         lastAcceptAttempt = os.clock()
     end
 
+    -- after the ticket quest reward is claimed: buy bait, then equip the best bait
+    local function AfterTicketClaim()
+        task.spawn(function()
+            task.wait(0.6)
+            if Config.SelectedBuyBait ~= "" then
+                DoBuyBait(Config.SelectedBuyBait, Config.BuyBaitAmount)
+            end
+            task.wait(0.8)
+            if StepAutoEquipBestBait then
+                pcall(StepAutoEquipBestBait, true)
+            end
+        end)
+    end
+
     function StepSmartTicketQuest()
         local now = os.clock()
         if now < questCooldownUntil then
@@ -4088,6 +4104,7 @@ do
         if state == "completed" then
             if now - lastTurnInAttempt >= 1.5 then
                 TurnInTicketQuest(giver)
+                AfterTicketClaim()
                 task.wait(0.5)
                 AcceptTicketQuest(giver)
             end
@@ -4349,7 +4366,6 @@ do
 end
 
 
-local StepAutoEquipBestBait
 do
     local function CleanBaitName(str)
         if not str or str == "" then return "" end
@@ -5496,17 +5512,40 @@ do
 
     local lastToggleTime = 0
     local clickStartPos = Vector2.new()
+
+    -- press effect: the logo squeezes on press, springs back on release, and a ring pulses out
+    local logoScale = Instance.new("UIScale", LogoFrame)
+    local function pulseRing()
+        local ring = Instance.new("Frame")
+        ring.AnchorPoint = Vector2.new(0.5, 0.5)
+        ring.Position = UDim2.new(0.5, 0, 0.5, 0)
+        ring.Size = UDim2.new(1, 0, 1, 0)
+        ring.BackgroundTransparency = 1
+        ring.ZIndex = 4
+        ring.Parent = LogoFrame
+        Instance.new("UICorner", ring).CornerRadius = UDim.new(0.3, 0)
+        local ringStroke = Instance.new("UIStroke", ring)
+        ringStroke.Color = Color3.fromRGB(110, 170, 255)
+        ringStroke.Thickness = 2
+        local info = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(ring, info, { Size = UDim2.new(1.9, 0, 1.9, 0) }):Play()
+        TweenService:Create(ringStroke, info, { Transparency = 1 }):Play()
+        task.delay(0.42, function() ring:Destroy() end)
+    end
     LogoBtn.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+            TweenService:Create(logoScale, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.82 }):Play()
         end
     end)
     LogoBtn.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
             local now = tick()
+            TweenService:Create(logoScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
             if dist < 10 and now - lastToggleTime >= 0.12 then
                 lastToggleTime = now
+                pulseRing()
                 Window:Toggle()
             end
         end
@@ -6302,19 +6341,40 @@ Tabs.Misc:CreateToggle({
 })
 
 do
-    local disabledFx = {}
+    local weak = { __mode = "k" }
+    local savedParts = setmetatable({}, weak)   -- BasePart -> { Material, Reflectance, CastShadow }
+    local savedDecals = setmetatable({}, weak)  -- Decal/Texture -> Transparency
+    local savedFx = setmetatable({}, weak)      -- effect -> true
     local savedPerf = nil
     local descConn = nil
+    local optimized = 0
     local FX_CLASSES = {
         ParticleEmitter = true, Trail = true, Beam = true, Smoke = true,
         Fire = true, Sparkles = true, BloomEffect = true, BlurEffect = true,
-        SunRaysEffect = true, DepthOfFieldEffect = true,
+        SunRaysEffect = true, DepthOfFieldEffect = true, ColorCorrectionEffect = false,
     }
 
-    local function killFx(inst)
-        if FX_CLASSES[inst.ClassName] and inst.Enabled then
-            disabledFx[inst] = true
-            inst.Enabled = false
+    local function optimize(inst)
+        if FX_CLASSES[inst.ClassName] then
+            if inst.Enabled then
+                savedFx[inst] = true
+                inst.Enabled = false
+                optimized = optimized + 1
+            end
+        elseif inst:IsA("BasePart") then
+            if savedParts[inst] == nil then
+                savedParts[inst] = { inst.Material, inst.Reflectance, inst.CastShadow }
+                inst.Material = Enum.Material.SmoothPlastic
+                inst.Reflectance = 0
+                inst.CastShadow = false
+                optimized = optimized + 1
+            end
+        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+            if savedDecals[inst] == nil then
+                savedDecals[inst] = inst.Transparency
+                inst.Transparency = 1
+                optimized = optimized + 1
+            end
         end
     end
 
@@ -6322,9 +6382,15 @@ do
         if on then
             if savedPerf then return end
             savedPerf = {}
+            optimized = 0
             pcall(function()
                 savedPerf.quality = settings().Rendering.QualityLevel
                 settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            end)
+            pcall(function()
+                local ugs = UserSettings():GetService("UserGameSettings")
+                savedPerf.saved = ugs.SavedQualityLevel
+                ugs.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
             end)
             pcall(function()
                 savedPerf.shadows = Lighting.GlobalShadows
@@ -6333,57 +6399,87 @@ do
             pcall(function()
                 local terrain = workspace:FindFirstChildOfClass("Terrain")
                 if terrain then
-                    savedPerf.water = {
+                    savedPerf.terrain = {
                         terrain.WaterWaveSize, terrain.WaterWaveSpeed,
-                        terrain.WaterReflectance, terrain.WaterTransparency,
+                        terrain.WaterReflectance, terrain.Decoration,
                     }
                     terrain.WaterWaveSize = 0
                     terrain.WaterWaveSpeed = 0
                     terrain.WaterReflectance = 0
+                    terrain.Decoration = false
                 end
             end)
             task.spawn(function()
                 local n = 0
                 for _, root in ipairs({ workspace, Lighting }) do
                     for _, d in ipairs(root:GetDescendants()) do
-                        pcall(killFx, d)
+                        pcall(optimize, d)
                         n = n + 1
-                        if n % 400 == 0 then task.wait() end
+                        if n % 300 == 0 then task.wait() end
                     end
                 end
+                pcall(function()
+                    Library:Notify({
+                        Title = "Performance Mode",
+                        Content = "Optimized " .. optimized .. " objects",
+                        Type = "success",
+                        Duration = 3,
+                    })
+                end)
             end)
             descConn = workspace.DescendantAdded:Connect(function(d)
-                pcall(killFx, d)
+                pcall(optimize, d)
             end)
         else
             if not savedPerf then return end
             if descConn then descConn:Disconnect() descConn = nil end
+            local snapshot = savedPerf
+            savedPerf = nil
             pcall(function()
-                if savedPerf.quality then settings().Rendering.QualityLevel = savedPerf.quality end
+                if snapshot.quality then settings().Rendering.QualityLevel = snapshot.quality end
             end)
             pcall(function()
-                if savedPerf.shadows ~= nil then Lighting.GlobalShadows = savedPerf.shadows end
+                if snapshot.saved then
+                    UserSettings():GetService("UserGameSettings").SavedQualityLevel = snapshot.saved
+                end
+            end)
+            pcall(function()
+                if snapshot.shadows ~= nil then Lighting.GlobalShadows = snapshot.shadows end
             end)
             pcall(function()
                 local terrain = workspace:FindFirstChildOfClass("Terrain")
-                local w = savedPerf.water
-                if terrain and w then
-                    terrain.WaterWaveSize, terrain.WaterWaveSpeed = w[1], w[2]
-                    terrain.WaterReflectance, terrain.WaterTransparency = w[3], w[4]
+                local t = snapshot.terrain
+                if terrain and t then
+                    terrain.WaterWaveSize, terrain.WaterWaveSpeed = t[1], t[2]
+                    terrain.WaterReflectance, terrain.Decoration = t[3], t[4]
                 end
             end)
-            for inst in pairs(disabledFx) do
-                pcall(function() inst.Enabled = true end)
-            end
-            table.clear(disabledFx)
-            savedPerf = nil
+            task.spawn(function()
+                local n = 0
+                for inst, v in pairs(savedParts) do
+                    pcall(function()
+                        inst.Material, inst.Reflectance, inst.CastShadow = v[1], v[2], v[3]
+                    end)
+                    savedParts[inst] = nil
+                    n = n + 1
+                    if n % 300 == 0 then task.wait() end
+                end
+                for inst, v in pairs(savedDecals) do
+                    pcall(function() inst.Transparency = v end)
+                    savedDecals[inst] = nil
+                end
+                for inst in pairs(savedFx) do
+                    pcall(function() inst.Enabled = true end)
+                    savedFx[inst] = nil
+                end
+            end)
         end
     end
 
     Tabs.Misc:CreateToggle({
         Flag = "PerformanceModeToggle",
         Name = "Performance Mode",
-        Description = "Lower graphics: no shadows, effects or water waves for more FPS",
+        Description = "Lower graphics: flat materials, no shadows/effects/decals for more FPS",
         CurrentValue = Config.PerformanceMode,
         Callback = function(Value)
             Config.PerformanceMode = Value
@@ -6501,6 +6597,48 @@ Tabs.Main:CreateToggle({
     end
 })
 
+do
+    local lastRodEquip = 0
+
+    local function EquipRodNow()
+        lastRodEquip = os.clock()
+        pcall(function()
+            ToggleHotbar:InvokeServer("1")
+        end)
+    end
+
+    -- keeps the fishing rod in hand (waits while the fish filter is swapping the rod itself)
+    task.spawn(function()
+        while task.wait(0.5) do
+            if Config.AutoEquipRod and not UzexFilter.Busy and not UzexFilter.NeedRod then
+                local char = LocalPlayer.Character
+                if char and char:FindFirstChild("HumanoidRootPart")
+                    and char:GetAttribute("Type") ~= "Fishing Rod"
+                    and os.clock() - lastRodEquip > 1.5 then
+                    EquipRodNow()
+                end
+            end
+        end
+    end)
+
+    Tabs.Main:CreateToggle({
+        Flag = "AutoEquipRodToggle",
+        Name = "Auto Equip Rod",
+        CurrentValue = Config.AutoEquipRod,
+        Callback = function(Value)
+            Config.AutoEquipRod = Value
+            SaveConfig()
+            if Value then
+                task.spawn(function()
+                    local char = LocalPlayer.Character
+                    if char and char:GetAttribute("Type") ~= "Fishing Rod" then
+                        EquipRodNow()
+                    end
+                end)
+            end
+        end
+    })
+end
 
 Tabs.Main:CreateSection("Skill")
 
