@@ -260,7 +260,7 @@ local function getGui()
     end
 
     local holder = new("Frame", {
-        Name = "Notifications",
+        Name = "Thông báo",
         AnchorPoint = Vector2.new(1, 0),
         Position = UDim2.new(1, -14, 0, 14),
         Size = UDim2.fromOffset(270, 0),
@@ -1393,8 +1393,8 @@ function Library:CreateWindow(o)
     close.MouseButton1Click:Connect(function()
         window:Toggle(false)
         Library:Notify({
-            Title = "Hidden",
-            Content = "Press " .. window._toggleKey.Name .. " or tap the logo to reopen.",
+            Title = "Đã ẩn",
+            Content = "Nhấn " .. window._toggleKey.Name .. " hoặc chạm vào logo để mở lại.",
             Duration = 3,
         })
     end)
@@ -1711,8 +1711,8 @@ local function QueueAutoExecute(force)
     if autoExecPayload:find("YOUR-USER", 1, true) then
         pcall(function()
             Library:Notify({
-                Title = "Auto Execute",
-                Content = "Set the script link in autoExecPayload first.",
+                Title = "Tự chạy script",
+                Content = "Hãy đặt liên kết script trong autoExecPayload trước.",
                 Type = "warning",
                 Duration = 6,
             })
@@ -3444,8 +3444,8 @@ task.spawn(function()
                     fightAllowed = true
                     pcall(function()
                         Library:Notify({
-                            Title = "Fish Filter",
-                            Content = "Found: " .. (shown ~= "" and shown or "boss fish") .. (isSecret and " (secret)" or " (boss)"),
+                            Title = "Bộ lọc cá",
+                            Content = "Đã tìm thấy: " .. (shown ~= "" and shown or "boss fish") .. (isSecret and " (bí mật)" or " (boss)"),
                             Duration = 4,
                         })
                     end)
@@ -3455,8 +3455,8 @@ task.spawn(function()
                         UzexFilter.LastNotify = now
                         pcall(function()
                             Library:Notify({
-                                Title = "Fish Filter",
-                                Content = "Skipped: " .. (shown ~= "" and shown or "unknown fish") .. (isSecret and " [secret]" or (isBoss and " [boss]" or " [normal]")),
+                                Title = "Bộ lọc cá",
+                                Content = "Đã bỏ qua: " .. (shown ~= "" and shown or "unknown fish") .. (isSecret and " [secret]" or (isBoss and " [boss]" or " [normal]")),
                                 Duration = 2,
                             })
                         end)
@@ -3870,8 +3870,8 @@ do
                             if not warnedFallback then
                                 warnedFallback = true
                                 Library:Notify({
-                                    Title = "Auto Sell Fish",
-                                    Content = "Couldn't read the capacity counter, so this method sells every 60s instead.",
+                                    Title = "Tự động bán cá",
+                                    Content = "Không đọc được sức chứa túi cá, phương thức này sẽ bán cá mỗi 60 giây.",
                                     Type = "warning",
                                     Duration = 6,
                                 })
@@ -4636,8 +4636,8 @@ do
             if force then
                 pcall(function()
                     Library:Notify({
-                        Title = "Auto Equip Bait",
-                        Content = "No bait found in inventory",
+                        Title = "Tự trang bị mồi",
+                        Content = "Không tìm thấy mồi trong túi đồ",
                         Duration = 3
                     })
                 end)
@@ -4684,8 +4684,8 @@ do
 
         pcall(function()
             Library:Notify({
-                Title = "Auto Equip Bait",
-                Content = "Equipped " .. bestBait .. " - Luck " .. bestLuck .. "%",
+                Title = "Tự trang bị mồi",
+                Content = "Đã trang bị " .. bestBait .. " - Luck " .. bestLuck .. "%",
                 Duration = 3
             })
         end)
@@ -5136,7 +5136,7 @@ local function TeleportToNPC(npcName)
     if not targetPart or not targetPart:IsDescendantOf(workspace) then
         pcall(function()
             Library:Notify({
-                Title = "Teleport NPC",
+                Title = "Dịch chuyển đến NPC",
                 Content = npcName .. " has not spawned on the map yet!",
                 Duration = 4
             })
@@ -5177,8 +5177,8 @@ local function TeleportToPlayer(targetName)
     if not targetPlr then
         pcall(function()
             Library:Notify({
-                Title = "Teleport Player",
-                Content = "Player " .. tostring(targetName) .. " not found!",
+                Title = "Dịch chuyển người chơi",
+                Content = "Người chơi " .. tostring(targetName) .. " không tìm thấy!",
                 Duration = 3
             })
         end)
@@ -5190,7 +5190,7 @@ local function TeleportToPlayer(targetName)
     if not tHrp then
         pcall(function()
             Library:Notify({
-                Title = "Teleport Player",
+                Title = "Dịch chuyển người chơi",
                 Content = targetPlr.Name .. " has no character spawned!",
                 Duration = 3
             })
@@ -5405,7 +5405,7 @@ local Window = Library:CreateWindow({
     ConfigurationSaving = { Enabled = false, FolderName = SAVE_FOLDER },
     SaveSize = false,
     Home = {
-        Name = "Home",
+        Name = "Trang chủ",
         Title = "Uzex Hub",
         Desc = "Heavyweigh Fishing",
         Discord = DISCORD_INVITE,
@@ -5580,12 +5580,12 @@ do
 end
 
 local Tabs = {
-    Main = Window:CreateTab({ Name = "Main", Icon = "home" }),
-    Teleport = Window:CreateTab({ Name = "Teleport", Icon = "map-pin" }),
-    Shop = Window:CreateTab({ Name = "Shop", Icon = "shopping-cart" }),
-    Upgrade = Window:CreateTab({ Name = "Upgrade", Icon = "arrow-up" }),
-    Misc = Window:CreateTab({ Name = "Misc", Icon = "layers" }),
-    Settings = Window:CreateTab({ Name = "Settings", Icon = "settings" })
+    Main = Window:CreateTab({ Name = "Chính", Icon = "home" }),
+    Teleport = Window:CreateTab({ Name = "Dịch chuyển", Icon = "map-pin" }),
+    Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
+    Upgrade = Window:CreateTab({ Name = "Nâng cấp", Icon = "arrow-up" }),
+    Misc = Window:CreateTab({ Name = "Khác", Icon = "layers" }),
+    Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" })
 }
 
 local FlyToggleObj, NoclipToggleObj
@@ -5617,11 +5617,11 @@ local function toggleNoclip()
     end
 end
 
-Tabs.Main:CreateSection("Selling")
+Tabs.Main:CreateSection("Bán cá")
 
 Tabs.Main:CreateToggle({
     Flag = "AutoSellToggle",
-    Name = "Auto Sell Fish",
+    Name = "Tự động bán cá",
     CurrentValue = Config.AutoSell,
     Callback = function(Value)
         Config.AutoSell = Value
@@ -5634,7 +5634,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateDropdown({
     Flag = "AutoSellMethodDropdown",
-    Name = "Method Sell #1",
+    Name = "Cách bán cá #1",
     Options = {"Spam", "When full"},
     CurrentOption = Config.AutoSellMethod or "Spam",
     MultipleOptions = false,
@@ -5645,11 +5645,11 @@ Tabs.Main:CreateDropdown({
     end
 })
 
-Tabs.Main:CreateSection("Auto Ticket Quest")
+Tabs.Main:CreateSection("Nhiệm vụ vé tự động")
 
 Tabs.Main:CreateToggle({
     Flag = "AutoTicketQuestToggle",
-    Name = "Auto Claim Quest Ticket",
+    Name = "Tự nhận vé nhiệm vụ",
     CurrentValue = Config.AutoTicketQuest,
     Callback = function(Value)
         Config.AutoTicketQuest = Value
@@ -5662,7 +5662,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateDropdown({
     Flag = "TicketQuestModeDropdown",
-    Name = "Quest Mode",
+    Name = "Chế độ nhiệm vụ",
     Options = {"Hard", "Easy"},
     CurrentOption = Config.TicketQuestMode or "Hard",
     MultipleOptions = false,
@@ -5673,11 +5673,11 @@ Tabs.Main:CreateDropdown({
     end
 })
 
-Tabs.Settings:CreateSection("General")
+Tabs.Settings:CreateSection("Chung")
 
 Tabs.Settings:CreateToggle({
     Flag = "AutoExecuteToggle",
-    Name = "Auto Execute",
+    Name = "Tự chạy script",
     CurrentValue = Config.AutoExecute,
     Callback = function(Value)
         Config.AutoExecute = Value
@@ -5688,11 +5688,11 @@ Tabs.Settings:CreateToggle({
     end
 })
 
-Tabs.Settings:CreateSection("Movement")
+Tabs.Settings:CreateSection("Di chuyển")
 
 Tabs.Settings:CreateToggle({
     Flag = "LoopSpeedToggle",
-    Name = "Walk Speed",
+    Name = "Tốc độ đi bộ",
     CurrentValue = Config.LoopSpeedEnabled,
     Callback = function(Value)
         Config.LoopSpeedEnabled = Value
@@ -5702,7 +5702,7 @@ Tabs.Settings:CreateToggle({
 
 Tabs.Settings:CreateSlider({
     Flag = "WalkSpeedSlider",
-    Name = "Speed",
+    Name = "Tốc độ",
     CurrentValue = Config.WalkSpeed,
     Range = {16, 250},
     Increment = 1,
@@ -5714,7 +5714,7 @@ Tabs.Settings:CreateSlider({
 
 FlyToggleObj = Tabs.Settings:CreateToggle({
     Flag = "FlyToggle",
-    Name = "Fly",
+    Name = "Bay",
     CurrentValue = Config.FlyEnabled,
     Callback = function(Value)
         Config.FlyEnabled = Value
@@ -5729,7 +5729,7 @@ FlyToggleObj = Tabs.Settings:CreateToggle({
 
 Tabs.Settings:CreateSlider({
     Flag = "FlySpeedSlider",
-    Name = "Fly Speed",
+    Name = "Tốc độ bay",
     CurrentValue = Config.FlySpeed,
     Range = {1, 20},
     Increment = 0.1,
@@ -5741,7 +5741,7 @@ Tabs.Settings:CreateSlider({
 
 NoclipToggleObj = Tabs.Settings:CreateToggle({
     Flag = "NoclipToggle",
-    Name = "Noclip",
+    Name = "Đi xuyên vật thể",
     CurrentValue = Config.NoclipEnabled,
     Callback = function(Value)
         Config.NoclipEnabled = Value
@@ -5751,7 +5751,7 @@ NoclipToggleObj = Tabs.Settings:CreateToggle({
 
 Tabs.Settings:CreateToggle({
     Flag = "InfJumpToggle",
-    Name = "Infinite Jump",
+    Name = "Nhảy vô hạn",
     CurrentValue = Config.InfJumpEnabled,
     Callback = function(Value)
         Config.InfJumpEnabled = Value
@@ -5759,7 +5759,7 @@ Tabs.Settings:CreateToggle({
     end
 })
 
-Tabs.Teleport:CreateSection("Island")
+Tabs.Teleport:CreateSection("Đảo")
 
 do
     local islandList = GetIslandList()
@@ -5769,7 +5769,7 @@ do
 
     Tabs.Teleport:CreateDropdown({
         Flag = "SelectIslandDropdown",
-        Name = "Select Island",
+        Name = "Chọn đảo",
         Options = islandList,
         CurrentOption = Config.SelectedIsland ~= "" and Config.SelectedIsland or islandList[1],
         MultipleOptions = false,
@@ -5782,7 +5782,7 @@ do
 end
 
 Tabs.Teleport:CreateButton({
-    Name = "Teleport To Island",
+    Name = "Dịch chuyển đến đảo",
     Callback = function()
         TeleportToIsland(Config.SelectedIsland)
     end
@@ -5798,7 +5798,7 @@ do
 
     local NPCDropdown = Tabs.Teleport:CreateDropdown({
         Flag = "SelectNPCDropdown",
-        Name = "Select NPC",
+        Name = "Chọn NPC",
         Options = npcList,
         CurrentOption = Config.SelectedNPC ~= "" and Config.SelectedNPC or npcList[1],
         MultipleOptions = false,
@@ -5810,7 +5810,7 @@ do
     })
 
     Tabs.Teleport:CreateButton({
-        Name = "Teleport To NPC",
+        Name = "Dịch chuyển đến NPC",
         Callback = function()
             local chosen = (NPCDropdown and NPCDropdown:Get()) or Config.SelectedNPC
             TeleportToNPC(chosen)
@@ -5818,7 +5818,7 @@ do
     })
 end
 
-Tabs.Teleport:CreateSection("Player")
+Tabs.Teleport:CreateSection("Người chơi")
 
 do
     local playerList = GetPlayerList()
@@ -5831,7 +5831,7 @@ do
 
     local PlayerDropdown = Tabs.Teleport:CreateDropdown({
         Flag = "SelectPlayerDropdown",
-        Name = "Select Player",
+        Name = "Chọn người chơi",
         Options = playerList,
         CurrentOption = Config.SelectedPlayer ~= "" and Config.SelectedPlayer or playerList[1],
         MultipleOptions = false,
@@ -5866,7 +5866,7 @@ do
     end)
 
     Tabs.Teleport:CreateButton({
-        Name = "Teleport To Player",
+        Name = "Dịch chuyển đến người chơi",
         Callback = function()
             local chosen = (PlayerDropdown and PlayerDropdown:Get()) or Config.SelectedPlayer
             if chosen and chosen ~= "None" then
@@ -5876,10 +5876,10 @@ do
     })
 end
 
-Tabs.Shop:CreateSection("Fish")
+Tabs.Shop:CreateSection("Cá")
 
 Tabs.Shop:CreateButton({
-    Name = "Unlock all fish",
+    Name = "Mở khóa tất cả cá",
     Description = "Shows every fish as unlocked in the Index menu",
     Callback = function()
         local count = 0
@@ -5926,7 +5926,7 @@ Tabs.Shop:CreateButton({
     end
 })
 
-Tabs.Shop:CreateSection("Buy Bait")
+Tabs.Shop:CreateSection("Mua mồi")
 
 do
     local buyBaitList = GetBuyableBaits()
@@ -5936,7 +5936,7 @@ do
 
     Tabs.Shop:CreateDropdown({
         Flag = "SelectBuyBaitDropdown",
-        Name = "Select Bait",
+        Name = "Chọn mồi",
         Options = buyBaitList,
         CurrentOption = Config.SelectedBuyBait ~= "" and Config.SelectedBuyBait or buyBaitList[1],
         MultipleOptions = false,
@@ -5950,7 +5950,7 @@ end
 
 Tabs.Shop:CreateInput({
     Flag = "BuyBaitAmountInput",
-    Name = "Buy Amount",
+    Name = "Số lượng mua",
     CurrentValue = tostring(Config.BuyBaitAmount or 1),
     Numeric = true,
     Finished = false,
@@ -5963,7 +5963,7 @@ Tabs.Shop:CreateInput({
 
 Tabs.Shop:CreateInput({
     Flag = "BuyBaitDelayInput",
-    Name = "Buy Delay Min",
+    Name = "Độ trễ mua (phút)",
     CurrentValue = tostring(Config.BuyBaitDelay or 1),
     Numeric = true,
     Finished = false,
@@ -5976,7 +5976,7 @@ Tabs.Shop:CreateInput({
 
 Tabs.Shop:CreateToggle({
     Flag = "AutoBuyBaitToggle",
-    Name = "Auto Buy Bait",
+    Name = "Tự động mua mồi",
     CurrentValue = Config.AutoBuyBait,
     Callback = function(Value)
         Config.AutoBuyBait = Value
@@ -5988,13 +5988,13 @@ Tabs.Shop:CreateToggle({
 })
 
 Tabs.Shop:CreateButton({
-    Name = "Buy Bait",
+    Name = "Mua mồi",
     Callback = function()
         DoBuyBait(Config.SelectedBuyBait, Config.BuyBaitAmount)
     end
 })
 
-Tabs.Shop:CreateSection("Craft Bait")
+Tabs.Shop:CreateSection("Chế tạo mồi")
 
 do
     local baitList = GetCraftableBaits()
@@ -6004,7 +6004,7 @@ do
 
     Tabs.Shop:CreateDropdown({
         Flag = "SelectBaitDropdown",
-        Name = "Select Bait",
+        Name = "Chọn mồi",
         Options = baitList,
         CurrentOption = Config.SelectedBait ~= "" and Config.SelectedBait or baitList[1],
         MultipleOptions = false,
@@ -6018,7 +6018,7 @@ end
 
 Tabs.Shop:CreateInput({
     Flag = "BaitAmountInput",
-    Name = "Craft Amount",
+    Name = "Số lượng chế tạo",
     CurrentValue = tostring(Config.BaitAmount or 1),
     Numeric = true,
     Finished = false,
@@ -6031,7 +6031,7 @@ Tabs.Shop:CreateInput({
 
 Tabs.Shop:CreateToggle({
     Flag = "AutoCraftBaitToggle",
-    Name = "Auto Craft Bait",
+    Name = "Tự động chế tạo mồi",
     CurrentValue = Config.AutoCraftBait,
     Callback = function(Value)
         Config.AutoCraftBait = Value
@@ -6040,7 +6040,7 @@ Tabs.Shop:CreateToggle({
 })
 
 Tabs.Shop:CreateButton({
-    Name = "Craft Bait",
+    Name = "Chế tạo mồi",
     Callback = function()
         if Config.SelectedBait ~= "" then
             CraftBaitEvent:FireServer(Config.SelectedBait, math.max(1, math.floor(tonumber(Config.BaitAmount) or 1)))
@@ -6048,7 +6048,7 @@ Tabs.Shop:CreateButton({
     end
 })
 
-Tabs.Shop:CreateSection("Craft Rod")
+Tabs.Shop:CreateSection("Chế tạo cần câu")
 
 do
     local rodList = GetCraftableRods()
@@ -6058,7 +6058,7 @@ do
 
     Tabs.Shop:CreateDropdown({
         Flag = "SelectRodDropdown",
-        Name = "Select Rod",
+        Name = "Chọn cần câu",
         Options = rodList,
         CurrentOption = Config.SelectedRod ~= "" and Config.SelectedRod or rodList[1],
         MultipleOptions = false,
@@ -6072,7 +6072,7 @@ end
 
 Tabs.Shop:CreateToggle({
     Flag = "AutoCraftRodToggle",
-    Name = "Auto Craft Rod",
+    Name = "Tự động chế tạo cần câu",
     CurrentValue = Config.AutoCraftRod,
     Callback = function(Value)
         Config.AutoCraftRod = Value
@@ -6081,7 +6081,7 @@ Tabs.Shop:CreateToggle({
 })
 
 Tabs.Shop:CreateButton({
-    Name = "Craft Rod",
+    Name = "Chế tạo cần câu",
     Callback = function()
         if Config.SelectedRod ~= "" then
             CraftRodEvent:FireServer(Config.SelectedRod)
@@ -6093,7 +6093,7 @@ Tabs.Settings:CreateSection("ESP")
 
 Tabs.Settings:CreateToggle({
     Flag = "ESPPlayers",
-    Name = "ESP Players",
+    Name = "ESP người chơi",
     CurrentValue = Config.ESPEnabled,
     Callback = function(Value)
         Config.ESPEnabled = Value
@@ -6174,11 +6174,11 @@ do
         return nil
     end
 
-    Tabs.Upgrade:CreateSection("Character Upgrade")
+    Tabs.Upgrade:CreateSection("Nâng cấp nhân vật")
 
     Tabs.Upgrade:CreateDropdown({
         Flag = "UpgradeOptionsDropdown",
-        Name = "Select 2 upgrade options",
+        Name = "Chọn 2 mục nâng cấp",
         Options = { "Cash", "Level", "Crystal", "Ticket" },
         CurrentOption = table.clone(type(Config.UpgradeOptions) == "table" and Config.UpgradeOptions or { "Cash", "Level" }),
         MultipleOptions = true,
@@ -6195,7 +6195,7 @@ do
 
     Tabs.Upgrade:CreateDropdown({
         Flag = "UpgradeMethodDropdown",
-        Name = "Upgrade Method",
+        Name = "Phương thức nâng cấp",
         Options = { "Instant" },
         CurrentOption = "Instant",
         MultipleOptions = false,
@@ -6208,7 +6208,7 @@ do
 
     Tabs.Upgrade:CreateToggle({
         Flag = "AutoRebirthToggle",
-        Name = "Auto Rebirth",
+        Name = "Tự động tái sinh",
         CurrentValue = Config.AutoRebirth,
         Callback = function(Value)
             Config.AutoRebirth = Value
@@ -6217,7 +6217,7 @@ do
     })
 
     Tabs.Upgrade:CreateButton({
-        Name = "Check Resources",
+        Name = "Kiểm tra tài nguyên",
         Callback = function()
             local parts = {}
             for _, opt in ipairs({ "Cash", "Level", "Crystal", "Ticket" }) do
@@ -6226,7 +6226,7 @@ do
             end
             pcall(function()
                 Library:Notify({
-                    Title = "Resources",
+                    Title = "Tài nguyên",
                     Content = #parts > 0 and table.concat(parts, "  |  ") or "No upgrade option selected",
                     Duration = 5,
                 })
@@ -6252,8 +6252,8 @@ do
                     warned = true
                     pcall(function()
                         Library:Notify({
-                            Title = "Auto Rebirth",
-                            Content = "Rebirth remote not found in this game",
+                            Title = "Tự động tái sinh",
+                            Content = "Không tìm thấy chức năng tái sinh trong game này",
                             Type = "warning",
                             Duration = 5,
                         })
@@ -6266,11 +6266,11 @@ do
     end)
 end
 
-Tabs.Misc:CreateSection("Visual")
+Tabs.Misc:CreateSection("Hiển thị")
 
 Tabs.Misc:CreateToggle({
     Flag = "AntiAFKToggle",
-    Name = "Anti AFK",
+    Name = "Chống AFK",
     CurrentValue = Config.AntiAFK,
     Callback = function(Value)
         Config.AntiAFK = Value
@@ -6280,7 +6280,7 @@ Tabs.Misc:CreateToggle({
 
 Tabs.Misc:CreateToggle({
     Flag = "AntiStaffToggle",
-    Name = "Anti Staff",
+    Name = "Chống quản trị viên",
     Description = "Leaves the server when a staff member is in it",
     CurrentValue = Config.AntiStaff,
     Callback = function(Value)
@@ -6330,7 +6330,7 @@ end
 
 Tabs.Misc:CreateToggle({
     Flag = "FullBrightToggle",
-    Name = "FullBright",
+    Name = "Tăng sáng tối đa",
     CurrentValue = Config.FullBright,
     Callback = function(Value)
         Config.FullBright = Value
@@ -6348,7 +6348,7 @@ Tabs.Misc:CreateToggle({
 
 Tabs.Misc:CreateToggle({
     Flag = "NoFogToggle",
-    Name = "No Fog",
+    Name = "Tắt sương mù",
     CurrentValue = Config.NoFog,
     Callback = function(Value)
         Config.NoFog = Value
@@ -6505,7 +6505,7 @@ do
                     content = string.format("%d objects optimized. FPS stayed near %d, the limit is elsewhere (CPU or network).", optimized, math.floor(after + 0.5))
                 end
                 pcall(function()
-                    Library:Notify({ Title = "Performance Mode", Content = content, Type = "success", Duration = 5 })
+                    Library:Notify({ Title = "Chế độ hiệu năng", Content = content, Type = "success", Duration = 5 })
                 end)
             end)
         else
@@ -6571,7 +6571,7 @@ do
 
     Tabs.Misc:CreateToggle({
         Flag = "PerformanceModeToggle",
-        Name = "Performance Mode",
+        Name = "Chế độ hiệu năng",
         Description = "Lower graphics: flat materials, no shadows/effects/lights/textures for more FPS",
         CurrentValue = Config.PerformanceMode,
         Callback = function(Value)
@@ -6584,7 +6584,7 @@ end
 
 Tabs.Misc:CreateToggle({
     Flag = "EnableNotificationsToggle",
-    Name = "Enable Notifications",
+    Name = "Bật thông báo",
     Description = "Show or hide the pop-up notifications",
     CurrentValue = Config.NotificationsEnabled,
     Callback = function(Value)
@@ -6594,8 +6594,8 @@ Tabs.Misc:CreateToggle({
         if Value then
             pcall(function()
                 Library:Notify({
-                    Title = "Notifications",
-                    Content = "Notifications enabled",
+                    Title = "Thông báo",
+                    Content = "Đã bật thông báo",
                     Type = "success",
                     Duration = 2,
                 })
@@ -6604,11 +6604,11 @@ Tabs.Misc:CreateToggle({
     end
 })
 
-Tabs.Main:CreateSection("Fishing")
+Tabs.Main:CreateSection("Câu cá")
 
 Tabs.Main:CreateToggle({
     Flag = "AutoReelToggle",
-    Name = "Lock catch bar",
+    Name = "Khóa thanh bắt cá",
     CurrentValue = Config.AutoReel,
     Callback = function(Value)
         Config.AutoReel = Value
@@ -6618,7 +6618,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateToggle({
     Flag = "AutoCastToggle",
-    Name = "Auto Cast",
+    Name = "Tự động thả câu",
     CurrentValue = Config.AutoCast,
     Callback = function(Value)
         Config.AutoCast = Value
@@ -6628,7 +6628,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateToggle({
     Flag = "FilterBossFishToggle",
-    Name = "Auto Farm Boss",
+    Name = "Tự động câu cá Boss",
     CurrentValue = Config.FilterBossFish,
     Callback = function(Value)
         Config.FilterBossFish = Value
@@ -6638,7 +6638,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateToggle({
     Flag = "FilterSecretFishToggle",
-    Name = "Auto Farm Secret Boss",
+    Name = "Tự động câu cá Secret Boss",
     CurrentValue = Config.FilterSecretFish,
     Callback = function(Value)
         Config.FilterSecretFish = Value
@@ -6648,7 +6648,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateDropdown({
     Flag = "AutoCastMethodDropdown",
-    Name = "Cast Method",
+    Name = "Cách thả câu",
     Options = {"Instant", "Delay"},
     CurrentOption = Config.AutoCastMethod or "Instant",
     MultipleOptions = false,
@@ -6661,7 +6661,7 @@ Tabs.Main:CreateDropdown({
 
 Tabs.Main:CreateSlider({
     Flag = "CastDelaySlider",
-    Name = "Cast Delay",
+    Name = "Độ trễ thả câu",
     CurrentValue = Config.CastDelay or 1,
     Range = {1, 10},
     Increment = 0.1,
@@ -6673,7 +6673,7 @@ Tabs.Main:CreateSlider({
 
 Tabs.Main:CreateToggle({
     Flag = "AutoEquipBestBaitToggle",
-    Name = "Auto Equip Best Bait",
+    Name = "Tự trang bị mồi tốt nhất",
     CurrentValue = Config.AutoEquipBestBait,
     Callback = function(Value)
         Config.AutoEquipBestBait = Value
@@ -6712,7 +6712,7 @@ do
 
     Tabs.Main:CreateToggle({
         Flag = "AutoEquipRodToggle",
-        Name = "Auto Equip Rod",
+        Name = "Tự trang bị cần câu",
         CurrentValue = Config.AutoEquipRod,
         Callback = function(Value)
             Config.AutoEquipRod = Value
@@ -6729,11 +6729,11 @@ do
     })
 end
 
-Tabs.Main:CreateSection("Skill")
+Tabs.Main:CreateSection("Kỹ năng")
 
 Tabs.Main:CreateToggle({
     Flag = "AutoSkillToggle",
-    Name = "Auto Skill",
+    Name = "Tự động dùng kỹ năng",
     CurrentValue = Config.AutoSkill,
     Callback = function(Value)
         Config.AutoSkill = Value
@@ -6760,7 +6760,7 @@ do
 
     SkillDropdown = Tabs.Main:CreateDropdown({
         Flag = "SelectSkillDropdown",
-        Name = "Select Skill",
+        Name = "Chọn kỹ năng",
         Options = OrderedSkillOptions(),
         CurrentOption = table.clone(Config.SkillOrder),
         MultipleOptions = true,
@@ -6799,7 +6799,7 @@ do
 
     Tabs.Main:CreateDropdown({
         Flag = "SelectBossModeDropdown",
-        Name = "Select Boss Mode",
+        Name = "Chọn chế độ Boss",
         Options = bossModes,
         CurrentOption = Config.BossMode,
         MultipleOptions = false,
@@ -6813,7 +6813,7 @@ end
 
 Tabs.Main:CreateToggle({
     Flag = "AutoBossToggle",
-    Name = "Auto Enzo",
+    Name = "Tự động Enzo",
     CurrentValue = Config.AutoBoss,
     Callback = function(Value)
         Config.AutoBoss = Value
@@ -6828,7 +6828,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateToggle({
     Flag = "AutoSecretBossToggle",
-    Name = "Auto Long DiaoHai",
+    Name = "Tự động Long DiaoHai",
     CurrentValue = Config.AutoSecretBoss,
     Callback = function(Value)
         Config.AutoSecretBoss = Value
@@ -6843,7 +6843,7 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateToggle({
     Flag = "AutoMiniGameToggle",
-    Name = "Auto Mini Game",
+    Name = "Tự động chơi mini game",
     CurrentValue = Config.AutoMiniGame,
     Callback = function(Value)
         Config.AutoMiniGame = Value
@@ -6854,10 +6854,10 @@ Tabs.Main:CreateToggle({
     end
 })
 
-Tabs.Main:CreateSection("Position")
+Tabs.Main:CreateSection("Vị trí")
 
 Tabs.Main:CreateButton({
-    Name = "Save Position",
+    Name = "Lưu vị trí",
     Callback = function()
         local char = LocalPlayer.Character
         local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
@@ -6866,8 +6866,8 @@ Tabs.Main:CreateButton({
             SaveConfig()
             pcall(function()
                 Library:Notify({
-                    Title = "Position",
-                    Content = "Saved Position!",
+                    Title = "Vị trí",
+                    Content = "Đã lưu vị trí!",
                     Duration = 3
                 })
             end)
@@ -6877,7 +6877,7 @@ Tabs.Main:CreateButton({
 
 Tabs.Main:CreateToggle({
     Flag = "AutoTPPosToggle",
-    Name = "Auto TP Position",
+    Name = "Tự dịch chuyển đến vị trí",
     CurrentValue = Config.AutoTPPos,
     Callback = function(Value)
         Config.AutoTPPos = Value
@@ -6889,37 +6889,37 @@ Tabs.Main:CreateToggle({
 })
 
 Tabs.Main:CreateButton({
-    Name = "Delete Position",
+    Name = "Xóa vị trí",
     Callback = function()
         Config.SavedPos = false
         SaveConfig()
         pcall(function()
             Library:Notify({
-                Title = "Position",
-                Content = "Deleted Position!",
+                Title = "Vị trí",
+                Content = "Đã xóa vị trí!",
                 Duration = 3
             })
         end)
     end
 })
 
-Tabs.Misc:CreateSection("Codes")
+Tabs.Misc:CreateSection("Mã quà tặng")
 
 Tabs.Misc:CreateButton({
-    Name = "Redeem All Codes",
+    Name = "Nhập tất cả mã",
     Callback = function()
         RedeemAllCodes()
     end
 })
 
-Tabs.Misc:CreateSection("Remote Menus")
+Tabs.Misc:CreateSection("Menu tiện ích")
 
 Tabs.Misc:CreateButton({
-    Name = "Open Skill Upgrade",
+    Name = "Mở nâng cấp kỹ năng",
     Callback = function()
         local state = OpenMenuFrameRemotely("SkillUpgrade")
         Library:Notify({
-            Title = "Remote UI",
+            Title = "Giao diện tiện ích",
             Content = state and "Opened Skill Upgrade" or "Closed Skill Upgrade",
             Duration = 2
         })
@@ -6927,11 +6927,11 @@ Tabs.Misc:CreateButton({
 })
 
 Tabs.Misc:CreateButton({
-    Name = "Open Learn Skill",
+    Name = "Mở học kỹ năng",
     Callback = function()
         local state = OpenMenuFrameRemotely("LearnSkill")
         Library:Notify({
-            Title = "Remote UI",
+            Title = "Giao diện tiện ích",
             Content = state and "Opened Learn Skill" or "Closed Learn Skill",
             Duration = 2
         })
@@ -6939,11 +6939,11 @@ Tabs.Misc:CreateButton({
 })
 
 Tabs.Misc:CreateButton({
-    Name = "Open Exchange UI",
+    Name = "Mở giao diện trao đổi",
     Callback = function()
         local state = OpenMenuFrameRemotely("Exchange")
         Library:Notify({
-            Title = "Remote UI",
+            Title = "Giao diện tiện ích",
             Content = state and "Opened Item Exchange" or "Closed Item Exchange",
             Duration = 2
         })
@@ -6951,11 +6951,11 @@ Tabs.Misc:CreateButton({
 })
 
 Tabs.Misc:CreateButton({
-    Name = "Open Trait",
+    Name = "Mở đặc tính",
     Callback = function()
         local state = OpenMenuFrameRemotely("Trait")
         Library:Notify({
-            Title = "Remote UI",
+            Title = "Giao diện tiện ích",
             Content = state and "Opened Trait" or "Closed Trait",
             Duration = 2
         })
@@ -6964,7 +6964,7 @@ Tabs.Misc:CreateButton({
 
 Tabs.Settings:CreateKeybind({
     Flag = "ToggleUIKeybind",
-    Name = "Minimize UI Keybind",
+    Name = "Phím thu nhỏ giao diện",
     CurrentKeybind = "LeftControl",
     OnChanged = function(NewKey)
         local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
@@ -6972,11 +6972,11 @@ Tabs.Settings:CreateKeybind({
     end
 })
 
-Tabs.Settings:CreateSection("Keybinds")
+Tabs.Settings:CreateSection("Phím tắt")
 
 Tabs.Settings:CreateToggle({
     Flag = "DisableAllKeybindsToggle",
-    Name = "Disable Keybinds",
+    Name = "Tắt phím tắt",
     CurrentValue = Config.DisableAllKeybinds or false,
     Callback = function(Value)
         Config.DisableAllKeybinds = Value
@@ -6986,7 +6986,7 @@ Tabs.Settings:CreateToggle({
 
 Tabs.Settings:CreateKeybind({
     Flag = "FlyKeybind",
-    Name = "Fly Keybind",
+    Name = "Phím bật bay",
     CurrentKeybind = Config.FlyKeybind or "F",
     Callback = function()
         if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.FlyKeybindEnabled ~= false then
@@ -7004,7 +7004,7 @@ Tabs.Settings:CreateKeybind({
 
 Tabs.Settings:CreateKeybind({
     Flag = "NoclipKeybind",
-    Name = "Noclip Keybind",
+    Name = "Phím bật xuyên vật thể",
     CurrentKeybind = Config.NoclipKeybind or "J",
     Callback = function()
         if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.NoclipKeybindEnabled ~= false then
@@ -7032,8 +7032,8 @@ do
 
             pcall(function()
                 Library:Notify({
-                    Title = "Server Hop",
-                    Content = "Searching for low player server...",
+                    Title = "Đổi máy chủ",
+                    Content = "Đang tìm máy chủ ít người...",
                     Duration = 4
                 })
             end)
@@ -7096,8 +7096,8 @@ do
             if targetServer and targetServer.id then
                 pcall(function()
                     Library:Notify({
-                        Title = "Server Hop",
-                        Content = "Found server with " .. tostring(targetServer.playing) .. " players! Teleporting...",
+                        Title = "Đổi máy chủ",
+                        Content = "Đã tìm thấy máy chủ có " .. tostring(targetServer.playing) .. " người chơi! Đang dịch chuyển...",
                         Duration = 4
                     })
                 end)
@@ -7106,8 +7106,8 @@ do
             else
                 pcall(function()
                     Library:Notify({
-                        Title = "Server Hop",
-                        Content = "Couldn't find low player server. Teleporting to random server...",
+                        Title = "Đổi máy chủ",
+                        Content = "Không tìm thấy máy chủ ít người. Đang chuyển đến máy chủ ngẫu nhiên...",
                         Duration = 4
                     })
                 end)
@@ -7117,15 +7117,15 @@ do
         end)
     end
 
-    Tabs.Misc:CreateSection("Server")
+    Tabs.Misc:CreateSection("Máy chủ")
 
     Tabs.Misc:CreateButton({
-        Name = "Rejoin",
+        Name = "Vào lại máy chủ",
         Callback = function()
             pcall(function()
                 Library:Notify({
                     Title = "Rejoin",
-                    Content = "Rejoining current server...",
+                    Content = "Đang vào lại máy chủ hiện tại...",
                     Duration = 3
                 })
             end)
@@ -7135,7 +7135,7 @@ do
     })
 
     Tabs.Misc:CreateButton({
-        Name = "Server Hop Low Players",
+        Name = "Đổi máy chủ ít người",
         Callback = function()
             HopLowServer()
         end
@@ -7323,8 +7323,8 @@ do
         if #history >= MAX_REJOINS then
             pcall(function()
                 Library:Notify({
-                    Title = "Auto Rejoin paused",
-                    Content = "Too many rejoins in 10 minutes. Rejoin manually.",
+                    Title = "Tạm dừng tự vào lại",
+                    Content = "Đã vào lại quá nhiều lần trong 10 phút. Vui lòng vào lại thủ công.",
                     Type = "error",
                     Duration = 8,
                 })
@@ -7341,8 +7341,8 @@ do
             end
             pcall(function()
                 Library:Notify({
-                    Title = "Disconnected",
-                    Content = "Rejoining automatically...",
+                    Title = "Mất kết nối",
+                    Content = "Đang tự động kết nối lại...",
                     Type = "warning",
                     Duration = 6,
                 })
@@ -7350,7 +7350,7 @@ do
 
             local sent = false
             task.spawn(function()
-                sendWebhook("Disconnected", reason, COLOR_WARN, {
+                sendWebhook("Mất kết nối", reason, COLOR_WARN, {
                     { name = "Action", value = "Rejoining", inline = true },
                 })
                 sent = true
@@ -7434,7 +7434,7 @@ do
         pcall(function()
             Library:Notify({
                 Title = "Anti Staff",
-                Content = "Staff detected: " .. plr.Name .. " - leaving server",
+                Content = "Phát hiện quản trị viên: " .. plr.Name .. " - đang rời máy chủ",
                 Type = "warning",
                 Duration = 6,
             })
@@ -7485,11 +7485,11 @@ do
     end)
 
     ---------------------------------------------------------------- settings UI
-    Tabs.Settings:CreateSection("Auto Rejoin")
+    Tabs.Settings:CreateSection("Tự vào lại")
 
     Tabs.Settings:CreateToggle({
         Flag = "AutoRejoinToggle",
-        Name = "Auto Rejoin on Disconnect",
+        Name = "Tự vào lại khi mất kết nối",
         Description = "Rejoins and restarts the hub after a disconnect or kick",
         CurrentValue = Config.AutoRejoin,
         Callback = function(Value)
@@ -7498,11 +7498,11 @@ do
         end
     })
 
-    Tabs.Settings:CreateSection("Discord Webhook")
+    Tabs.Settings:CreateSection("Thông báo Discord Webhook")
 
     Tabs.Settings:CreateToggle({
         Flag = "WebhookEnabledToggle",
-        Name = "Webhook Notifications",
+        Name = "Thông báo qua Webhook",
         CurrentValue = Config.WebhookEnabled,
         Callback = function(Value)
             Config.WebhookEnabled = Value
@@ -7512,7 +7512,7 @@ do
 
     Tabs.Settings:CreateInput({
         Flag = "WebhookUrlInput",
-        Name = "Webhook URL",
+        Name = "Đường dẫn Webhook",
         CurrentValue = Config.WebhookUrl,
         PlaceholderText = "https://discord.com/api/webhooks/...",
         Callback = function(Value)
@@ -7523,16 +7523,16 @@ do
             elseif validWebhook(text) then
                 Config.WebhookUrl = text
                 SaveConfig()
-                Library:Notify({ Title = "Webhook", Content = "Webhook URL saved.", Type = "success", Duration = 3 })
+                Library:Notify({ Title = "Webhook", Content = "Đã lưu URL Webhook.", Type = "success", Duration = 3 })
             else
-                Library:Notify({ Title = "Webhook", Content = "That is not a Discord webhook link.", Type = "error", Duration = 4 })
+                Library:Notify({ Title = "Webhook", Content = "Đây không phải liên kết Discord Webhook.", Type = "error", Duration = 4 })
             end
         end
     })
 
     Tabs.Settings:CreateInput({
         Flag = "WebhookIntervalInput",
-        Name = "Status Report (minutes, 0 = off)",
+        Name = "Báo cáo trạng thái (phút, 0 = tắt)",
         CurrentValue = tostring(Config.WebhookInterval or 0),
         PlaceholderText = "0",
         Numeric = true,
@@ -7544,7 +7544,7 @@ do
 
     Tabs.Settings:CreateToggle({
         Flag = "WebhookOnCatchToggle",
-        Name = "Notify on Every Catch",
+        Name = "Thông báo mỗi lần câu được cá",
         Description = "Sends a message for each fish caught",
         CurrentValue = Config.WebhookOnCatch,
         Callback = function(Value)
@@ -7554,7 +7554,7 @@ do
     })
 
     Tabs.Settings:CreateButton({
-        Name = "Send Test Webhook",
+        Name = "Gửi thử Webhook",
         Callback = function()
             task.spawn(function()
                 local ok, info = sendWebhook("Test message", "Your webhook is working.", COLOR_GOOD, nil, true)
@@ -7770,11 +7770,11 @@ do
     end
 
     ---------------------------------------------------------------- settings UI
-    Tabs.Settings:CreateSection("Privacy")
+    Tabs.Settings:CreateSection("Quyền riêng tư")
 
     Tabs.Settings:CreateToggle({
         Flag = "HideIdToggle",
-        Name = "Hide My ID (Top Right)",
+        Name = "Ẩn ID của tôi (góc trên phải)",
         Description = "Hides the number that shows your user ID",
         CurrentValue = Config.HideId,
         Callback = function(Value)
@@ -7786,7 +7786,7 @@ do
 
     Tabs.Settings:CreateToggle({
         Flag = "FakeIdToggle",
-        Name = "Fake ID",
+        Name = "ID giả",
         Description = "Shows another number instead of your ID (turn Hide off to see it)",
         CurrentValue = Config.FakeIdEnabled,
         Callback = function(Value)
@@ -7798,7 +7798,7 @@ do
 
     Tabs.Settings:CreateInput({
         Flag = "FakeIdInput",
-        Name = "Fake ID Number",
+        Name = "Số ID giả",
         CurrentValue = fakeId(),
         PlaceholderText = "12345678901",
         Numeric = true,
@@ -7814,7 +7814,7 @@ do
 
     Tabs.Settings:CreateToggle({
         Flag = "HideNameToggle",
-        Name = "Hide Name",
+        Name = "Ẩn tên",
         Description = "Hides your name tag above your character",
         CurrentValue = Config.HideName,
         Callback = function(Value)
@@ -7826,7 +7826,7 @@ do
 
     Tabs.Settings:CreateToggle({
         Flag = "FakeNameToggle",
-        Name = "Fake Name",
+        Name = "Tên giả",
         Description = "Shows another name for you on your own screen",
         CurrentValue = Config.FakeNameEnabled,
         Callback = function(Value)
@@ -7838,7 +7838,7 @@ do
 
     Tabs.Settings:CreateInput({
         Flag = "FakeNameInput",
-        Name = "Fake Name Text",
+        Name = "Nội dung tên giả",
         CurrentValue = Config.FakeName,
         PlaceholderText = "Player",
         Callback = function(Value)
