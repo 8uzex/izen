@@ -1525,6 +1525,7 @@ local Config = {
     AutoCast = false,
     AutoCastMethod = "Instant",
     AntiStaff = false,
+    HideName = false,
     UpgradeOptions = {"Cash", "Level"},
     UpgradeMethod = "Instant",
     AutoRebirth = false,
@@ -2327,7 +2328,7 @@ local barPosConn = nil
 local boundBar = nil
 
 -- Fish filter: Auto Cast keeps casting until a Boss / Secret Boss fish bites
-local UzexFilter = { Skip = false, Cache = {}, LastNotify = 0 }
+local UzexFilter = { Skip = false, Cache = {}, LastNotify = 0, AntiChecked = {} }
 
 local function LockFishingBar()
     if isLockingBar then return end
@@ -6041,6 +6042,56 @@ do
     })
 end
 
+Tabs.Shop:CreateSection("Fish")
+
+Tabs.Shop:CreateButton({
+    Name = "Unlock all fish",
+    Description = "Shows every fish as unlocked in the Index menu",
+    Callback = function()
+        local count = 0
+        local found = false
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChild("PlayerGui")
+            local mg = (pg and pg:FindFirstChild("MainGui")) or MainGui
+            if not mg then return end
+            local root = nil
+            for _, d in ipairs(mg:GetDescendants()) do
+                if d:IsA("Frame") or d:IsA("ScrollingFrame") then
+                    local n = string.lower(d.Name)
+                    if n == "index" or string.find(n, "fishindex", 1, true) or string.find(n, "codex", 1, true)
+                        or string.find(n, "collection", 1, true) or string.find(n, "bestiary", 1, true) then
+                        root = d
+                        break
+                    end
+                end
+            end
+            if not root then return end
+            found = true
+            for _, d in ipairs(root:GetDescendants()) do
+                local n = string.lower(d.Name)
+                if d:IsA("GuiObject") and (n == "lock" or n == "locked" or n == "unknown" or n == "hidden"
+                    or string.find(n, "question", 1, true) or n == "cover") then
+                    if d.Visible then
+                        d.Visible = false
+                        count = count + 1
+                    end
+                elseif d:IsA("ImageLabel") and d.ImageColor3 == Color3.new(0, 0, 0) then
+                    d.ImageColor3 = Color3.new(1, 1, 1)
+                    count = count + 1
+                end
+            end
+        end)
+        pcall(function()
+            Library:Notify({
+                Title = "Unlock all fish",
+                Content = found and ("Unlocked " .. count .. " entries") or "Index menu not found - open it once, then press again",
+                Type = found and "success" or "warning",
+                Duration = 4,
+            })
+        end)
+    end
+})
+
 Tabs.Shop:CreateSection("Buy Bait")
 
 do
@@ -6392,6 +6443,56 @@ Tabs.Misc:CreateToggle({
         SaveConfig()
     end
 })
+
+Tabs.Misc:CreateToggle({
+    Flag = "AntiStaffToggle",
+    Name = "Anti Staff",
+    Description = "Leaves the server when a staff member is in it",
+    CurrentValue = Config.AntiStaff,
+    Callback = function(Value)
+        Config.AntiStaff = Value
+        if Value then
+            table.clear(UzexFilter.AntiChecked)
+        end
+        SaveConfig()
+    end
+})
+
+do
+    local hiddenGuis = {}
+
+    function UzexFilter.ApplyHideName()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.DisplayDistanceType = Config.HideName
+                and Enum.HumanoidDisplayDistanceType.None
+                or Enum.HumanoidDisplayDistanceType.Viewer
+        end
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("BillboardGui") then
+                if Config.HideName then
+                    if hiddenGuis[d] == nil then hiddenGuis[d] = d.Enabled end
+                    d.Enabled = false
+                elseif hiddenGuis[d] ~= nil then
+                    d.Enabled = hiddenGuis[d]
+                    hiddenGuis[d] = nil
+                end
+            end
+        end
+    end
+
+    LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        if Config.HideName then pcall(UzexFilter.ApplyHideName) end
+    end)
+    task.spawn(function()
+        while task.wait(2) do
+            if Config.HideName then pcall(UzexFilter.ApplyHideName) end
+        end
+    end)
+end
 
 Tabs.Misc:CreateToggle({
     Flag = "FullBrightToggle",
@@ -6933,7 +7034,7 @@ do
 
     ---------------------------------------------------------------- anti staff
     local STAFF_MIN_RANK = 200
-    local staffChecked = {}
+    local staffChecked = UzexFilter.AntiChecked
     local staffHandled = false
 
     local function isStaffPlayer(plr)
@@ -7011,22 +7112,6 @@ do
     end)
 
     ---------------------------------------------------------------- settings UI
-    Tabs.Settings:CreateSection("Anti Staff")
-
-    Tabs.Settings:CreateToggle({
-        Flag = "AntiStaffToggle",
-        Name = "Anti Staff",
-        Description = "Leaves the server when a staff member is in it",
-        CurrentValue = Config.AntiStaff,
-        Callback = function(Value)
-            Config.AntiStaff = Value
-            if Value then
-                table.clear(staffChecked)
-            end
-            SaveConfig()
-        end
-    })
-
     Tabs.Settings:CreateSection("Auto Rejoin")
 
     Tabs.Settings:CreateToggle({
@@ -7355,6 +7440,18 @@ do
     })
 
     Tabs.Settings:CreateToggle({
+        Flag = "HideNameToggle",
+        Name = "Hide Name",
+        Description = "Hides your name tag above your character",
+        CurrentValue = Config.HideName,
+        Callback = function(Value)
+            Config.HideName = Value
+            SaveConfig()
+            pcall(UzexFilter.ApplyHideName)
+        end
+    })
+
+    Tabs.Settings:CreateToggle({
         Flag = "FakeNameToggle",
         Name = "Fake Name",
         Description = "Shows another name for you on your own screen",
@@ -7528,32 +7625,6 @@ do
             task.wait(1)
         end
     end)
-
-    -- Helps match the panel to this game: copies every stat name the script can see.
-    Tabs.Settings:CreateButton({
-        Name = "Copy Player Data Names",
-        Description = "For support: copies the stat names found in your game data",
-        Callback = function()
-            scan()
-            local lines = {}
-            for _, v in ipairs(values) do
-                if v.depth <= 2 then
-                    lines[#lines + 1] = v.inst:GetFullName():gsub("^.-%.Data%.%d+%.", "") .. " = " .. tostring(v.inst.Value)
-                end
-            end
-            local dump = table.concat(lines, "\n")
-            if #dump > 6000 then
-                dump = string.sub(dump, 1, 6000)
-            end
-            local copied = type(setclipboard) == "function" and pcall(setclipboard, dump)
-            Library:Notify({
-                Title = "Player Data",
-                Content = copied and ("Copied " .. #lines .. " names to the clipboard.") or "Could not copy to the clipboard.",
-                Type = copied and "success" or "error",
-                Duration = 4,
-            })
-        end
-    })
 end
 
 Window:SelectTab(Tabs.Main)
