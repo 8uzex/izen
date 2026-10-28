@@ -7250,6 +7250,219 @@ do
         end)
     end
 
+    -- Server Hop UI: target selectors, live status, refreshable server list.
+    Tabs.ServerHop:CreateSection("LIST SERVER HOP")
+    local selectedHopTarget = "Spirit"
+    local selectedWeatherTarget = "Thunderstorm"
+    local autoHopConfirmed = false
+    local serverList = {}
+    local visitedServers = {[game.JobId]=true}
+    local hopBusy = false
+    local statusText = "Chưa tải danh sách server | Spirit"
+    local statusWidget = Tabs.ServerHop:CreateStatGrid({
+        Columns=1,
+        Items={{Key="status", Label="Status", Value=statusText, Color=Theme.Accent}}
+    })
+    local function updateStatus(value)
+        statusText = tostring(value)
+        pcall(function() statusWidget:Set("status", statusText) end)
+        pcall(function() Library:Notify({Title="Server Hop", Content=statusText, Duration=2}) end)
+    end
+    local function getRequestFn()
+        return (typeof(request)=="function" and request)
+            or (typeof(http_request)=="function" and http_request)
+            or (syn and typeof(syn.request)=="function" and syn.request)
+            or (http and typeof(http.request)=="function" and http.request)
+            or nil
+    end
+    local function fetchServers()
+        local all, cursor, pages = {}, "", 0
+        local req = getRequestFn()
+        repeat
+            local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
+            if cursor ~= "" then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
+            local body
+            if req then
+                local ok, res = pcall(req, {Url=url, Method="GET"})
+                if ok and res then body = res.Body end
+            else
+                local ok, res = pcall(game.HttpGet, game, url)
+                if ok then body = res end
+            end
+            if not body then break end
+            local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
+            if not ok or type(data) ~= "table" or type(data.data) ~= "table" then break end
+            for _, srv in ipairs(data.data) do
+                if srv.id and srv.id ~= game.JobId and not visitedServers[srv.id]
+                    and (tonumber(srv.playing) or 0) < (tonumber(srv.maxPlayers) or 0) then
+                    all[#all+1] = srv
+                end
+            end
+            cursor = data.nextPageCursor or ""
+            pages = pages + 1
+            task.wait(0.15)
+        until cursor == "" or pages >= 4
+        table.sort(all, function(a,b) return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0) end)
+        serverList = all
+        return #all
+    end
+    local serverListFrame = new("Frame", {
+        Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+        BackgroundTransparency=1, BorderSizePixel=0
+    })
+    new("UIListLayout", {Padding=UDim.new(0,6), SortOrder=Enum.SortOrder.LayoutOrder}, serverListFrame)
+    Tabs.ServerHop:_add(serverListFrame)
+    local function renderServerList()
+        for _, child in ipairs(serverListFrame:GetChildren()) do
+            if not child:IsA("UIListLayout") then child:Destroy() end
+        end
+        for i, srv in ipairs(serverList) do
+            local row = new("TextButton", {
+                Name="ServerRow_"..i, LayoutOrder=i,
+                Size=UDim2.new(1,0,0,44), BackgroundColor3=Theme.Surface,
+                Text="", AutoButtonColor=true, BorderSizePixel=0
+            }, serverListFrame)
+            round(row, 9)
+            outline(row, Theme.Stroke, 1, 0.45)
+            local job = tostring(srv.id or "")
+            local shortJob = #job > 14 and (job:sub(1,6).."..."..job:sub(-5)) or job
+            text(row, {
+                Position=UDim2.new(0,12,0,0), Size=UDim2.new(1,-24,1,0),
+                Font=FONT_BOLD, TextSize=12, TextXAlignment=Enum.TextXAlignment.Left,
+                TextColor3=Theme.Text,
+                Text=tostring(selectedHopTarget).." | "..tostring(srv.playing or 0).."/"..tostring(srv.maxPlayers or "?").." | "..shortJob
+            })
+            row.MouseButton1Click:Connect(function()
+                if hopBusy then return end
+                hopBusy = true
+                visitedServers[job] = true
+                updateStatus("Đang vào server "..shortJob)
+                task.spawn(function()
+                    pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, job, LocalPlayer) end)
+                    task.wait(3)
+                    hopBusy = false
+                end)
+            end)
+        end
+    end
+    local function weatherFound()
+        local ws, light = game:GetService("Workspace"), game:GetService("Lighting")
+        local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+        local mainGui = pg and pg:FindFirstChild("MainGui")
+        local info = mainGui and mainGui:FindFirstChild("Info")
+        local info2 = info and info:FindFirstChild("Info")
+        local weatherFrame = info2 and info2:FindFirstChild("Weather")
+        local value = weatherFrame and weatherFrame:FindFirstChild("Value")
+        if value and value:IsA("TextLabel") then
+            local shown = tostring(value.Text or ""):gsub("Weather:%s*","")
+            if shown == selectedWeatherTarget then return true end
+        end
+        return ws:FindFirstChild(selectedWeatherTarget) ~= nil or light:FindFirstChild(selectedWeatherTarget) ~= nil
+    end
+    local function targetFound()
+        local ws = game:GetService("Workspace")
+        if selectedHopTarget == "Weather" then return weatherFound() end
+        local roots = {ws:FindFirstChild("Bosses"), ws:FindFirstChild("Boss"), ws:FindFirstChild("NPC")}
+        for _, root in ipairs(roots) do
+            if root then
+                for _, obj in ipairs(root:GetDescendants()) do
+                    local n = tostring(obj.Name):lower()
+                    if selectedHopTarget == "Spirit" and (n == "god" or n:find("spirit",1,true)) then return true end
+                    if selectedHopTarget == "Maoshan" and (n:find("maoshan",1,true) or n:find("merchant",1,true)) then return true end
+                    if selectedHopTarget == "Vermilion Bloodlord" and (n:find("vermilion",1,true) or n:find("bloodlord",1,true)) then return true end
+                    if selectedHopTarget == "Black Tortoise Bloodline" and (n:find("blacktortoise",1,true) or n:find("black tortoise",1,true)) then return true end
+                    if selectedHopTarget == "Enzo" and n == "enzo" then
+                        local cd = tonumber(obj:GetAttribute("Cooldown")) or tonumber(obj:GetAttribute("CooldownRemaining"))
+                        local endsAt = tonumber(obj:GetAttribute("CooldownEnd"))
+                        if obj:GetAttribute("CanAttack")==true or obj:GetAttribute("Ready")==true or (cd and cd<=0) or (endsAt and endsAt<=os.clock()) then return true end
+                    end
+                    if selectedHopTarget == "Nameless Octopariste" and (n:find("nameless",1,true) or n:find("octopariste",1,true)) then return true end
+                    if selectedHopTarget == "Taoist" and n:find("taoist",1,true) then return true end
+                    if selectedHopTarget == "Secret Boss" and n:find("secret",1,true) and n:find("boss",1,true) then return true end
+                end
+            end
+        end
+        return false
+    end
+    local function hopNextTargetServer()
+        if hopBusy then return end
+        hopBusy = true
+        task.spawn(function()
+            local ok, err = pcall(function()
+                if #serverList == 0 then
+                    updateStatus("Đang làm mới danh sách server...")
+                    fetchServers()
+                    renderServerList()
+                end
+                local target = table.remove(serverList, 1)
+                if not target then
+                    updateStatus("Không còn server trống để thử.")
+                    return
+                end
+                visitedServers[target.id] = true
+                renderServerList()
+                updateStatus("Đang chuyển server | "..selectedHopTarget)
+                task.wait(0.4)
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, target.id, LocalPlayer)
+            end)
+            if not ok then updateStatus("Lỗi Server Hop: "..tostring(err)) end
+            task.wait(2)
+            hopBusy = false
+        end)
+    end
+    Tabs.ServerHop:CreateDropdown({
+        Name="Server Hop",
+        Options={"Spirit","Maoshan","Weather","Vermilion Bloodlord","Black Tortoise Bloodline","Enzo","Nameless Octopariste","Taoist","Secret Boss"},
+        CurrentOption="Spirit", MultipleOptions=false, AllowNone=false,
+        Callback=function(value)
+            if type(value)=="table" then value=value[1] end
+            selectedHopTarget=tostring(value or "Spirit")
+            updateStatus(tostring(#serverList).." server(s) | "..selectedHopTarget)
+            renderServerList()
+        end
+    })
+    Tabs.ServerHop:CreateDropdown({
+        Name="Weather Target", Options={"Thunderstorm","Rainy","Windy","Snowy","Foggy","Blazing Sun"},
+        CurrentOption="Thunderstorm", MultipleOptions=false, AllowNone=false,
+        Callback=function(value)
+            if type(value)=="table" then value=value[1] end
+            selectedWeatherTarget=tostring(value or "Thunderstorm")
+            updateStatus(tostring(#serverList).." server(s) | "..selectedHopTarget)
+        end
+    })
+    Tabs.ServerHop:CreateToggle({
+        Name="Auto Hop Confirmed Events", CurrentValue=false,
+        Description="Tự chuyển server đến khi mục tiêu được phát hiện tại server hiện tại.",
+        Callback=function(value)
+            autoHopConfirmed=value==true
+            updateStatus(autoHopConfirmed and ("Auto Hop ON | "..selectedHopTarget) or "Auto Hop OFF")
+        end
+    })
+    Tabs.ServerHop:CreateButton({
+        Name="Refresh Server List",
+        Callback=function()
+            task.spawn(function()
+                updateStatus("Đang tải danh sách server...")
+                local count=fetchServers()
+                renderServerList()
+                updateStatus(tostring(count).." server(s) | "..selectedHopTarget)
+            end)
+        end
+    })
+    task.spawn(function()
+        while task.wait(8) do
+            if autoHopConfirmed and not hopBusy then
+                local ok, found = pcall(targetFound)
+                if ok and found then
+                    autoHopConfirmed = false
+                    updateStatus("Đã phát hiện "..selectedHopTarget.." tại server này.")
+                else
+                    hopNextTargetServer()
+                end
+            end
+        end
+    end)
+
     Tabs.ServerHop:CreateSection("Máy chủ")
     Tabs.ServerHop:CreateButton({
         Name = "Vào lại máy chủ",
