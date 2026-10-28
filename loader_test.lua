@@ -115,7 +115,10 @@ function Library:SetLanguage(language)
         if obj and obj.Parent then
             record.updating = true
             obj.Text = translateText(record.source)
-            record.updating = false
+            -- Defer resetting the guard until Roblox has delivered the property-change signal.
+            task.defer(function()
+                record.updating = false
+            end)
         else
             self._TextObjects[obj] = nil
         end
@@ -209,7 +212,11 @@ local function new(class, props, parent)
     if class == "TextLabel" or class == "TextButton" or class == "TextBox" then
         local record = { source = tostring(inst.Text or ""), updating = false }
         Library._TextObjects[inst] = record
+        record.updating = true
         inst.Text = translateText(record.source)
+        task.defer(function()
+            record.updating = false
+        end)
         inst:GetPropertyChangedSignal("Text"):Connect(function()
             if record.updating then return end
             record.source = tostring(inst.Text or "")
@@ -6024,6 +6031,7 @@ Tabs.Shop:CreateButton({
             end
             if not root then return end
             found = true
+            -- First remove visual lock/cover layers.
             for _, d in ipairs(root:GetDescendants()) do
                 local n = string.lower(d.Name)
                 if d:IsA("GuiObject") and (n == "lock" or n == "locked" or n == "unknown" or n == "hidden"
@@ -6035,6 +6043,40 @@ Tabs.Shop:CreateButton({
                 elseif d:IsA("ImageLabel") and d.ImageColor3 == Color3.new(0, 0, 0) then
                     d.ImageColor3 = Color3.new(1, 1, 1)
                     count = count + 1
+                end
+            end
+
+            -- Some Index cards keep the fish name on the card/frame while the
+            -- visible TextLabel is still "???". Recover only when the card name
+            -- itself is a meaningful name; never fabricate a fish name.
+            local genericNames = {
+                index = true, fishindex = true, codex = true, collection = true,
+                bestiary = true, fish = true, item = true, entry = true, card = true,
+                template = true, scrollingframe = true, frame = true, content = true,
+                list = true, grid = true, holder = true, container = true, unknown = true,
+                hidden = true, ["???"] = true
+            }
+            for _, label in ipairs(root:GetDescendants()) do
+                if label:IsA("TextLabel") and (label.Text == "???" or label.Text == "??? ???") then
+                    local node = label.Parent
+                    local candidate = nil
+                    for _ = 1, 5 do
+                        if not node or node == root then break end
+                        local nodeName = tostring(node.Name or "")
+                        local lowered = string.lower(nodeName)
+                        if nodeName ~= "" and not genericNames[lowered]
+                            and not string.find(lowered, "template", 1, true)
+                            and not string.find(lowered, "unknown", 1, true)
+                            and not string.find(nodeName, "?", 1, true) then
+                            candidate = nodeName
+                            break
+                        end
+                        node = node.Parent
+                    end
+                    if candidate then
+                        label.Text = candidate
+                        count = count + 1
+                    end
                 end
             end
         end)
