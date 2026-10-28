@@ -82,12 +82,30 @@ local EN_TRANSLATIONS = {
     ["Đã lưu URL Webhook."] = "Webhook URL saved.", ["Đây không phải liên kết Discord Webhook."] = "This is not a Discord Webhook URL.",
 }
 local function translateText(value)
-    if type(value) ~= "string" or Library.Language ~= "English" then return value end
-    local exact = EN_TRANSLATIONS[value]
+    if type(value) ~= "string" then return value end
+
+    -- Build reverse lookup too, so English-created/dynamically updated labels
+    -- can always return to Vietnamese when the user switches back.
+    local REVERSE_TRANSLATIONS = Library._ReverseTranslations
+    if not REVERSE_TRANSLATIONS then
+        REVERSE_TRANSLATIONS = {}
+        for vi, en in pairs(EN_TRANSLATIONS) do
+            if REVERSE_TRANSLATIONS[en] == nil then
+                REVERSE_TRANSLATIONS[en] = vi
+            end
+        end
+        Library._ReverseTranslations = REVERSE_TRANSLATIONS
+    end
+
+    local map = (Library.Language == "English") and EN_TRANSLATIONS or REVERSE_TRANSLATIONS
+    local exact = map[value]
     if exact then return exact end
+
     local upper = string.upper(value)
-    for vi, en in pairs(EN_TRANSLATIONS) do
-        if string.upper(vi) == upper then return string.upper(en) end
+    for source, target in pairs(map) do
+        if string.upper(source) == upper then
+            return string.upper(target)
+        end
     end
     return value
 end
