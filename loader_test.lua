@@ -276,6 +276,9 @@ local function getGui()
 end
 
 function Library:Notify(o)
+    if Library.NotificationsEnabled == false then
+        return
+    end
     o = opt(o)
     local holder = getGui():FindFirstChild("Notifications")
     if not holder then
@@ -1237,24 +1240,36 @@ function Window:Toggle(force)
     self._toggleToken = (self._toggleToken or 0) + 1
     local token = self._toggleToken
     local main = self._main
-    -- cancel the previous animation so quick toggles never jump or stutter
-    if self._toggleTween then
-        pcall(function() self._toggleTween:Cancel() end)
-        self._toggleTween = nil
+    local sc = main:FindFirstChildOfClass("UIScale")
+    local base = main:GetAttribute("FitScale") or (sc and sc.Scale) or 1
+    -- cancel previous animations so quick toggles never jump or stutter
+    for _, key in ipairs({ "_toggleTween", "_scaleTween" }) do
+        if self[key] then
+            pcall(function() self[key]:Cancel() end)
+            self[key] = nil
+        end
     end
     if show then
-        -- open right away: the menu is already mostly visible on the first frame
         main.Position = self._basePos
         if not main.Visible then
-            main.GroupTransparency = 0.6
+            main.GroupTransparency = 0.5
+            if sc then sc.Scale = base * 0.88 end
             main.Visible = true
         end
-        self._toggleTween = tween(main, 0.08, { GroupTransparency = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        -- pop-in: fades in while growing with a small overshoot
+        self._toggleTween = tween(main, 0.14, { GroupTransparency = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        if sc then
+            self._scaleTween = tween(sc, 0.24, { Scale = base }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+        end
     else
-        self._toggleTween = tween(main, 0.07, { GroupTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-        task.delay(0.08, function()
+        self._toggleTween = tween(main, 0.12, { GroupTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        if sc then
+            self._scaleTween = tween(sc, 0.12, { Scale = base * 0.94 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        end
+        task.delay(0.13, function()
             if token == self._toggleToken and not self._visible then
                 main.Visible = false
+                if sc then sc.Scale = base end
             end
         end)
     end
@@ -1293,7 +1308,9 @@ function Library:CreateWindow(o)
         local camera = workspace.CurrentCamera
         if camera then
             local view = camera.ViewportSize
-            scale.Scale = math.clamp(math.min(view.X * 0.94 / width, view.Y * 0.88 / height), 0.5, 1)
+            local fitted = math.clamp(math.min(view.X * 0.94 / width, view.Y * 0.88 / height), 0.5, 1)
+            scale.Scale = fitted
+            main:SetAttribute("FitScale", fitted)
         end
     end
     fit()
@@ -1526,6 +1543,8 @@ local Config = {
     AutoCastMethod = "Instant",
     AntiStaff = false,
     HideName = false,
+    NotificationsEnabled = true,
+    PerformanceMode = false,
     UpgradeOptions = {"Cash", "Level"},
     UpgradeMethod = "Instant",
     AutoRebirth = false,
@@ -1614,6 +1633,7 @@ end
 
 LoadConfig()
 Config.AutoFarmIsland = false -- Auto Farm Fish was removed from the UI
+Library.NotificationsEnabled = Config.NotificationsEnabled ~= false
 if type(Config.SkillOrder) ~= "table" then
     Config.SkillOrder = {"Z", "X", "C", "V"}
 else
@@ -2748,36 +2768,44 @@ function UzexFilter.Recycle()
     UzexFilter.Busy = true
     UzexFilter.NeedRod = true
     task.spawn(function()
+        local function toggle()
+            pcall(function()
+                ToggleHotbar:InvokeServer("1")
+            end)
+        end
         local function waitFor(state, maxTime)
             local t = 0
             while UzexFilter.HoldingRod() ~= state and t < maxTime do
-                task.wait(0.03)
-                t = t + 0.03
+                task.wait(0.01)
+                t = t + 0.01
             end
             return UzexFilter.HoldingRod() == state
         end
-        -- 1) drop the rod (cancels the normal fish)
+        -- 1) drop the rod (cancels the normal fish); the invoke already waits for the server
         if UzexFilter.HoldingRod() then
-            pcall(function()
-                ToggleHotbar:InvokeServer("1")
-            end)
-            waitFor(false, 1.0)
+            toggle()
+            waitFor(false, 0.6)
         end
-        -- 2) equip it again, retry until the rod is really in hand
-        for _ = 1, 3 do
+        -- 2) equip it again right away, retry until the rod is really in hand
+        for _ = 1, 4 do
             if UzexFilter.HoldingRod() then break end
-            pcall(function()
-                ToggleHotbar:InvokeServer("1")
-            end)
-            if waitFor(true, 0.8) then break end
+            toggle()
+            if waitFor(true, 0.5) then break end
         end
-        -- 3) cast
+        -- 3) cast as soon as the old line is gone
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp and UzexFilter.HoldingRod() and not char:GetAttribute("Fishing") then
-            pcall(function()
-                FishingEvent:FireServer(hrp.CFrame)
-            end)
+        if char and hrp and UzexFilter.HoldingRod() then
+            local t = 0
+            while char:GetAttribute("Fishing") and t < 0.4 do
+                task.wait(0.01)
+                t = t + 0.01
+            end
+            if UzexFilter.HoldingRod() and not char:GetAttribute("Fishing") then
+                pcall(function()
+                    FishingEvent:FireServer(hrp.CFrame)
+                end)
+            end
         end
         if UzexFilter.HoldingRod() then
             UzexFilter.NeedRod = false
@@ -3456,7 +3484,7 @@ task.spawn(function()
         if UzexFilter.NeedRod and not UzexFilter.Busy then
             if not (Config.FilterBossFish or Config.FilterSecretFish) or UzexFilter.HoldingRod() then
                 UzexFilter.NeedRod = false
-            elseif now - (UzexFilter.LastEquip or 0) > 0.8 then
+            elseif now - (UzexFilter.LastEquip or 0) > 0.3 then
                 UzexFilter.LastEquip = now
                 task.spawn(function()
                     pcall(function()
@@ -5597,263 +5625,6 @@ Tabs.Settings:CreateToggle({
     end
 })
 
-Tabs.Main:CreateSection("Fishing")
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoReelToggle",
-    Name = "Lock catch bar",
-    CurrentValue = Config.AutoReel,
-    Callback = function(Value)
-        Config.AutoReel = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoCastToggle",
-    Name = "Auto Cast",
-    CurrentValue = Config.AutoCast,
-    Callback = function(Value)
-        Config.AutoCast = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "FilterBossFishToggle",
-    Name = "Auto Farm Boss",
-    CurrentValue = Config.FilterBossFish,
-    Callback = function(Value)
-        Config.FilterBossFish = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "FilterSecretFishToggle",
-    Name = "Auto Farm Secret Boss",
-    CurrentValue = Config.FilterSecretFish,
-    Callback = function(Value)
-        Config.FilterSecretFish = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateDropdown({
-    Flag = "AutoCastMethodDropdown",
-    Name = "Cast Method",
-    Options = {"Instant", "Delay"},
-    CurrentOption = Config.AutoCastMethod or "Instant",
-    MultipleOptions = false,
-    AllowNone = false,
-    Callback = function(Value)
-        Config.AutoCastMethod = Value or "Instant"
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateSlider({
-    Flag = "CastDelaySlider",
-    Name = "Cast Delay",
-    CurrentValue = Config.CastDelay or 1,
-    Range = {1, 10},
-    Increment = 0.1,
-    Callback = function(Value)
-        Config.CastDelay = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoEquipBestBaitToggle",
-    Name = "Auto Equip Best Bait",
-    CurrentValue = Config.AutoEquipBestBait,
-    Callback = function(Value)
-        Config.AutoEquipBestBait = Value
-        if Value then
-            task.spawn(function()
-                StepAutoEquipBestBait(true)
-            end)
-        end
-        SaveConfig()
-    end
-})
-
-
-Tabs.Main:CreateSection("Skill")
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoSkillToggle",
-    Name = "Auto Skill",
-    CurrentValue = Config.AutoSkill,
-    Callback = function(Value)
-        Config.AutoSkill = Value
-        if Value and LocalPlayer.Character then
-            ApplyAntiConfuse(LocalPlayer.Character)
-        end
-        SaveConfig()
-    end
-})
-
-do
-    local allSkillKeys = {"Z", "X", "C", "V"}
-    local SkillDropdown
-
-    local function OrderedSkillOptions()
-        local options = table.clone(Config.SkillOrder)
-        for _, key in ipairs(allSkillKeys) do
-            if not table.find(options, key) then
-                table.insert(options, key)
-            end
-        end
-        return options
-    end
-
-    SkillDropdown = Tabs.Main:CreateDropdown({
-        Flag = "SelectSkillDropdown",
-        Name = "Select Skill",
-        Options = OrderedSkillOptions(),
-        CurrentOption = table.clone(Config.SkillOrder),
-        MultipleOptions = true,
-        Callback = function(Value)
-            if type(Value) ~= "table" then return end
-            local selected = {}
-            for _, key in ipairs(Value) do
-                selected[key] = true
-            end
-            for i = #Config.SkillOrder, 1, -1 do
-                if not selected[Config.SkillOrder[i]] then
-                    table.remove(Config.SkillOrder, i)
-                end
-            end
-            for _, key in ipairs(allSkillKeys) do
-                if selected[key] and not table.find(Config.SkillOrder, key) then
-                    table.insert(Config.SkillOrder, key)
-                end
-            end
-            if SkillDropdown then
-                -- keepSelection, silent: avoid recursively invoking Callback.
-                SkillDropdown:Refresh(OrderedSkillOptions(), true, true)
-            end
-            SaveConfig()
-        end
-    })
-end
-
-Tabs.Main:CreateSection("Boss")
-
-do
-    local bossModes = {"Normal", "Hard", "Nightmare"}
-    if not table.find(bossModes, Config.BossMode) then
-        Config.BossMode = "Normal"
-    end
-
-    Tabs.Main:CreateDropdown({
-        Flag = "SelectBossModeDropdown",
-        Name = "Select Boss Mode",
-        Options = bossModes,
-        CurrentOption = Config.BossMode,
-        MultipleOptions = false,
-        AllowNone = false,
-        Callback = function(Value)
-            Config.BossMode = Value or "Normal"
-            SaveConfig()
-        end
-    })
-end
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoBossToggle",
-    Name = "Auto Enzo",
-    CurrentValue = Config.AutoBoss,
-    Callback = function(Value)
-        Config.AutoBoss = Value
-        SaveConfig()
-        if Value then
-            task.spawn(function()
-                CheckBossStatusOnToggle(false)
-            end)
-        end
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoSecretBossToggle",
-    Name = "Auto Long DiaoHai",
-    CurrentValue = Config.AutoSecretBoss,
-    Callback = function(Value)
-        Config.AutoSecretBoss = Value
-        SaveConfig()
-        if Value then
-            task.spawn(function()
-                CheckBossStatusOnToggle(true)
-            end)
-        end
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoMiniGameToggle",
-    Name = "Auto Mini Game",
-    CurrentValue = Config.AutoMiniGame,
-    Callback = function(Value)
-        Config.AutoMiniGame = Value
-        if Value and LocalPlayer.Character then
-            ApplyAntiConfuse(LocalPlayer.Character)
-        end
-        SaveConfig()
-    end
-})
-
-Tabs.Main:CreateSection("Position")
-
-Tabs.Main:CreateButton({
-    Name = "Save Position",
-    Callback = function()
-        local char = LocalPlayer.Character
-        local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
-        if hrp then
-            Config.SavedPos = {hrp.CFrame:GetComponents()}
-            SaveConfig()
-            pcall(function()
-                Library:Notify({
-                    Title = "Position",
-                    Content = "Saved Position!",
-                    Duration = 3
-                })
-            end)
-        end
-    end
-})
-
-Tabs.Main:CreateToggle({
-    Flag = "AutoTPPosToggle",
-    Name = "Auto TP Position",
-    CurrentValue = Config.AutoTPPos,
-    Callback = function(Value)
-        Config.AutoTPPos = Value
-        SaveConfig()
-        if Value then
-            StepAutoTPPos(LocalPlayer.Character)
-        end
-    end
-})
-
-Tabs.Main:CreateButton({
-    Name = "Delete Position",
-    Callback = function()
-        Config.SavedPos = false
-        SaveConfig()
-        pcall(function()
-            Library:Notify({
-                Title = "Position",
-                Content = "Deleted Position!",
-                Duration = 3
-            })
-        end)
-    end
-})
-
 Tabs.Settings:CreateSection("Movement")
 
 Tabs.Settings:CreateToggle({
@@ -6527,6 +6298,381 @@ Tabs.Misc:CreateToggle({
                 ApplyLightingSettings()
             end
         end
+    end
+})
+
+do
+    local disabledFx = {}
+    local savedPerf = nil
+    local descConn = nil
+    local FX_CLASSES = {
+        ParticleEmitter = true, Trail = true, Beam = true, Smoke = true,
+        Fire = true, Sparkles = true, BloomEffect = true, BlurEffect = true,
+        SunRaysEffect = true, DepthOfFieldEffect = true,
+    }
+
+    local function killFx(inst)
+        if FX_CLASSES[inst.ClassName] and inst.Enabled then
+            disabledFx[inst] = true
+            inst.Enabled = false
+        end
+    end
+
+    local function applyPerformance(on)
+        if on then
+            if savedPerf then return end
+            savedPerf = {}
+            pcall(function()
+                savedPerf.quality = settings().Rendering.QualityLevel
+                settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            end)
+            pcall(function()
+                savedPerf.shadows = Lighting.GlobalShadows
+                Lighting.GlobalShadows = false
+            end)
+            pcall(function()
+                local terrain = workspace:FindFirstChildOfClass("Terrain")
+                if terrain then
+                    savedPerf.water = {
+                        terrain.WaterWaveSize, terrain.WaterWaveSpeed,
+                        terrain.WaterReflectance, terrain.WaterTransparency,
+                    }
+                    terrain.WaterWaveSize = 0
+                    terrain.WaterWaveSpeed = 0
+                    terrain.WaterReflectance = 0
+                end
+            end)
+            task.spawn(function()
+                local n = 0
+                for _, root in ipairs({ workspace, Lighting }) do
+                    for _, d in ipairs(root:GetDescendants()) do
+                        pcall(killFx, d)
+                        n = n + 1
+                        if n % 400 == 0 then task.wait() end
+                    end
+                end
+            end)
+            descConn = workspace.DescendantAdded:Connect(function(d)
+                pcall(killFx, d)
+            end)
+        else
+            if not savedPerf then return end
+            if descConn then descConn:Disconnect() descConn = nil end
+            pcall(function()
+                if savedPerf.quality then settings().Rendering.QualityLevel = savedPerf.quality end
+            end)
+            pcall(function()
+                if savedPerf.shadows ~= nil then Lighting.GlobalShadows = savedPerf.shadows end
+            end)
+            pcall(function()
+                local terrain = workspace:FindFirstChildOfClass("Terrain")
+                local w = savedPerf.water
+                if terrain and w then
+                    terrain.WaterWaveSize, terrain.WaterWaveSpeed = w[1], w[2]
+                    terrain.WaterReflectance, terrain.WaterTransparency = w[3], w[4]
+                end
+            end)
+            for inst in pairs(disabledFx) do
+                pcall(function() inst.Enabled = true end)
+            end
+            table.clear(disabledFx)
+            savedPerf = nil
+        end
+    end
+
+    Tabs.Misc:CreateToggle({
+        Flag = "PerformanceModeToggle",
+        Name = "Performance Mode",
+        Description = "Lower graphics: no shadows, effects or water waves for more FPS",
+        CurrentValue = Config.PerformanceMode,
+        Callback = function(Value)
+            Config.PerformanceMode = Value
+            SaveConfig()
+            applyPerformance(Value)
+        end
+    })
+
+    if Config.PerformanceMode then
+        task.defer(applyPerformance, true)
+    end
+end
+
+Tabs.Misc:CreateToggle({
+    Flag = "EnableNotificationsToggle",
+    Name = "Enable Notifications",
+    Description = "Show or hide the pop-up notifications",
+    CurrentValue = Config.NotificationsEnabled,
+    Callback = function(Value)
+        Config.NotificationsEnabled = Value
+        Library.NotificationsEnabled = Value
+        SaveConfig()
+        if Value then
+            pcall(function()
+                Library:Notify({
+                    Title = "Notifications",
+                    Content = "Notifications enabled",
+                    Type = "success",
+                    Duration = 2,
+                })
+            end)
+        end
+    end
+})
+
+Tabs.Main:CreateSection("Fishing")
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoReelToggle",
+    Name = "Lock catch bar",
+    CurrentValue = Config.AutoReel,
+    Callback = function(Value)
+        Config.AutoReel = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoCastToggle",
+    Name = "Auto Cast",
+    CurrentValue = Config.AutoCast,
+    Callback = function(Value)
+        Config.AutoCast = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "FilterBossFishToggle",
+    Name = "Auto Farm Boss",
+    CurrentValue = Config.FilterBossFish,
+    Callback = function(Value)
+        Config.FilterBossFish = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "FilterSecretFishToggle",
+    Name = "Auto Farm Secret Boss",
+    CurrentValue = Config.FilterSecretFish,
+    Callback = function(Value)
+        Config.FilterSecretFish = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateDropdown({
+    Flag = "AutoCastMethodDropdown",
+    Name = "Cast Method",
+    Options = {"Instant", "Delay"},
+    CurrentOption = Config.AutoCastMethod or "Instant",
+    MultipleOptions = false,
+    AllowNone = false,
+    Callback = function(Value)
+        Config.AutoCastMethod = Value or "Instant"
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateSlider({
+    Flag = "CastDelaySlider",
+    Name = "Cast Delay",
+    CurrentValue = Config.CastDelay or 1,
+    Range = {1, 10},
+    Increment = 0.1,
+    Callback = function(Value)
+        Config.CastDelay = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoEquipBestBaitToggle",
+    Name = "Auto Equip Best Bait",
+    CurrentValue = Config.AutoEquipBestBait,
+    Callback = function(Value)
+        Config.AutoEquipBestBait = Value
+        if Value then
+            task.spawn(function()
+                StepAutoEquipBestBait(true)
+            end)
+        end
+        SaveConfig()
+    end
+})
+
+
+Tabs.Main:CreateSection("Skill")
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoSkillToggle",
+    Name = "Auto Skill",
+    CurrentValue = Config.AutoSkill,
+    Callback = function(Value)
+        Config.AutoSkill = Value
+        if Value and LocalPlayer.Character then
+            ApplyAntiConfuse(LocalPlayer.Character)
+        end
+        SaveConfig()
+    end
+})
+
+do
+    local allSkillKeys = {"Z", "X", "C", "V"}
+    local SkillDropdown
+
+    local function OrderedSkillOptions()
+        local options = table.clone(Config.SkillOrder)
+        for _, key in ipairs(allSkillKeys) do
+            if not table.find(options, key) then
+                table.insert(options, key)
+            end
+        end
+        return options
+    end
+
+    SkillDropdown = Tabs.Main:CreateDropdown({
+        Flag = "SelectSkillDropdown",
+        Name = "Select Skill",
+        Options = OrderedSkillOptions(),
+        CurrentOption = table.clone(Config.SkillOrder),
+        MultipleOptions = true,
+        Callback = function(Value)
+            if type(Value) ~= "table" then return end
+            local selected = {}
+            for _, key in ipairs(Value) do
+                selected[key] = true
+            end
+            for i = #Config.SkillOrder, 1, -1 do
+                if not selected[Config.SkillOrder[i]] then
+                    table.remove(Config.SkillOrder, i)
+                end
+            end
+            for _, key in ipairs(allSkillKeys) do
+                if selected[key] and not table.find(Config.SkillOrder, key) then
+                    table.insert(Config.SkillOrder, key)
+                end
+            end
+            if SkillDropdown then
+                -- keepSelection, silent: avoid recursively invoking Callback.
+                SkillDropdown:Refresh(OrderedSkillOptions(), true, true)
+            end
+            SaveConfig()
+        end
+    })
+end
+
+Tabs.Main:CreateSection("Boss")
+
+do
+    local bossModes = {"Normal", "Hard", "Nightmare"}
+    if not table.find(bossModes, Config.BossMode) then
+        Config.BossMode = "Normal"
+    end
+
+    Tabs.Main:CreateDropdown({
+        Flag = "SelectBossModeDropdown",
+        Name = "Select Boss Mode",
+        Options = bossModes,
+        CurrentOption = Config.BossMode,
+        MultipleOptions = false,
+        AllowNone = false,
+        Callback = function(Value)
+            Config.BossMode = Value or "Normal"
+            SaveConfig()
+        end
+    })
+end
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoBossToggle",
+    Name = "Auto Enzo",
+    CurrentValue = Config.AutoBoss,
+    Callback = function(Value)
+        Config.AutoBoss = Value
+        SaveConfig()
+        if Value then
+            task.spawn(function()
+                CheckBossStatusOnToggle(false)
+            end)
+        end
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoSecretBossToggle",
+    Name = "Auto Long DiaoHai",
+    CurrentValue = Config.AutoSecretBoss,
+    Callback = function(Value)
+        Config.AutoSecretBoss = Value
+        SaveConfig()
+        if Value then
+            task.spawn(function()
+                CheckBossStatusOnToggle(true)
+            end)
+        end
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoMiniGameToggle",
+    Name = "Auto Mini Game",
+    CurrentValue = Config.AutoMiniGame,
+    Callback = function(Value)
+        Config.AutoMiniGame = Value
+        if Value and LocalPlayer.Character then
+            ApplyAntiConfuse(LocalPlayer.Character)
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateSection("Position")
+
+Tabs.Main:CreateButton({
+    Name = "Save Position",
+    Callback = function()
+        local char = LocalPlayer.Character
+        local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+        if hrp then
+            Config.SavedPos = {hrp.CFrame:GetComponents()}
+            SaveConfig()
+            pcall(function()
+                Library:Notify({
+                    Title = "Position",
+                    Content = "Saved Position!",
+                    Duration = 3
+                })
+            end)
+        end
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoTPPosToggle",
+    Name = "Auto TP Position",
+    CurrentValue = Config.AutoTPPos,
+    Callback = function(Value)
+        Config.AutoTPPos = Value
+        SaveConfig()
+        if Value then
+            StepAutoTPPos(LocalPlayer.Character)
+        end
+    end
+})
+
+Tabs.Main:CreateButton({
+    Name = "Delete Position",
+    Callback = function()
+        Config.SavedPos = false
+        SaveConfig()
+        pcall(function()
+            Library:Notify({
+                Title = "Position",
+                Content = "Deleted Position!",
+                Duration = 3
+            })
+        end)
     end
 })
 
