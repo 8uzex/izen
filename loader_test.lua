@@ -28,6 +28,82 @@ Library.Flags = {}
 Library.Assets = { Logo = "" }
 local Assets = Library.Assets
 
+-- Runtime UI language support. Internal game values (Normal/Nightmare, item IDs,
+-- remote arguments, etc.) are intentionally not translated.
+Library.Language = "Tiếng Việt"
+Library._TextObjects = setmetatable({}, { __mode = "k" })
+local EN_TRANSLATIONS = {
+    ["Uzex Hub"] = "Uzex Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
+    ["Dịch chuyển"] = "Teleport", ["Cửa hàng"] = "Shop", ["Nâng cấp"] = "Upgrade",
+    ["Khác"] = "Misc", ["Cài đặt"] = "Settings", ["Bán cá"] = "Sell Fish",
+    ["Tự động bán cá"] = "Auto Sell Fish", ["Cách bán cá #1"] = "Sell Method #1",
+    ["Nhiệm vụ vé tự động"] = "Auto Ticket Quest", ["Tự nhận vé nhiệm vụ"] = "Auto Claim Quest Tickets",
+    ["Chế độ nhiệm vụ"] = "Quest Mode", ["Chung"] = "General", ["Di chuyển"] = "Movement",
+    ["Tốc độ đi bộ"] = "Walk Speed", ["Tốc độ"] = "Speed", ["Tốc độ bay"] = "Fly Speed",
+    ["Đi xuyên vật thể"] = "Noclip", ["Nhảy vô hạn"] = "Infinite Jump", ["Đảo"] = "Islands",
+    ["Chọn đảo"] = "Select Island", ["Dịch chuyển đến đảo"] = "Teleport to Island",
+    ["NPC"] = "NPCs", ["Chọn NPC"] = "Select NPC", ["Dịch chuyển đến NPC"] = "Teleport to NPC",
+    ["Người chơi"] = "Players", ["Chọn người chơi"] = "Select Player", ["Dịch chuyển đến người chơi"] = "Teleport to Player",
+    ["Cá"] = "Fish", ["Mở khóa tất cả cá"] = "Unlock All Fish", ["Mua mồi"] = "Buy Bait",
+    ["Chọn mồi"] = "Select Bait", ["Số lượng mua"] = "Purchase Amount", ["Độ trễ mua (phút)"] = "Purchase Delay (minutes)",
+    ["Tự động mua mồi"] = "Auto Buy Bait", ["Chế tạo mồi"] = "Craft Bait", ["Số lượng chế tạo"] = "Craft Amount",
+    ["Tự động chế tạo mồi"] = "Auto Craft Bait", ["Chế tạo cần câu"] = "Craft Rod",
+    ["Chọn cần câu"] = "Select Rod", ["Tự động chế tạo cần câu"] = "Auto Craft Rod",
+    ["ESP người chơi"] = "Player ESP", ["Nâng cấp nhân vật"] = "Character Upgrade",
+    ["Chọn 2 mục nâng cấp"] = "Select 2 Upgrade Stats", ["Phương thức nâng cấp"] = "Upgrade Method",
+    ["Tự động tái sinh"] = "Auto Rebirth", ["Kiểm tra tài nguyên"] = "Check Resources",
+    ["Hiển thị"] = "Visuals", ["Chống AFK"] = "Anti-AFK", ["Chống quản trị viên"] = "Anti-Admin",
+    ["Tăng sáng tối đa"] = "Full Bright", ["Tắt sương mù"] = "Disable Fog", ["Chế độ hiệu năng"] = "Performance Mode",
+    ["Bật thông báo"] = "Enable Notifications", ["Thông báo"] = "Notification", ["Đã bật thông báo"] = "Notifications enabled",
+    ["Câu cá"] = "Fishing", ["Khóa thanh bắt cá"] = "Lock Catch Bar", ["Tự động thả câu"] = "Auto Cast",
+    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss",
+    ["Cách thả câu"] = "Cast Method", ["Độ trễ thả câu"] = "Cast Delay", ["Tự trang bị mồi tốt nhất"] = "Auto Equip Best Bait",
+    ["Tự trang bị cần câu"] = "Auto Equip Rod", ["Kỹ năng"] = "Skills", ["Tự động dùng kỹ năng"] = "Auto Use Skills",
+    ["Chọn kỹ năng"] = "Select Skills", ["Boss"] = "Boss", ["Chọn chế độ Boss"] = "Select Boss Mode",
+    ["Tự động Enzo"] = "Auto Enzo", ["Tự động Long DiaoHai"] = "Auto Long DiaoHai",
+    ["Tự động chơi mini game"] = "Auto Play Minigame", ["Vị trí"] = "Position", ["Lưu vị trí"] = "Save Position",
+    ["Đã lưu vị trí!"] = "Position saved!", ["Tự dịch chuyển đến vị trí"] = "Auto Teleport to Position",
+    ["Xóa vị trí"] = "Delete Position", ["Đã xóa vị trí!"] = "Position deleted!",
+    ["Mã quà tặng"] = "Gift Codes", ["Nhập tất cả mã"] = "Redeem All Codes", ["Menu tiện ích"] = "Utility Menu",
+    ["Mở nâng cấp kỹ năng"] = "Open Skill Upgrade", ["Mở học kỹ năng"] = "Open Skill Learning",
+    ["Mở giao diện trao đổi"] = "Open Trade UI", ["Mở đặc tính"] = "Open Traits", ["Phím tắt"] = "Hotkeys",
+    ["Tắt phím tắt"] = "Disable Hotkeys", ["Phím bật bay"] = "Fly Toggle Key", ["Phím bật xuyên vật thể"] = "Noclip Toggle Key",
+    ["Máy chủ"] = "Server", ["Vào lại máy chủ"] = "Rejoin Server", ["Đổi máy chủ ít người"] = "Join Low-Population Server",
+    ["Tự vào lại"] = "Auto Rejoin", ["Tự vào lại khi mất kết nối"] = "Auto Rejoin on Disconnect",
+    ["Thông báo Discord Webhook"] = "Discord Webhook Notifications", ["Thông báo qua Webhook"] = "Webhook Notifications",
+    ["Đường dẫn Webhook"] = "Webhook URL", ["Gửi thử Webhook"] = "Test Webhook", ["Quyền riêng tư"] = "Privacy",
+    ["Ẩn ID của tôi (góc trên phải)"] = "Hide My ID (top-right)", ["ID giả"] = "Fake ID",
+    ["Số ID giả"] = "Fake ID Number", ["Ẩn tên"] = "Hide Name", ["Tên giả"] = "Fake Name",
+    ["Nội dung tên giả"] = "Fake Name Text", ["Language / Ngôn ngữ"] = "Language / Ngôn ngữ",
+    ["Tiếng Việt"] = "Tiếng Việt", ["English"] = "English", ["None"] = "None", ["Không có"] = "None",
+    ["Bật"] = "Enabled", ["Tắt"] = "Disabled", ["Đang tải..."] = "Loading...",
+    ["Đang tìm máy chủ ít người..."] = "Searching for a low-population server...",
+    ["Đang tự động kết nối lại..."] = "Reconnecting automatically...",
+    ["Đã lưu URL Webhook."] = "Webhook URL saved.", ["Đây không phải liên kết Discord Webhook."] = "This is not a Discord Webhook URL.",
+}
+local function translateText(value)
+    if type(value) ~= "string" or Library.Language ~= "English" then return value end
+    local exact = EN_TRANSLATIONS[value]
+    if exact then return exact end
+    local upper = string.upper(value)
+    for vi, en in pairs(EN_TRANSLATIONS) do
+        if string.upper(vi) == upper then return string.upper(en) end
+    end
+    return value
+end
+function Library:SetLanguage(language)
+    self.Language = (language == "English") and "English" or "Tiếng Việt"
+    for obj, record in pairs(self._TextObjects) do
+        if obj and obj.Parent then
+            record.updating = true
+            obj.Text = translateText(record.source)
+            record.updating = false
+        else
+            self._TextObjects[obj] = nil
+        end
+    end
+end
+
 -- The UZEX emblem (same logo as the UI preview), embedded as a PNG so it needs no Roblox upload.
 -- It is written once as a local custom asset.
 -- When local custom assets are unavailable, the library's normal fallback logo is used.
@@ -111,6 +187,21 @@ local function new(class, props, parent)
     local inst = Instance.new(class)
     for key, value in pairs(props or {}) do
         inst[key] = value
+    end
+    if class == "TextLabel" or class == "TextButton" or class == "TextBox" then
+        local record = { source = tostring(inst.Text or ""), updating = false }
+        Library._TextObjects[inst] = record
+        inst.Text = translateText(record.source)
+        inst:GetPropertyChangedSignal("Text"):Connect(function()
+            if record.updating then return end
+            record.source = tostring(inst.Text or "")
+            local translated = translateText(record.source)
+            if translated ~= inst.Text then
+                record.updating = true
+                inst.Text = translated
+                record.updating = false
+            end
+        end)
     end
     if parent then
         inst.Parent = parent
@@ -5587,6 +5678,20 @@ local Tabs = {
     Misc = Window:CreateTab({ Name = "Khác", Icon = "layers" }),
     Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" })
 }
+
+Tabs.Settings:CreateSection("Language / Ngôn ngữ")
+Tabs.Settings:CreateDropdown({
+    Flag = "LanguageDropdown",
+    Name = "Language / Ngôn ngữ",
+    Options = {"Tiếng Việt", "English"},
+    CurrentOption = Library.Language,
+    MultipleOptions = false,
+    AllowNone = false,
+    Callback = function(Value)
+        if type(Value) == "table" then Value = Value[1] end
+        Library:SetLanguage(Value)
+    end
+})
 
 local FlyToggleObj, NoclipToggleObj
 
