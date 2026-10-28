@@ -5539,18 +5539,38 @@ do
         TweenService:Create(ringStroke, info, { Transparency = 1 }):Play()
         task.delay(0.42, function() ring:Destroy() end)
     end
+    -- Decide "tap" vs "drag" from the whole gesture (global input events), not from the button's own
+    -- InputEnded, which can fire early or never when the logo is dragged fast and slips out from under the finger.
+    local pressInput, maxDist = nil, 0
+    local function isPointerDown(input)
+        return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+    end
+    local function distFromStart(input)
+        return (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
+    end
     LogoBtn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if isPointerDown(input) then
+            pressInput = input
             clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+            maxDist = 0
             TweenService:Create(logoScale, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.82 }):Play()
         end
     end)
-    LogoBtn.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            local dist = (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
+    UserInputService.InputChanged:Connect(function(input)
+        if pressInput and (input == pressInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local d = distFromStart(input)
+            if d > maxDist then maxDist = d end
+            if maxDist >= 10 then logoMoved = true end
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if pressInput and isPointerDown(input) and (input == pressInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+            pressInput = nil
+            local d = distFromStart(input)
+            if d > maxDist then maxDist = d end
             local now = tick()
             TweenService:Create(logoScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-            if not logoMoved and dist < 10 and now - lastToggleTime >= 0.12 then
+            if not logoMoved and maxDist < 10 and now - lastToggleTime >= 0.12 then
                 lastToggleTime = now
                 pulseRing()
                 Window:Toggle()
