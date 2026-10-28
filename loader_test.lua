@@ -1240,36 +1240,35 @@ function Window:Toggle(force)
     self._toggleToken = (self._toggleToken or 0) + 1
     local token = self._toggleToken
     local main = self._main
-    local sc = main:FindFirstChildOfClass("UIScale")
-    local base = main:GetAttribute("FitScale") or (sc and sc.Scale) or 1
-    -- cancel previous animations so quick toggles never jump or stutter
-    for _, key in ipairs({ "_toggleTween", "_scaleTween" }) do
-        if self[key] then
-            pcall(function() self[key]:Cancel() end)
-            self[key] = nil
-        end
+    local rest = self._basePos
+
+    -- one tween at a time, so rapid toggles never jump or stutter
+    if self._toggleTween then
+        pcall(function() self._toggleTween:Cancel() end)
+        self._toggleTween = nil
     end
+    -- older builds animated the scale; make sure it is back at its fitted size
+    local sc = main:FindFirstChildOfClass("UIScale")
+    local fitted = main:GetAttribute("FitScale")
+    if sc and fitted then
+        sc.Scale = fitted
+    end
+
     if show then
-        main.Position = self._basePos
         if not main.Visible then
-            main.GroupTransparency = 0.5
-            if sc then sc.Scale = base * 0.88 end
+            main.GroupTransparency = 1
+            main.Position = rest + UDim2.fromOffset(0, 10)
             main.Visible = true
         end
-        -- pop-in: fades in while growing with a small overshoot
-        self._toggleTween = tween(main, 0.14, { GroupTransparency = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        if sc then
-            self._scaleTween = tween(sc, 0.24, { Scale = base }, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-        end
+        -- fade and slide up in a single fast tween
+        self._toggleTween = tween(main, 0.16, { GroupTransparency = 0, Position = rest }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
     else
-        self._toggleTween = tween(main, 0.12, { GroupTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-        if sc then
-            self._scaleTween = tween(sc, 0.12, { Scale = base * 0.94 }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-        end
-        task.delay(0.13, function()
-            if token == self._toggleToken and not self._visible then
+        local closing = tween(main, 0.11, { GroupTransparency = 1, Position = rest + UDim2.fromOffset(0, 6) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        self._toggleTween = closing
+        closing.Completed:Connect(function(state)
+            if state == Enum.PlaybackState.Completed and token == self._toggleToken and not self._visible then
                 main.Visible = false
-                if sc then sc.Scale = base end
+                main.Position = rest
             end
         end)
     end
@@ -6369,20 +6368,36 @@ Tabs.Misc:CreateToggle({
 
 do
     local weak = { __mode = "k" }
-    local savedParts = setmetatable({}, weak)   -- BasePart -> { Material, Reflectance, CastShadow }
-    local savedDecals = setmetatable({}, weak)  -- Decal/Texture -> Transparency
-    local savedFx = setmetatable({}, weak)      -- effect -> true
+    local savedParts = setmetatable({}, weak)       -- BasePart -> { Material, Reflectance, CastShadow, RenderFidelity }
+    local savedDecals = setmetatable({}, weak)      -- Decal/Texture -> Transparency
+    local savedFx = setmetatable({}, weak)          -- effect -> true
+    local savedAtmos = setmetatable({}, weak)       -- Atmosphere -> Density
+    local savedAppearance = {}                      -- SurfaceAppearance -> original parent (strong: it is unparented)
     local savedPerf = nil
     local descConn = nil
     local optimized = 0
     local FX_CLASSES = {
         ParticleEmitter = true, Trail = true, Beam = true, Smoke = true,
         Fire = true, Sparkles = true, BloomEffect = true, BlurEffect = true,
-        SunRaysEffect = true, DepthOfFieldEffect = true, ColorCorrectionEffect = false,
+        SunRaysEffect = true, DepthOfFieldEffect = true, Clouds = true,
+        PointLight = true, SpotLight = true, SurfaceLight = true, Highlight = true,
     }
 
+    -- average frames per second over a short window
+    local function measureFps(seconds)
+        local frames = 0
+        local started = os.clock()
+        local connection = RunService.Heartbeat:Connect(function()
+            frames = frames + 1
+        end)
+        task.wait(seconds)
+        connection:Disconnect()
+        return frames / math.max(os.clock() - started, 0.01)
+    end
+
     local function optimize(inst)
-        if FX_CLASSES[inst.ClassName] then
+        local class = inst.ClassName
+        if FX_CLASSES[class] then
             if inst.Enabled then
                 savedFx[inst] = true
                 inst.Enabled = false
@@ -6390,16 +6405,35 @@ do
             end
         elseif inst:IsA("BasePart") then
             if savedParts[inst] == nil then
-                savedParts[inst] = { inst.Material, inst.Reflectance, inst.CastShadow }
+                local fidelity
+                if inst:IsA("MeshPart") then
+                    fidelity = inst.RenderFidelity
+                end
+                savedParts[inst] = { inst.Material, inst.Reflectance, inst.CastShadow, fidelity }
                 inst.Material = Enum.Material.SmoothPlastic
                 inst.Reflectance = 0
                 inst.CastShadow = false
+                if fidelity then
+                    inst.RenderFidelity = Enum.RenderFidelity.Performance
+                end
                 optimized = optimized + 1
             end
-        elseif inst:IsA("Decal") or inst:IsA("Texture") then
+        elseif inst:IsA("Decal") then
             if savedDecals[inst] == nil then
                 savedDecals[inst] = inst.Transparency
                 inst.Transparency = 1
+                optimized = optimized + 1
+            end
+        elseif class == "SurfaceAppearance" then
+            if savedAppearance[inst] == nil and inst.Parent then
+                savedAppearance[inst] = inst.Parent
+                inst.Parent = nil
+                optimized = optimized + 1
+            end
+        elseif class == "Atmosphere" then
+            if savedAtmos[inst] == nil then
+                savedAtmos[inst] = inst.Density
+                inst.Density = 0
                 optimized = optimized + 1
             end
         end
@@ -6408,54 +6442,73 @@ do
     local function applyPerformance(on)
         if on then
             if savedPerf then return end
-            savedPerf = {}
+            local mine = {}
+            savedPerf = mine
             optimized = 0
-            pcall(function()
-                savedPerf.quality = settings().Rendering.QualityLevel
-                settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-            end)
-            pcall(function()
-                local ugs = UserSettings():GetService("UserGameSettings")
-                savedPerf.saved = ugs.SavedQualityLevel
-                ugs.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
-            end)
-            pcall(function()
-                savedPerf.shadows = Lighting.GlobalShadows
-                Lighting.GlobalShadows = false
-            end)
-            pcall(function()
-                local terrain = workspace:FindFirstChildOfClass("Terrain")
-                if terrain then
-                    savedPerf.terrain = {
-                        terrain.WaterWaveSize, terrain.WaterWaveSpeed,
-                        terrain.WaterReflectance, terrain.Decoration,
-                    }
-                    terrain.WaterWaveSize = 0
-                    terrain.WaterWaveSpeed = 0
-                    terrain.WaterReflectance = 0
-                    terrain.Decoration = false
-                end
-            end)
             task.spawn(function()
+                local before = measureFps(1)
+                if savedPerf ~= mine then return end
+
+                pcall(function()
+                    mine.quality = settings().Rendering.QualityLevel
+                    settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+                end)
+                pcall(function()
+                    local ugs = UserSettings():GetService("UserGameSettings")
+                    mine.saved = ugs.SavedQualityLevel
+                    ugs.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+                end)
+                pcall(function()
+                    mine.lighting = {
+                        Lighting.GlobalShadows, Lighting.EnvironmentDiffuseScale,
+                        Lighting.EnvironmentSpecularScale, Lighting.ShadowSoftness,
+                    }
+                    Lighting.GlobalShadows = false
+                    Lighting.EnvironmentDiffuseScale = 0
+                    Lighting.EnvironmentSpecularScale = 0
+                    Lighting.ShadowSoftness = 0
+                end)
+                pcall(function()
+                    local terrain = workspace:FindFirstChildOfClass("Terrain")
+                    if terrain then
+                        mine.terrain = {
+                            terrain.WaterWaveSize, terrain.WaterWaveSpeed,
+                            terrain.WaterReflectance, terrain.Decoration,
+                        }
+                        terrain.WaterWaveSize = 0
+                        terrain.WaterWaveSpeed = 0
+                        terrain.WaterReflectance = 0
+                        terrain.Decoration = false
+                    end
+                end)
+
+                descConn = workspace.DescendantAdded:Connect(function(d)
+                    pcall(optimize, d)
+                end)
                 local n = 0
                 for _, root in ipairs({ workspace, Lighting }) do
                     for _, d in ipairs(root:GetDescendants()) do
+                        if savedPerf ~= mine then return end
                         pcall(optimize, d)
                         n = n + 1
                         if n % 300 == 0 then task.wait() end
                     end
                 end
+
+                task.wait(1.5)
+                local after = measureFps(2)
+                if savedPerf ~= mine then return end
+                local content
+                if before >= 58 then
+                    content = string.format("%d objects optimized. FPS is at the cap (%d), so only GPU load and heat drop.", optimized, math.floor(after + 0.5))
+                elseif after > before + 1 then
+                    content = string.format("FPS %d -> %d (%d objects optimized)", math.floor(before + 0.5), math.floor(after + 0.5), optimized)
+                else
+                    content = string.format("%d objects optimized. FPS stayed near %d, the limit is elsewhere (CPU or network).", optimized, math.floor(after + 0.5))
+                end
                 pcall(function()
-                    Library:Notify({
-                        Title = "Performance Mode",
-                        Content = "Optimized " .. optimized .. " objects",
-                        Type = "success",
-                        Duration = 3,
-                    })
+                    Library:Notify({ Title = "Performance Mode", Content = content, Type = "success", Duration = 5 })
                 end)
-            end)
-            descConn = workspace.DescendantAdded:Connect(function(d)
-                pcall(optimize, d)
             end)
         else
             if not savedPerf then return end
@@ -6471,7 +6524,11 @@ do
                 end
             end)
             pcall(function()
-                if snapshot.shadows ~= nil then Lighting.GlobalShadows = snapshot.shadows end
+                local l = snapshot.lighting
+                if l then
+                    Lighting.GlobalShadows, Lighting.EnvironmentDiffuseScale = l[1], l[2]
+                    Lighting.EnvironmentSpecularScale, Lighting.ShadowSoftness = l[3], l[4]
+                end
             end)
             pcall(function()
                 local terrain = workspace:FindFirstChildOfClass("Terrain")
@@ -6486,6 +6543,7 @@ do
                 for inst, v in pairs(savedParts) do
                     pcall(function()
                         inst.Material, inst.Reflectance, inst.CastShadow = v[1], v[2], v[3]
+                        if v[4] then inst.RenderFidelity = v[4] end
                     end)
                     savedParts[inst] = nil
                     n = n + 1
@@ -6499,6 +6557,16 @@ do
                     pcall(function() inst.Enabled = true end)
                     savedFx[inst] = nil
                 end
+                for inst, density in pairs(savedAtmos) do
+                    pcall(function() inst.Density = density end)
+                    savedAtmos[inst] = nil
+                end
+                for inst, parent in pairs(savedAppearance) do
+                    pcall(function()
+                        if parent and parent.Parent then inst.Parent = parent end
+                    end)
+                    savedAppearance[inst] = nil
+                end
             end)
         end
     end
@@ -6506,7 +6574,7 @@ do
     Tabs.Misc:CreateToggle({
         Flag = "PerformanceModeToggle",
         Name = "Performance Mode",
-        Description = "Lower graphics: flat materials, no shadows/effects/decals for more FPS",
+        Description = "Lower graphics: flat materials, no shadows/effects/lights/textures for more FPS",
         CurrentValue = Config.PerformanceMode,
         Callback = function(Value)
             Config.PerformanceMode = Value
@@ -6514,10 +6582,6 @@ do
             applyPerformance(Value)
         end
     })
-
-    if Config.PerformanceMode then
-        task.defer(applyPerformance, true)
-    end
 end
 
 Tabs.Misc:CreateToggle({
