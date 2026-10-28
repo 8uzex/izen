@@ -68,7 +68,8 @@ local EN_TRANSLATIONS = {
     ["Mở nâng cấp kỹ năng"] = "Open Skill Upgrade", ["Mở học kỹ năng"] = "Open Skill Learning",
     ["Mở giao diện trao đổi"] = "Open Trade UI", ["Mở đặc tính"] = "Open Traits", ["Phím tắt"] = "Hotkeys",
     ["Tắt phím tắt"] = "Disable Hotkeys", ["Phím bật bay"] = "Fly Toggle Key", ["Phím bật xuyên vật thể"] = "Noclip Toggle Key",
-    ["Máy chủ"] = "Server", ["Vào lại máy chủ"] = "Rejoin Server", ["Đổi máy chủ ít người"] = "Join Low-Population Server",
+    ["Máy chủ"] = "Server", ["Server Hop"] = "Server Hop", ["Vào lại máy chủ"] = "Rejoin Server", ["Đổi máy chủ ít người"] = "Join Low-Population Server",
+    ["Quét sự kiện"] = "Event Scanner", ["Quét Maoshan"] = "Scan Maoshan", ["Quét Taoist"] = "Scan Taoist", ["Quét Spirit"] = "Scan Spirit", ["Quét thời tiết"] = "Scan Weather", ["Theo dõi Enzo"] = "Watch Enzo Ready", ["Webhook Maoshan"] = "Maoshan Webhook", ["Webhook Taoist"] = "Taoist Webhook", ["Webhook Spirit"] = "Spirit Webhook", ["Webhook thời tiết"] = "Weather Webhook", ["API Server Hop"] = "Server Hop API", ["API Base URL"] = "API Base URL", ["API Key"] = "API Key", ["Gửi sự kiện lên API"] = "Send Events to API", ["Bật quét NPC"] = "Enable NPC Scanning",
     ["Tự vào lại"] = "Auto Rejoin", ["Tự vào lại khi mất kết nối"] = "Auto Rejoin on Disconnect",
     ["Thông báo Discord Webhook"] = "Discord Webhook Notifications", ["Thông báo qua Webhook"] = "Webhook Notifications",
     ["Đường dẫn Webhook"] = "Webhook URL", ["Gửi thử Webhook"] = "Test Webhook", ["Quyền riêng tư"] = "Privacy",
@@ -1721,7 +1722,19 @@ local Config = {
     AutoTicketQuest = false,
     TicketQuestMode = "Hard",
     AutoEquipBestBait = false,
-    AutoEquipRod = false
+    AutoEquipRod = false,
+    ScanMaoshan = false,
+    ScanTaoist = false,
+    ScanSpirit = false,
+    ScanWeather = false,
+    WatchEnzoReady = false,
+    ServerHopApiBase = "",
+    ServerHopApiKey = "",
+    ServerHopApiEnabled = false,
+    MaoshanWebhook = "",
+    TaoistWebhook = "",
+    SpiritWebhook = "",
+    WeatherWebhook = ""
 }
 
 local SAVE_FOLDER = "UzexHub"
@@ -5701,7 +5714,8 @@ local Tabs = {
     Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
     Upgrade = Window:CreateTab({ Name = "Nâng cấp", Icon = "arrow-up" }),
     Misc = Window:CreateTab({ Name = "Khác", Icon = "layers" }),
-    Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" })
+    Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" }),
+    ServerHop = Window:CreateTab({ Name = "Server Hop", Icon = "globe" })
 }
 
 Tabs.Settings:CreateSection("Language / Ngôn ngữ")
@@ -7190,121 +7204,250 @@ Tabs.Settings:CreateKeybind({
 do
     local function HopLowServer()
         task.spawn(function()
-            local placeId = game.PlaceId
-            local curJobId = game.JobId
+            local placeId, curJobId = game.PlaceId, game.JobId
             local requestFn = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
             local targetServer = nil
-
-            pcall(function()
-                Library:Notify({
-                    Title = "Đổi máy chủ",
-                    Content = "Đang tìm máy chủ ít người...",
-                    Duration = 4
-                })
-            end)
-
-            local cursor = ""
-            local attempts = 0
+            Library:Notify({Title = "Server Hop", Content = "Đang tìm máy chủ ít người...", Duration = 4})
+            local cursor, attempts = "", 0
             while attempts < 5 and not targetServer do
                 attempts = attempts + 1
                 local url = "https://games.roblox.com/v1/games/" .. tostring(placeId) .. "/servers/Public?sortOrder=Asc&limit=100"
-                if cursor ~= "" then
-                    url = url .. "&cursor=" .. cursor
-                end
-
-                local raw = nil
+                if cursor ~= "" then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
+                local raw
                 if requestFn then
-                    local res = requestFn({ Url = url, Method = "GET" })
-                    if res and res.Body then
-                        raw = res.Body
-                    end
+                    local ok, res = pcall(requestFn, {Url=url, Method="GET"})
+                    if ok and res then raw = res.Body end
                 else
                     local ok, res = pcall(game.HttpGet, game, url)
                     if ok then raw = res end
                 end
-
-                if raw then
-                    local data = nil
-                    pcall(function() data = HttpService:JSONDecode(raw) end)
-                    if data and data.data then
-                        local servers = {}
-                        for _, s in ipairs(data.data) do
-                            if type(s) == "table" and s.id and s.id ~= curJobId then
-                                local playing = tonumber(s.playing) or 0
-                                local maxP = tonumber(s.maxPlayers) or 1
-                                if playing < maxP and playing > 0 then
-                                    table.insert(servers, s)
-                                end
-                            end
-                        end
-                        table.sort(servers, function(a, b)
-                            return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
-                        end)
-                        if #servers > 0 then
-                            targetServer = servers[1]
-                            break
-                        end
-                        if data.nextPageCursor and data.nextPageCursor ~= "" then
-                            cursor = data.nextPageCursor
-                        else
-                            break
-                        end
-                    else
-                        break
+                if not raw then break end
+                local data
+                pcall(function() data = HttpService:JSONDecode(raw) end)
+                if not data or type(data.data) ~= "table" then break end
+                local servers = {}
+                for _, srv in ipairs(data.data) do
+                    if type(srv) == "table" and srv.id and srv.id ~= curJobId then
+                        local playing, maxP = tonumber(srv.playing) or 0, tonumber(srv.maxPlayers) or 1
+                        if playing < maxP and playing > 0 then table.insert(servers, srv) end
                     end
-                else
-                    break
                 end
-                task.wait(0.5)
+                table.sort(servers, function(a,b) return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0) end)
+                if #servers > 0 then targetServer = servers[1]; break end
+                cursor = data.nextPageCursor or ""
+                if cursor == "" then break end
+                task.wait(0.4)
             end
-
             if targetServer and targetServer.id then
-                pcall(function()
-                    Library:Notify({
-                        Title = "Đổi máy chủ",
-                        Content = "Đã tìm thấy máy chủ có " .. tostring(targetServer.playing) .. " người chơi! Đang dịch chuyển...",
-                        Duration = 4
-                    })
-                end)
-                task.wait(0.5)
+                Library:Notify({Title="Server Hop", Content="Đang chuyển đến server có "..tostring(targetServer.playing).." người...", Duration=3})
+                task.wait(0.4)
                 TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, LocalPlayer)
             else
-                pcall(function()
-                    Library:Notify({
-                        Title = "Đổi máy chủ",
-                        Content = "Không tìm thấy máy chủ ít người. Đang chuyển đến máy chủ ngẫu nhiên...",
-                        Duration = 4
-                    })
-                end)
-                task.wait(0.5)
+                Library:Notify({Title="Server Hop", Content="Không tìm thấy server phù hợp; thử vào server ngẫu nhiên.", Duration=4})
+                task.wait(0.4)
                 TeleportService:Teleport(placeId, LocalPlayer)
             end
         end)
     end
 
-    Tabs.Misc:CreateSection("Máy chủ")
-
-    Tabs.Misc:CreateButton({
+    Tabs.ServerHop:CreateSection("Máy chủ")
+    Tabs.ServerHop:CreateButton({
         Name = "Vào lại máy chủ",
         Callback = function()
-            pcall(function()
-                Library:Notify({
-                    Title = "Rejoin",
-                    Content = "Đang vào lại máy chủ hiện tại...",
-                    Duration = 3
-                })
-            end)
+            Library:Notify({Title="Rejoin", Content="Đang vào lại máy chủ hiện tại...", Duration=3})
             task.wait(0.3)
             TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
         end
     })
-
-    Tabs.Misc:CreateButton({
-        Name = "Đổi máy chủ ít người",
+    Tabs.ServerHop:CreateButton({Name="Đổi máy chủ ít người", Callback=HopLowServer})
+    Tabs.ServerHop:CreateButton({
+        Name = "Server Hop ngẫu nhiên",
         Callback = function()
-            HopLowServer()
+            TeleportService:Teleport(game.PlaceId, LocalPlayer)
         end
     })
+
+    Tabs.ServerHop:CreateSection("Quét sự kiện")
+    local function addScanToggle(name, flag, desc)
+        Tabs.ServerHop:CreateToggle({
+            Name = name, Flag = flag, Description = desc or "",
+            CurrentValue = Config[flag] == true,
+            Callback = function(v) Config[flag] = v; SaveConfig() end
+        })
+    end
+    addScanToggle("Quét Maoshan", "ScanMaoshan", "Phát hiện NPC Maoshan / Merchant.")
+    addScanToggle("Quét Taoist", "ScanTaoist", "Phát hiện NPC Taoist.")
+    addScanToggle("Quét Spirit", "ScanSpirit", "Phát hiện NPC God / Spirit.")
+    addScanToggle("Quét thời tiết", "ScanWeather", "Phát hiện thời tiết đặc biệt.")
+    addScanToggle("Theo dõi Enzo", "WatchEnzoReady", "Gửi thông báo khi Enzo sẵn sàng.")
+    addScanToggle("Gửi sự kiện lên API", "ServerHopApiEnabled", "Chỉ gửi dữ liệu khi đã tự nhập API URL; mặc định tắt.")
+
+    Tabs.ServerHop:CreateSection("Webhook Discord (tùy chọn)")
+    local function addUrlInput(name, flag, placeholder)
+        Tabs.ServerHop:CreateInput({
+            Name=name, Flag=flag, CurrentValue=tostring(Config[flag] or ""),
+            PlaceholderText=placeholder or "Để trống nếu không dùng",
+            Callback=function(value)
+                local v = tostring(value or ""):gsub("^%s+",""):gsub("%s+$","")
+                if v == "" or v:match("^https://discord%.com/api/webhooks/") then
+                    Config[flag] = v
+                    SaveConfig()
+                else
+                    Library:Notify({Title="Webhook", Content="URL không hợp lệ; hãy nhập Discord Webhook URL hoặc để trống.", Duration=4})
+                end
+            end
+        })
+    end
+    addUrlInput("Webhook Maoshan", "MaoshanWebhook", "Discord webhook URL")
+    addUrlInput("Webhook Taoist", "TaoistWebhook", "Discord webhook URL")
+    addUrlInput("Webhook Spirit", "SpiritWebhook", "Discord webhook URL")
+    addUrlInput("Webhook thời tiết", "WeatherWebhook", "Discord webhook URL")
+
+    Tabs.ServerHop:CreateSection("API Server Hop")
+    Tabs.ServerHop:CreateInput({
+        Name="API Base URL", Flag="ServerHopApiBase", CurrentValue=tostring(Config.ServerHopApiBase or ""),
+        PlaceholderText="https://your-api.example",
+        Callback=function(value)
+            Config.ServerHopApiBase = tostring(value or ""):gsub("%s+$","")
+            SaveConfig()
+        end
+    })
+    Tabs.ServerHop:CreateInput({
+        Name="API Key", Flag="ServerHopApiKey", CurrentValue=tostring(Config.ServerHopApiKey or ""),
+        PlaceholderText="API key (optional)",
+        Callback=function(value) Config.ServerHopApiKey=tostring(value or ""); SaveConfig() end
+    })
+
+    local function getRequest()
+        return (typeof(request) == "function" and request)
+            or (typeof(http_request) == "function" and http_request)
+            or (syn and typeof(syn.request) == "function" and syn.request)
+            or (http and typeof(http.request) == "function" and http.request)
+            or nil
+    end
+    local function postJson(url, payload, apiKey)
+        local req = getRequest()
+        if not req or not url or url == "" then return false end
+        local headers = {["Content-Type"]="application/json"}
+        if apiKey and apiKey ~= "" then headers["X-API-Key"] = apiKey end
+        local ok, response = pcall(req, {Url=url, Method="POST", Headers=headers, Body=HttpService:JSONEncode(payload)})
+        return ok and response ~= nil and ((tonumber(response.StatusCode) or 200) < 400)
+    end
+    local function base64Encode(data)
+        local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        return ((data:gsub(".", function(ch)
+            local r,b="",ch:byte()
+            for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and "1" or "0") end
+            return r
+        end).."0000"):gsub("%d%d%d?%d?%d?%d?", function(bits)
+            if #bits < 6 then return "" end
+            local n=0
+            for i=1,6 do n=n+(bits:sub(i,i)=="1" and 2^(6-i) or 0) end
+            return chars:sub(n+1,n+1)
+        end)..({"","==","="})[#data%3+1])
+    end
+    local function sendEvent(eventName, attrs, webhookUrl)
+        local now = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        local playerCount = #Players:GetPlayers() .. "/" .. tostring(Players.MaxPlayers)
+        if webhookUrl and webhookUrl ~= "" then
+            postJson(webhookUrl, {
+                username="Uzex Hub",
+                embeds={{
+                    title=eventName.." Found!",
+                    description="Sự kiện được phát hiện trong server hiện tại.",
+                    color=0xFF6B35,
+                    fields={
+                        {name="Join Server (tap to copy)", value="NEXUSHUB|"..base64Encode(game.JobId), inline=false},
+                        {name="Players", value=playerCount, inline=true},
+                        {name="Time", value=os.date("%Y-%m-%d %H:%M:%S"), inline=true}
+                    },
+                    timestamp=now
+                }}
+            })
+        end
+        local base = tostring(Config.ServerHopApiBase or ""):gsub("/+$","")
+        if Config.ServerHopApiEnabled and base ~= "" then
+            postJson(base.."/v1/hop-events", {
+                event_id=tostring(eventName).."-"..tostring(os.time()),
+                place_id=game.PlaceId, job_id=game.JobId,
+                reason=tostring(eventName), attributes=attrs or {}, source="uzex_hub"
+            }, tostring(Config.ServerHopApiKey or ""))
+        end
+    end
+
+    local Workspace = game:GetService("Workspace")
+    local LightingService = game:GetService("Lighting")
+    local npcWasFound = {Maoshan=false, Taoist=false, Spirit=false}
+    local lastWeather, enzoWasReady = nil, false
+    local function getWeather()
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local mainGui = pg and pg:FindFirstChild("MainGui")
+        local info = mainGui and mainGui:FindFirstChild("Info")
+        local info2 = info and info:FindFirstChild("Info")
+        local weatherFrame = info2 and info2:FindFirstChild("Weather")
+        local value = weatherFrame and weatherFrame:FindFirstChild("Value")
+        if value and value:IsA("TextLabel") then
+            local text = tostring(value.Text or ""):gsub("Weather:%s*","")
+            if text ~= "" then return text end
+        end
+        for _, weather in ipairs({"Rainy","Thunderstorm","Foggy","Windy","Snowy","Blazing Sun"}) do
+            if Workspace:FindFirstChild(weather) or LightingService:FindFirstChild(weather) then return weather end
+        end
+        return nil
+    end
+    local function scanNpc()
+        local npcFolder = Workspace:FindFirstChild("NPC")
+        if not npcFolder then return end
+        local found = {Maoshan=false, Taoist=false, Spirit=false}
+        for _, obj in ipairs(npcFolder:GetDescendants()) do
+            if obj:IsA("Model") and obj:FindFirstChild("HumanoidRootPart") then
+                local n = obj.Name:lower()
+                if n:find("maoshan",1,true) or n:find("merchant",1,true) then found.Maoshan=true end
+                if n:find("taoist",1,true) then found.Taoist=true end
+                if obj.Name == "God" or n:find("spirit",1,true) then found.Spirit=true end
+            end
+        end
+        for kind, isFound in pairs(found) do
+            local enabled = (kind=="Maoshan" and Config.ScanMaoshan)
+                or (kind=="Taoist" and Config.ScanTaoist)
+                or (kind=="Spirit" and Config.ScanSpirit)
+            if enabled and isFound and not npcWasFound[kind] then
+                local urlKey = ({Maoshan="MaoshanWebhook", Taoist="TaoistWebhook", Spirit="SpiritWebhook"})[kind]
+                sendEvent(kind, {npc=kind}, Config[urlKey])
+            end
+            npcWasFound[kind] = isFound
+        end
+    end
+    task.spawn(function()
+        while task.wait(3) do
+            pcall(function()
+                scanNpc()
+                if Config.ScanWeather then
+                    local weather = getWeather()
+                    if weather and weather ~= "" and weather:lower() ~= "clear" and weather ~= lastWeather then
+                        sendEvent("Weather", {weather=weather}, Config.WeatherWebhook)
+                    end
+                    lastWeather = weather
+                else
+                    lastWeather = nil
+                end
+                if Config.WatchEnzoReady then
+                    local root = Workspace:FindFirstChild("Bosses") or Workspace:FindFirstChild("Boss") or Workspace:FindFirstChild("NPC")
+                    local enzo = root and root:FindFirstChild("Enzo", true)
+                    local ready = false
+                    if enzo then
+                        local cooldown = tonumber(enzo:GetAttribute("Cooldown")) or tonumber(enzo:GetAttribute("CooldownRemaining"))
+                        local endsAt = tonumber(enzo:GetAttribute("CooldownEnd"))
+                        ready = enzo:GetAttribute("CanAttack")==true or enzo:GetAttribute("Ready")==true or (cooldown and cooldown<=0) or (endsAt and endsAt<=os.clock()) or false
+                    end
+                    if ready and not enzoWasReady then sendEvent("Enzo Ready", {boss="Enzo",ready=true}, nil) end
+                    enzoWasReady = ready
+                else
+                    enzoWasReady = false
+                end
+            end)
+        end
+    end)
 end
 
 -------------------------------------------------------------------------------
