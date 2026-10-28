@@ -3148,7 +3148,8 @@ local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
 
     if modeBtn then
         FireGuiSignal(modeBtn)
-        task.wait(0.15)
+        -- Allow the selected difficulty to replicate before starting the fight.
+        task.wait(0.6)
     end
 
     local fightBtn = bossFrame:FindFirstChild("Fight", true)
@@ -3197,18 +3198,12 @@ local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
         local lowerName = string.lower(ev.Name)
         if targetNames[lowerName] or string.find(lowerName, "boss") then
             pcall(function()
+                -- The mode button is selected above. Do not send multiple incompatible
+                -- argument layouts: later calls can overwrite Nightmare with Normal.
                 if ev:IsA("RemoteEvent") then
                     ev:FireServer(targetMode)
-                    if bossName then
-                        ev:FireServer(bossName, targetMode)
-                        ev:FireServer(targetMode, bossName)
-                    end
                 elseif ev:IsA("RemoteFunction") then
                     ev:InvokeServer(targetMode)
-                    if bossName then
-                        ev:InvokeServer(bossName, targetMode)
-                        ev:InvokeServer(targetMode, bossName)
-                    end
                 end
             end)
         end
@@ -3454,7 +3449,7 @@ task.spawn(function()
                             Duration = 4,
                         })
                     end)
-                elseif (known and waited > 0.05) or waited > 0.4 then
+                elseif (known and waited > 0.15) or waited > 3.0 then
                     cancelStage = 1
                     if now - UzexFilter.LastNotify > 3 then
                         UzexFilter.LastNotify = now
@@ -3469,8 +3464,9 @@ task.spawn(function()
                     UzexFilter.Recycle()
                 end
             elseif cancelStage == 1 and isMinigame and (now - fightStart) > 4 then
+                -- One recycle attempt per fish only; repeated recycle calls can cancel
+                -- the next cast and skip a Secret Boss bite.
                 cancelStage = 2
-                UzexFilter.Recycle()
             end
             UzexFilter.Skip = not fightAllowed
         else
@@ -3841,7 +3837,9 @@ do
         if counterLabel and counterLabel.Parent then
             local cur, cap = ParseFraction(counterLabel.Text)
             if cur and cap then
-                return cur >= cap
+                -- Fish storage UI may show 999 or 1999 as the cap; sell at 998/1998
+                -- so the next catch cannot fill the inventory before the check runs.
+                return cur >= math.max(1, cap - 1)
             end
         end
 
