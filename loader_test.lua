@@ -2867,18 +2867,29 @@ local function HWFLoadTrelloFishData(force)
         local raw, board
         for _, url in ipairs(HWF_TRELLO_JSON_URLS) do
             local ok, response = pcall(function()
-                if type(game.HttpGet) == "function" then
-                    return game:HttpGet(url)
-                end
-                local req = (syn and syn.request) or (http and http.request) or request
+                -- Prefer executor HTTP APIs; game:HttpGet can fail with SslConnectFail
+                -- on some Android executors. Each method is isolated so one failure
+                -- does not abort the rest of the fallback chain.
+                local req = (syn and syn.request) or (http and http.request) or http_request or request
                 if type(req) == "function" then
-                    local result = req({Url = url, Method = "GET"})
-                    if result and tonumber(result.StatusCode or result.Status) and tonumber(result.StatusCode or result.Status) >= 400 then
-                        error("HTTP " .. tostring(result.StatusCode or result.Status))
+                    local reqOk, result = pcall(function()
+                        return req({Url = url, Method = "GET"})
+                    end)
+                    if reqOk and type(result) == "table" then
+                        local status = tonumber(result.StatusCode or result.Status or result.status_code)
+                        local body = result.Body or result.body
+                        if type(body) == "string" and body ~= "" and (not status or (status >= 200 and status < 300)) then
+                            return body
+                        end
                     end
-                    return result and (result.Body or result.body)
                 end
-                error("No HTTP request method")
+                if type(game.HttpGet) == "function" then
+                    local getOk, body = pcall(function() return game:HttpGet(url) end)
+                    if getOk and type(body) == "string" and body ~= "" then
+                        return body
+                    end
+                end
+                return nil
             end)
             if ok and type(response) == "string" and response ~= "" then
                 local decodedOk, decoded = pcall(function()
@@ -2949,7 +2960,9 @@ local function HWFLoadTrelloFishData(force)
     end)
 end
 
-HWFLoadTrelloFishData(true)
+task.delay(2, function()
+    pcall(function() HWFLoadTrelloFishData(true) end)
+end)
 
 local function HWFGetTrelloFishData(name)
     local normalized = HWFNormalizeFishName(name)
