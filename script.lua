@@ -1827,7 +1827,7 @@ local function QueueAutoExecute(force)
     if autoExecPayload:find("YOUR-USER", 1, true) then
         pcall(function()
             Library:Notify({
-                Title = "Tự chạy script",
+                Title = "Auto Execute ",
                 Content = "Hãy đặt liên kết script trong autoExecPayload trước.",
                 Type = "warning",
                 Duration = 6,
@@ -5162,6 +5162,72 @@ local function GetNPCList()
     return list
 end
 
+-- Looser NPC lookup used when the normal lookups find nothing, mainly for the Spirit
+-- (God) NPCs: matches by name, by Name attribute, by colour (Blue / Green / Yellow) and
+-- by the word "spirit", then picks the one closest to the player.
+local function FindLooseNPCPart(npcName, lowerNpc)
+    local function norm(text)
+        return string.lower((string.gsub(tostring(text or ""), "[%s_%-]+", "")))
+    end
+    local want = norm(npcName)
+    if want == "" then
+        return nil
+    end
+    local color
+    for _, c in ipairs({ "blue", "green", "yellow" }) do
+        if string.find(want, c, 1, true) then
+            color = c
+            break
+        end
+    end
+    local anySpirit = string.find(want, "spirit", 1, true) ~= nil or want == "god" or want == "gods"
+
+    local char = LocalPlayer.Character or cachedChar
+    local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+    local best, bestDist
+
+    local function consider(inst, inGod)
+        if not (inst:IsA("Model") or inst:IsA("BasePart")) then
+            return
+        end
+        local name = norm(inst.Name)
+        local attr = norm(inst:GetAttribute("Name"))
+        local hit = (name == want or attr == want)
+        if not hit and color and (name == color or attr == color) then
+            hit = true
+        end
+        if not hit and anySpirit and not color then
+            hit = inGod and (inst.Parent and inst.Parent.Name == "God") or string.find(name, "spirit", 1, true) ~= nil
+        end
+        if not hit and #want >= 4 then
+            hit = string.find(name, want, 1, true) ~= nil or (#name >= 4 and string.find(want, name, 1, true) ~= nil)
+        end
+        if not hit then
+            return
+        end
+        local part = GetModelPart(inst)
+        if part and part:IsDescendantOf(workspace) then
+            local dist = hrp and (part.Position - hrp.Position).Magnitude or 0
+            if not best or dist < bestDist then
+                best, bestDist = part, dist
+            end
+        end
+    end
+
+    local godFolder = workspace:FindFirstChild("God")
+    if godFolder then
+        for _, inst in ipairs(godFolder:GetDescendants()) do
+            consider(inst, true)
+        end
+    end
+    if not best then
+        for _, inst in ipairs(workspace:GetDescendants()) do
+            consider(inst, false)
+        end
+    end
+    return best
+end
+
 local function TeleportToNPC(npcName)
     if not npcName or npcName == "" then return end
     local lowerNpc = string.lower(string.gsub(tostring(npcName), "%s+", ""))
@@ -5248,6 +5314,9 @@ local function TeleportToNPC(npcName)
         if cached and cached:IsDescendantOf(workspace) then
             targetPart = cached
         end
+    end
+    if not targetPart or not targetPart:IsDescendantOf(workspace) then
+        targetPart = FindLooseNPCPart(npcName, lowerNpc)
     end
     if not targetPart or not targetPart:IsDescendantOf(workspace) then
         pcall(function()
@@ -7347,6 +7416,66 @@ do
         return string.format("%dh %dm", t // 3600, (t % 3600) // 60)
     end
 
+    -- Money / ticket / gem numbers added to every webhook message.
+    local currencyCache = {}
+
+    local function findCurrency(keys, exclude)
+        local best, bestScore
+        for _, root in ipairs({ PlayerData, LocalPlayer:FindFirstChild("leaderstats") }) do
+            if root then
+                for _, d in ipairs(root:GetDescendants()) do
+                    if d:IsA("ValueBase") then
+                        local n = string.lower((string.gsub(d.Name, "[%s_%-]", "")))
+                        local rank
+                        for i, key in ipairs(keys) do
+                            if n == key then
+                                rank = i
+                                break
+                            end
+                        end
+                        if not rank then
+                            for i, key in ipairs(keys) do
+                                if string.find(n, key, 1, true) and not (exclude and string.find(n, exclude, 1, true)) then
+                                    rank = 100 + i
+                                    break
+                                end
+                            end
+                        end
+                        if rank then
+                            local depth, p = 0, d.Parent
+                            while p and p ~= root do
+                                depth = depth + 1
+                                p = p.Parent
+                            end
+                            local score = rank * 100 + depth
+                            if not bestScore or score < bestScore then
+                                best, bestScore = d, score
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local function readCurrency(slot, keys, exclude)
+        local inst = currencyCache[slot]
+        if not (inst and inst.Parent) then
+            inst = findCurrency(keys, exclude)
+            currencyCache[slot] = inst
+        end
+        local value = inst and tonumber(inst.Value)
+        if not value then
+            return "-"
+        end
+        local s, k = string.format("%d", math.floor(value + 0.5)), nil
+        repeat
+            s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+        until k == 0
+        return s
+    end
+
     local function sendWebhook(title, description, color, extra, bypassToggle)
         if not (Config.WebhookEnabled or bypassToggle) then
             return false, "disabled"
@@ -7374,6 +7503,11 @@ do
         if Library.Tier then
             table.insert(fields, 2, { name = "Tier", value = tostring(Library.Tier), inline = true })
         end
+        pcall(function()
+            fields[#fields + 1] = { name = "Money", value = readCurrency("cash", { "cash", "money", "balance", "coins", "gold" }), inline = true }
+            fields[#fields + 1] = { name = "Tickets", value = readCurrency("ticket", { "tickets", "ticket" }, "quest"), inline = true }
+            fields[#fields + 1] = { name = "Gems", value = readCurrency("gem", { "gems", "gem", "crystals", "crystal" }), inline = true }
+        end)
         for _, field in ipairs(extra or {}) do
             fields[#fields + 1] = field
         end
@@ -8163,6 +8297,77 @@ do
             task.wait(1)
         end
     end)
+end
+
+-------------------------------------------------------------------------------
+-- Support helper: copies what the boss menu looks like so the difficulty picker
+-- (Normal / Hard / Nightmare) can be matched to the game exactly.
+-------------------------------------------------------------------------------
+do
+    Tabs.Misc:CreateButton({
+        Name = "Copy Boss Menu Info",
+        Description = "Open the boss menu, pick Nightmare by hand, then press this and send the text",
+        Callback = function()
+            local out = { "BossMode setting: " .. tostring(Config.BossMode) }
+            local frame = FindBossMenuFrame()
+            if not frame then
+                out[#out + 1] = "Boss menu frame not found (open the boss menu first)"
+            else
+                out[#out + 1] = "Frame: " .. frame:GetFullName() .. " | Visible=" .. tostring(frame.Visible)
+                local count = 0
+                for _, d in ipairs(frame:GetDescendants()) do
+                    if count >= 140 then
+                        out[#out + 1] = "... (more items not listed)"
+                        break
+                    end
+                    local line
+                    if d:IsA("GuiButton") then
+                        line = string.format("[Button] %s | text=%q | vis=%s | bg=%s",
+                            d.Name, GetButtonLabelText(d), tostring(d.Visible), tostring(d.BackgroundColor3))
+                    elseif d:IsA("TextLabel") then
+                        line = string.format("[Label] %s | text=%q | vis=%s", d.Name, d.Text, tostring(d.Visible))
+                    elseif d:IsA("UIStroke") then
+                        line = string.format("[Stroke] on %s | color=%s | thick=%s | enabled=%s",
+                            d.Parent and d.Parent.Name or "?", tostring(d.Color), tostring(d.Thickness), tostring(d.Enabled))
+                    end
+                    if line then
+                        local attrs = {}
+                        for k, v in pairs(d:GetAttributes()) do
+                            attrs[#attrs + 1] = k .. "=" .. tostring(v)
+                        end
+                        if #attrs > 0 then
+                            line = line .. " | attrs: " .. table.concat(attrs, ", ")
+                        end
+                        out[#out + 1] = line
+                        count = count + 1
+                    end
+                end
+            end
+            local remotes = {}
+            for _, folder in ipairs({ Events, ReplicatedStorage:FindFirstChild("Remotes") }) do
+                if folder then
+                    for _, r in ipairs(folder:GetChildren()) do
+                        if (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) and string.find(string.lower(r.Name), "boss", 1, true) then
+                            remotes[#remotes + 1] = r.ClassName .. ":" .. r.Name
+                        end
+                    end
+                end
+            end
+            out[#out + 1] = "Boss remotes: " .. (#remotes > 0 and table.concat(remotes, ", ") or "none")
+
+            local dump = table.concat(out, "\n")
+            if #dump > 7000 then
+                dump = string.sub(dump, 1, 7000)
+            end
+            local copied = type(setclipboard) == "function" and pcall(setclipboard, dump)
+            Library:Notify({
+                Title = "Boss menu",
+                Content = copied and "Copied. Paste it into the chat." or "Could not copy to the clipboard.",
+                Type = copied and "success" or "error",
+                Duration = 4,
+            })
+        end
+    })
 end
 
 Window:SelectTab(Tabs.Main)
