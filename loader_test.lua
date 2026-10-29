@@ -3547,8 +3547,10 @@ task.spawn(function()
         end
         wasMinigameActive = isMinigame
         -- Fish filter: only fight Boss / Secret Boss fish, drop every other fish and recast
-        local filterOn = (Config.FilterBossFish or Config.FilterSecretFish)
-            and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
+        -- Farm Boss Fish is independent from the NPC Boss/Secret Boss toggles.
+        -- The selected target decides which bites are kept; all other fish are recycled.
+        local filterOn = Config.FarmBossEnabled == true
+            and not Config.AutoFarmIsland
         local curFishId = LocalPlayer:GetAttribute("FishID")
         if filterOn and (isMinigame or curFishId ~= nil) then
             -- every new fish on the line starts a new decision (decided as soon as the fish is known)
@@ -3562,7 +3564,10 @@ task.spawn(function()
             if not fightAllowed and cancelStage == 0 then
                 local isBoss, isSecret, shown, known = UzexFilter.Classify()
                 local waited = now - fightStart
-                if (Config.FilterBossFish and isBoss and not isSecret) or (Config.FilterSecretFish and isSecret) then
+                local selectedFishTarget = Config.SelectedFarmBoss or "Boss Fish"
+                local targetMatches = (selectedFishTarget == "Boss Fish" and isBoss and not isSecret)
+                    or (selectedFishTarget == "Secret Boss Fish" and isSecret)
+                if targetMatches then
                     fightAllowed = true
                     pcall(function()
                         Library:Notify({
@@ -3600,7 +3605,7 @@ task.spawn(function()
         end
         -- after a skipped fish the rod must end up in hand again (only for that case, never otherwise)
         if UzexFilter.NeedRod and not UzexFilter.Busy then
-            if not (Config.FilterBossFish or Config.FilterSecretFish) or UzexFilter.HoldingRod() then
+            if not Config.FarmBossEnabled or UzexFilter.HoldingRod() then
                 UzexFilter.NeedRod = false
             elseif now - (UzexFilter.LastEquip or 0) > 0.3 then
                 UzexFilter.LastEquip = now
@@ -3612,7 +3617,7 @@ task.spawn(function()
             end
         end
         local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
-        local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish or Config.FilterSecretFish
+        local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.FarmBossEnabled or Config.FilterBossFish or Config.FilterSecretFish
         local activeSkill = (Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
 
         if not isMinigame then
@@ -7082,7 +7087,36 @@ do
     })
 end
 
--- Legacy NPC boss toggles removed: Farm Boss now targets Boss Fish / Secret Boss Fish.
+-- Giữ mục Boss NPC riêng biệt; Farm Boss Fish ở phía trên chỉ dùng để farm cá Boss/Secret Boss.
+Tabs.Main:CreateToggle({
+    Flag = "AutoBossToggle",
+    Name = "Tự động Enzo",
+    CurrentValue = Config.AutoBoss,
+    Callback = function(Value)
+        Config.AutoBoss = Value
+        SaveConfig()
+        if Value then
+            task.spawn(function()
+                CheckBossStatusOnToggle(false)
+            end)
+        end
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoSecretBossToggle",
+    Name = "Tự động Long DiaoHai",
+    CurrentValue = Config.AutoSecretBoss,
+    Callback = function(Value)
+        Config.AutoSecretBoss = Value
+        SaveConfig()
+        if Value then
+            task.spawn(function()
+                CheckBossStatusOnToggle(true)
+            end)
+        end
+    end
+})
 
 
 Tabs.Main:CreateToggle({
