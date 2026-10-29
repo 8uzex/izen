@@ -2815,62 +2815,124 @@ end
 
 -- Public HWF Trello board data source. The board is read-only here; if Trello
 -- blocks anonymous JSON access, the script safely falls back to the game's own data.
-local HWF_TRELLO_JSON_URL = "https://trello.com/b/iGl0DGHa/hwf-trello.json"
+local HWF_TRELLO_JSON_URLS = {
+    "https://trello.com/b/iGl0DGHa.json",
+    "https://trello.com/b/iGl0DGHa/hwf-trello.json",
+}
 local HWF_TRELLO_FISH = {}
 local HWF_TRELLO_LAST_FETCH = 0
 local HWF_TRELLO_STATUS = "not loaded"
 
 local function HWFNormalizeFishName(value)
     local v = string.lower(UzexCleanName(tostring(value or "")))
-    v = string.gsub(v, "[^%w]", "")
+    v = string.gsub(v, "<[^>]+>", "")
+    v = string.gsub(v, "[%p%c%s_%-]+", "")
     return v
+end
+
+local function HWFExtractDropInfo(desc)
+    desc = tostring(desc or "")
+    desc = string.gsub(desc, "\r", "")
+    local lines = {}
+    for line in string.gmatch(desc .. "\n", "(.-)\n") do
+        line = string.gsub(line, "^%s+", "")
+        line = string.gsub(line, "%s+$", "")
+        if line ~= "" then table.insert(lines, line) end
+    end
+    local drops = {}
+    local info = {}
+    for _, line in ipairs(lines) do
+        local low = string.lower(line)
+        if string.find(low, "drop", 1, true)
+            or string.find(low, "obtain", 1, true)
+            or string.find(low, "reward", 1, true)
+            or string.find(low, "dropped", 1, true)
+            or string.find(low, "loot", 1, true)
+            or string.find(low, "rơi", 1, true)
+            or string.find(low, "vật phẩm", 1, true)
+            or string.find(low, "nhận được", 1, true)
+            or string.find(low, "item", 1, true) then
+            table.insert(drops, line)
+        else
+            table.insert(info, line)
+        end
+    end
+    return table.concat(drops, "\n"), table.concat(info, "\n")
 end
 
 local function HWFLoadTrelloFishData(force)
     if not force and os.clock() - HWF_TRELLO_LAST_FETCH < 900 then return end
     HWF_TRELLO_LAST_FETCH = os.clock()
     task.spawn(function()
-        local ok, raw = pcall(function()
-            return game:HttpGet(HWF_TRELLO_JSON_URL)
-        end)
-        if not ok or type(raw) ~= "string" or raw == "" then
-            HWF_TRELLO_STATUS = "unavailable"
+        local raw, board
+        for _, url in ipairs(HWF_TRELLO_JSON_URLS) do
+            local ok, response = pcall(function()
+                if type(game.HttpGet) == "function" then
+                    return game:HttpGet(url)
+                end
+                local req = (syn and syn.request) or (http and http.request) or request
+                if type(req) == "function" then
+                    local result = req({Url = url, Method = "GET"})
+                    if result and tonumber(result.StatusCode or result.Status) and tonumber(result.StatusCode or result.Status) >= 400 then
+                        error("HTTP " .. tostring(result.StatusCode or result.Status))
+                    end
+                    return result and (result.Body or result.body)
+                end
+                error("No HTTP request method")
+            end)
+            if ok and type(response) == "string" and response ~= "" then
+                local decodedOk, decoded = pcall(function()
+                    return HttpService:JSONDecode(response)
+                end)
+                if decodedOk and type(decoded) == "table" and type(decoded.cards) == "table" then
+                    raw, board = response, decoded
+                    break
+                end
+            end
+        end
+        if not board then
+            HWF_TRELLO_STATUS = "unavailable or invalid JSON"
+            warn("[Uzex Hub] Could not load public HWF Trello board JSON; using in-game data.")
             return
         end
-        local decodedOk, board = pcall(function()
-            return HttpService:JSONDecode(raw)
-        end)
-        if not decodedOk or type(board) ~= "table" or type(board.cards) ~= "table" then
-            HWF_TRELLO_STATUS = "invalid response"
-            return
-        end
+
         local listNames = {}
         for _, list in ipairs(board.lists or {}) do
             if type(list) == "table" and list.id then
                 listNames[tostring(list.id)] = tostring(list.name or "")
             end
         end
+
         local newData = {}
         for _, card in ipairs(board.cards) do
             if type(card) == "table" and card.closed ~= true then
                 local cardName = tostring(card.name or "")
                 local normalized = HWFNormalizeFishName(cardName)
                 if normalized ~= "" then
-                    local labelText = {}
+                    local labels = {}
                     for _, label in ipairs(card.labels or {}) do
                         if type(label) == "table" then
-                            table.insert(labelText, tostring(label.name or ""))
+                            table.insert(labels, tostring(label.name or ""))
                         elseif type(label) == "string" then
-                            table.insert(labelText, label)
+                            table.insert(labels, label)
                         end
                     end
-                    local metadata = string.lower(table.concat({
-                        cardName,
-                        tostring(card.desc or ""),
-                        tostring(listNames[tostring(card.idList or "")] or ""),
-                        table.concat(labelText, " ")
-                    }, " "))
-                    local entry = newData[normalized] or {Name = cardName, Boss = false, Secret = false, Source = "Trello"}
+                    local listName = tostring(listNames[tostring(card.idList or "")] or "")
+                    local desc = tostring(card.desc or "")
+                    local metadata = string.lower(table.concat({cardName, desc, listName, table.concat(labels, " ")}, " "))
+                    local dropInfo, generalInfo = HWFExtractDropInfo(desc)
+                    local entry = newData[normalized] or {
+                        Name = cardName, Description = desc, DropInfo = "", Info = "",
+                        List = listName, Labels = {}, Boss = false, Secret = false,
+                        Source = "Trello", URL = tostring(card.url or card.shortUrl or "")
+                    }
+                    if entry.Description == "" then entry.Description = desc end
+                    if entry.List == "" then entry.List = listName end
+                    if entry.DropInfo == "" then entry.DropInfo = dropInfo end
+                    if entry.Info == "" then entry.Info = generalInfo end
+                    for _, label in ipairs(labels) do
+                        if label ~= "" then table.insert(entry.Labels, label) end
+                    end
                     if string.find(metadata, "secret", 1, true)
                         or string.find(metadata, "bí mật", 1, true)
                         or string.find(metadata, "diaohai", 1, true)
@@ -2887,20 +2949,33 @@ local function HWFLoadTrelloFishData(force)
     end)
 end
 
+HWFLoadTrelloFishData(true)
+
 local function HWFGetTrelloFishData(name)
     local normalized = HWFNormalizeFishName(name)
     if normalized == "" then return nil end
-    return HWF_TRELLO_FISH[normalized]
+    local exact = HWF_TRELLO_FISH[normalized]
+    if exact then return exact end
+    -- Fallback for game UI names that append rarity, level, or other suffixes.
+    for key, entry in pairs(HWF_TRELLO_FISH) do
+        if #key >= 4 and (#normalized >= 4) and
+            (string.find(normalized, key, 1, true) or string.find(key, normalized, 1, true)) then
+            return entry
+        end
+    end
+    return nil
+end
+
+
+local function HWFIsSecretFishName(name)
+    local data = HWFGetTrelloFishData(name)
+    return data ~= nil and data.Secret == true
 end
 
 -- returns isBoss, isSecret, shownName for the fish currently on the line
 function UzexFilter.Classify()
     local isBoss, isSecret, shown, known = false, false, "", false
     pcall(function()
-        -- Load Trello data lazily after the main UI has started.
-        if HWF_TRELLO_STATUS == "not loaded" then
-            HWFLoadTrelloFishData(true)
-        end
         local names = {}
         local fishId = LocalPlayer:GetAttribute("FishID")
         local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(tostring(fishId)) or nil
@@ -2951,6 +3026,9 @@ function UzexFilter.Classify()
                 local trelloData = HWFGetTrelloFishData(clean)
                 if trelloData then
                     known = true
+                    if not data and trelloData.Name and trelloData.Name ~= "" then
+                        shown = trelloData.Name
+                    end
                     if trelloData.Boss then isBoss = true end
                     if trelloData.Secret then isSecret = true end
                 end
@@ -3064,7 +3142,8 @@ local function FindBossTarget(wantSecret)
     end
     for _, c in ipairs(containers) do
         for _, boss in ipairs(c:GetChildren()) do
-            if IsLongDiaoHaiName(boss) or IsSecretBossEntity(boss) then
+            if IsLongDiaoHaiName(boss) or IsSecretBossEntity(boss)
+                or HWFIsSecretFishName(tostring(boss:GetAttribute("Name") or boss:GetAttribute("FishName") or boss.Name)) then
                 local part = GetModelPart(boss)
                 if part then
                     return boss, part
@@ -3077,7 +3156,7 @@ local function FindBossTarget(wantSecret)
         local f = workspace:FindFirstChild(n)
         if f then
             for _, d in ipairs(f:GetDescendants()) do
-                if d:IsA("Model") and IsLongDiaoHaiName(d) then
+                if d:IsA("Model") and (IsLongDiaoHaiName(d) or HWFIsSecretFishName(tostring(d:GetAttribute("Name") or d:GetAttribute("FishName") or d.Name))) then
                     local part = GetModelPart(d)
                     if part then
                         return d, part
@@ -6240,11 +6319,60 @@ Tabs.Shop:CreateButton({
                     end
                 end
             end
+
+            -- Attach verified Trello card details to matching Index entries.
+            -- Only show drop information when the source description actually contains it.
+            local infoCount = 0
+            for _, label in ipairs(root:GetDescendants()) do
+                if label:IsA("TextLabel") and label.Visible and label.Text ~= "" then
+                    local fishData = HWFGetTrelloFishData(label.Text)
+                    if fishData then
+                        -- Prefer the canonical card title when this label is a fish-name label.
+                        local currentNorm = HWFNormalizeFishName(label.Text)
+                        local titleNorm = HWFNormalizeFishName(fishData.Name)
+                        if currentNorm == titleNorm or (currentNorm ~= "" and titleNorm ~= ""
+                            and (string.find(currentNorm, titleNorm, 1, true) or string.find(titleNorm, currentNorm, 1, true))) then
+                            label.Text = fishData.Name
+                        end
+                        local detailText = ""
+                        if fishData.DropInfo and fishData.DropInfo ~= "" then
+                            detailText = fishData.DropInfo
+                        elseif fishData.Info and fishData.Info ~= "" then
+                            detailText = fishData.Info
+                        end
+                        if detailText ~= "" and label.Parent and label.Parent:IsA("GuiObject") then
+                            local card = label.Parent
+                            local detail = card:FindFirstChild("HWF_TrelloFishInfo")
+                            if not detail then
+                                detail = Instance.new("TextLabel")
+                                detail.Name = "HWF_TrelloFishInfo"
+                                detail.BackgroundTransparency = 1
+                                detail.TextColor3 = Color3.fromRGB(220, 220, 220)
+                                detail.TextSize = 11
+                                detail.TextWrapped = true
+                                detail.TextXAlignment = Enum.TextXAlignment.Left
+                                detail.TextYAlignment = Enum.TextYAlignment.Top
+                                detail.Font = Enum.Font.Gotham
+                                detail.ZIndex = label.ZIndex + 1
+                                detail.Parent = card
+                            end
+                            detail.Text = detailText
+                            detail.Size = UDim2.new(1, -8, 0, 34)
+                            detail.Position = UDim2.new(0, 4, 1, -36)
+                            detail.Visible = true
+                            infoCount = infoCount + 1
+                        end
+                    end
+                end
+            end
+            if infoCount > 0 then
+                count = count + infoCount
+            end
         end)
         pcall(function()
             Library:Notify({
                 Title = "Unlock all fish",
-                Content = found and ("Unlocked " .. count .. " entries") or "Index menu not found - open it once, then press again",
+                Content = found and ("Processed " .. count .. " Index items. Trello drop details appear only when the card description contains them.") or "Index menu not found - open it once, then press again",
                 Type = found and "success" or "warning",
                 Duration = 4,
             })
