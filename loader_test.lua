@@ -56,7 +56,7 @@ local EN_TRANSLATIONS = {
     ["Tăng sáng tối đa"] = "Full Bright", ["Tắt sương mù"] = "Disable Fog", ["Chế độ hiệu năng"] = "Performance Mode",
     ["Bật thông báo"] = "Enable Notifications", ["Thông báo"] = "Notification", ["Đã bật thông báo"] = "Notifications enabled",
     ["Câu cá"] = "Fishing", ["Khóa thanh bắt cá"] = "Lock Catch Bar", ["Tự động thả câu"] = "Auto Cast",
-    ["Farm Boss"] = "Farm Boss", ["Chọn isle"] = "Select Isle", ["Chọn boss trong isle"] = "Select Boss on Isle",
+    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss",
     ["Cách thả câu"] = "Cast Method", ["Độ trễ thả câu"] = "Cast Delay", ["Tự trang bị mồi tốt nhất"] = "Auto Equip Best Bait",
     ["Tự trang bị cần câu"] = "Auto Equip Rod", ["Kỹ năng"] = "Skills", ["Tự động dùng kỹ năng"] = "Auto Use Skills",
     ["Chọn kỹ năng"] = "Select Skills", ["Boss"] = "Boss", ["Chọn chế độ Boss"] = "Select Boss Mode",
@@ -1671,9 +1671,6 @@ local Config = {
     BossMode = "Normal",
     AutoBoss = false,
     AutoSecretBoss = false,
-    FarmBossEnabled = false,
-    SelectedFarmBoss = "Boss Fish",
-    SelectedFarmBossIsland = "Beginning Isle",
     AutoSkill = false,
     SkillOrder = {"Z", "X", "C", "V"},
     AutoSell = false,
@@ -3006,10 +3003,7 @@ local BossFarmPositions = {
 }
 
 local function GetBossFarmCFrame(wantSecret)
-    -- Prefer the selected target's known farm position; use selected isle as a safe fallback.
-    local target = wantSecret and BossFarmPositions.LongDiaoHai or BossFarmPositions.Enzo
-    if target then return target end
-    return GetIslandFarmCFrame(Config.SelectedFarmBossIsland or Config.SelectedFarmIsland)
+    return wantSecret and BossFarmPositions.LongDiaoHai or BossFarmPositions.Enzo
 end
 
 local lastBossActionTick = 0
@@ -3547,27 +3541,25 @@ task.spawn(function()
         end
         wasMinigameActive = isMinigame
         -- Fish filter: only fight Boss / Secret Boss fish, drop every other fish and recast
-        -- Farm Boss Fish is independent from the NPC Boss/Secret Boss toggles.
-        -- The selected target decides which bites are kept; all other fish are recycled.
-        local filterOn = Config.FarmBossEnabled == true
-            and not Config.AutoFarmIsland
+        local filterOn = (Config.FilterBossFish or Config.FilterSecretFish)
+            and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
         local curFishId = LocalPlayer:GetAttribute("FishID")
         if filterOn and (isMinigame or curFishId ~= nil) then
-            -- every new fish on the line starts a new decision (decided as soon as the fish is known)
-            local key = tostring(curFishId or "gui")
-            if key ~= fightKey then
+            -- Wait for stable fish identity before cancelling anything: Secret Boss
+            -- metadata can appear after the minigame UI starts.
+            local _, _, visibleFishName = UzexFilter.Classify()
+            local key = curFishId ~= nil and ("id:" .. tostring(curFishId))
+                or (visibleFishName ~= "" and ("name:" .. string.lower(visibleFishName)) or nil)
+            if key and key ~= fightKey then
                 fightKey = key
                 fightStart = now
                 fightAllowed = false
                 cancelStage = 0
             end
-            if not fightAllowed and cancelStage == 0 then
+            if key and not fightAllowed and cancelStage == 0 then
                 local isBoss, isSecret, shown, known = UzexFilter.Classify()
                 local waited = now - fightStart
-                local selectedFishTarget = Config.SelectedFarmBoss or "Boss Fish"
-                local targetMatches = (selectedFishTarget == "Boss Fish" and isBoss and not isSecret)
-                    or (selectedFishTarget == "Secret Boss Fish" and isSecret)
-                if targetMatches then
+                if (Config.FilterBossFish and isBoss and not isSecret) or (Config.FilterSecretFish and isSecret) then
                     fightAllowed = true
                     pcall(function()
                         Library:Notify({
@@ -3595,7 +3587,7 @@ task.spawn(function()
                 -- the next cast and skip a Secret Boss bite.
                 cancelStage = 2
             end
-            UzexFilter.Skip = not fightAllowed
+            UzexFilter.Skip = key ~= nil and not fightAllowed
         else
             fightAllowed = false
             fightStart = nil
@@ -3605,7 +3597,7 @@ task.spawn(function()
         end
         -- after a skipped fish the rod must end up in hand again (only for that case, never otherwise)
         if UzexFilter.NeedRod and not UzexFilter.Busy then
-            if not Config.FarmBossEnabled or UzexFilter.HoldingRod() then
+            if not (Config.FilterBossFish or Config.FilterSecretFish) or UzexFilter.HoldingRod() then
                 UzexFilter.NeedRod = false
             elseif now - (UzexFilter.LastEquip or 0) > 0.3 then
                 UzexFilter.LastEquip = now
@@ -3617,7 +3609,7 @@ task.spawn(function()
             end
         end
         local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
-        local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.FarmBossEnabled or Config.FilterBossFish or Config.FilterSecretFish
+        local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish or Config.FilterSecretFish
         local activeSkill = (Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
 
         if not isMinigame then
@@ -5781,8 +5773,105 @@ local Tabs = {
     Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
     Upgrade = Window:CreateTab({ Name = "Nâng cấp", Icon = "arrow-up" }),
     Misc = Window:CreateTab({ Name = "Khác", Icon = "layers" }),
+    FishIndex = Window:CreateTab({ Name = "Index cá", Icon = "book-open" }),
     Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" })
 }
+
+Tabs.FishIndex:CreateSection("Dữ liệu Index trong game")
+Tabs.FishIndex:CreateParagraph({
+    Title = "Cách lấy dữ liệu",
+    Content = "Mở Index cá trong game trước, sau đó bấm Quét Index. Script sẽ đọc tên và thông tin đang hiển thị trong giao diện Index; không tự bịa Fish ID nếu game không hiển thị ID."
+})
+Tabs.FishIndex:CreateButton({
+    Name = "Quét và sao chép dữ liệu Index",
+    Description = "Đọc tên cá và thông tin có trong giao diện Index hiện tại",
+    Callback = function()
+        local ok, result, message = pcall(function()
+            local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+            local mg = (pg and pg:FindFirstChild("MainGui")) or MainGui
+            if not mg then return nil, "Không tìm thấy MainGui." end
+
+            local root
+            for _, d in ipairs(mg:GetDescendants()) do
+                if d:IsA("Frame") or d:IsA("ScrollingFrame") then
+                    local n = string.lower(tostring(d.Name or ""))
+                    if n == "index" or string.find(n, "fishindex", 1, true)
+                        or string.find(n, "codex", 1, true)
+                        or string.find(n, "collection", 1, true)
+                        or string.find(n, "bestiary", 1, true) then
+                        root = d
+                        break
+                    end
+                end
+            end
+            if not root then return nil, "Không tìm thấy giao diện Index. Hãy mở Index cá trong game rồi thử lại." end
+
+            local lines, seen = {}, {}
+            local function addLine(value)
+                value = tostring(value or ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+                if value ~= "" and value ~= "???" and value ~= "??? ???" and not seen[value] then
+                    seen[value] = true
+                    table.insert(lines, value)
+                end
+            end
+
+            addLine("HEAVYWEIGHT FISHING - INDEX DATA")
+            for _, d in ipairs(root:GetDescendants()) do
+                if d:IsA("TextLabel") or d:IsA("TextButton") then
+                    addLine(d.Text)
+                end
+                -- Keep useful object names as fallback when the UI stores fish names in card names.
+                if d:IsA("Frame") or d:IsA("ImageButton") then
+                    local n = tostring(d.Name or "")
+                    local low = string.lower(n)
+                    if n ~= "" and not ({
+                        index=true, fishindex=true, codex=true, collection=true,
+                        bestiary=true, fish=true, item=true, entry=true, card=true,
+                        template=true, content=true, list=true, grid=true, holder=true,
+                        container=true, scrollingframe=true, frame=true
+                    })[low] and not string.find(low, "template", 1, true) then
+                        addLine("Card/Object: " .. n)
+                    end
+                end
+                -- Include public attributes that may contain fish metadata.
+                pcall(function()
+                    local attrs = d:GetAttributes()
+                    for key, value in pairs(attrs) do
+                        if type(value) == "string" or type(value) == "number" or type(value) == "boolean" then
+                            local k = string.lower(tostring(key))
+                            if string.find(k, "fish", 1, true) or string.find(k, "name", 1, true)
+                                or string.find(k, "rarity", 1, true) or string.find(k, "weight", 1, true)
+                                or string.find(k, "value", 1, true) or string.find(k, "id", 1, true)
+                                or string.find(k, "island", 1, true) or string.find(k, "weather", 1, true) then
+                                addLine(tostring(key) .. ": " .. tostring(value))
+                            end
+                        end
+                    end
+                end)
+            end
+
+            local output = table.concat(lines, "\n")
+            if #lines <= 1 then return nil, "Index đã tìm thấy nhưng chưa có dữ liệu đọc được. Hãy mở trang danh sách cá rồi quét lại." end
+            local copied = false
+            if type(setclipboard) == "function" then
+                copied = pcall(setclipboard, output)
+            elseif type(toclipboard) == "function" then
+                copied = pcall(toclipboard, output)
+            end
+            return output, copied and ("Đã quét " .. tostring(#lines - 1) .. " dòng và sao chép vào clipboard.") or
+                ("Đã quét " .. tostring(#lines - 1) .. " dòng, nhưng executor không hỗ trợ clipboard.")
+        end)
+        if not ok then
+            warn("[Fish Index] " .. tostring(result))
+            return
+        end
+        if not result then
+            warn("[Fish Index] " .. tostring(message or "Không lấy được dữ liệu Index."))
+            return
+        end
+        warn("[Fish Index] " .. tostring(message or "Đã quét xong Index."))
+    end
+})
 
 Tabs.Settings:CreateSection("Language / Ngôn ngữ")
 Tabs.Settings:CreateDropdown({
@@ -6871,56 +6960,25 @@ Tabs.Main:CreateToggle({
     end
 })
 
-do
-    Tabs.Main:CreateSection("Farm Boss Fish")
-    local islandOptions = {
-        "Beginning Isle", "Bamboo Isle", "Fallout Isle", "Sovereign Isle", "Perch Isle",
-        "Frost Isle", "Coconut Isle", "Amber Isle", "Battlefield Isle", "Mistpeak Isle",
-        "World Angler Isle", "Weather Isle", "Mystic Reef Isle"
-    }
-    if not table.find(islandOptions, Config.SelectedFarmBossIsland) then
-        Config.SelectedFarmBossIsland = islandOptions[1]
+Tabs.Main:CreateToggle({
+    Flag = "FilterBossFishToggle",
+    Name = "Tự động câu cá Boss",
+    CurrentValue = Config.FilterBossFish,
+    Callback = function(Value)
+        Config.FilterBossFish = Value
+        SaveConfig()
     end
-    Tabs.Main:CreateDropdown({
-        Flag = "FarmBossIslandDropdown", Name = "Chọn isle", Options = islandOptions,
-        CurrentOption = Config.SelectedFarmBossIsland, MultipleOptions = false, AllowNone = false,
-        Callback = function(value)
-            Config.SelectedFarmBossIsland = value or islandOptions[1]
-            Config.SelectedFarmIsland = Config.SelectedFarmBossIsland
-            SaveConfig()
-        end
-    })
+})
 
-    local fishTypeOptions = {"Boss Fish", "Secret Boss Fish"}
-    if Config.SelectedFarmBoss ~= "Boss Fish" and Config.SelectedFarmBoss ~= "Secret Boss Fish" then
-        Config.SelectedFarmBoss = "Boss Fish"
+Tabs.Main:CreateToggle({
+    Flag = "FilterSecretFishToggle",
+    Name = "Tự động câu cá Secret Boss",
+    CurrentValue = Config.FilterSecretFish,
+    Callback = function(Value)
+        Config.FilterSecretFish = Value
+        SaveConfig()
     end
-    Tabs.Main:CreateDropdown({
-        Flag = "FarmBossTargetDropdown", Name = "Chọn loại cá", Options = fishTypeOptions,
-        CurrentOption = Config.SelectedFarmBoss, MultipleOptions = false, AllowNone = false,
-        Callback = function(value)
-            Config.SelectedFarmBoss = value or "Boss Fish"
-            SaveConfig()
-            if Config.FarmBossEnabled then
-                Config.FilterBossFish = Config.SelectedFarmBoss == "Boss Fish"
-                Config.FilterSecretFish = Config.SelectedFarmBoss == "Secret Boss Fish"
-                Config.AutoCast = true
-            end
-        end
-    })
-    Tabs.Main:CreateToggle({
-        Flag = "FarmBossUnifiedToggle", Name = "Farm Boss", CurrentValue = Config.FarmBossEnabled or false,
-        Callback = function(value)
-            Config.FarmBossEnabled = value
-            Config.FilterBossFish = value and Config.SelectedFarmBoss == "Boss Fish"
-            Config.FilterSecretFish = value and Config.SelectedFarmBoss == "Secret Boss Fish"
-            Config.AutoBoss = false
-            Config.AutoSecretBoss = false
-            if value then Config.AutoCast = true end
-            SaveConfig()
-        end
-    })
-end
+})
 
 Tabs.Main:CreateDropdown({
     Flag = "AutoCastMethodDropdown",
@@ -7087,7 +7145,6 @@ do
     })
 end
 
--- Giữ mục Boss NPC riêng biệt; Farm Boss Fish ở phía trên chỉ dùng để farm cá Boss/Secret Boss.
 Tabs.Main:CreateToggle({
     Flag = "AutoBossToggle",
     Name = "Tự động Enzo",
@@ -7117,7 +7174,6 @@ Tabs.Main:CreateToggle({
         end
     end
 })
-
 
 Tabs.Main:CreateToggle({
     Flag = "AutoMiniGameToggle",
@@ -7240,8 +7296,15 @@ Tabs.Misc:CreateButton({
     end
 })
 
--- Hotkey settings removed. The interface is toggled with LeftAlt.
-
+Tabs.Settings:CreateKeybind({
+    Flag = "ToggleUIKeybind",
+    Name = "Phím thu nhỏ giao diện",
+    CurrentKeybind = "LeftAlt",
+    OnChanged = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftAlt
+        Window:SetKeybind(keyCode)
+    end
+})
 
 
 do
@@ -8287,5 +8350,9 @@ do
     end)
 end
 
+-------------------------------------------------------------------------------
+-- Support helper: copies what the boss menu looks like so the difficulty picker
+-- (Normal / Hard / Nightmare) can be matched to the game exactly.
+-------------------------------------------------------------------------------
 
 Window:SelectTab(Tabs.Main)
