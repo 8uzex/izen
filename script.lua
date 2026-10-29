@@ -66,7 +66,7 @@ local EN_TRANSLATIONS = {
     ["Xóa vị trí"] = "Delete Position", ["Đã xóa vị trí!"] = "Position deleted!",
     ["Mã quà tặng"] = "Gift Codes", ["Nhập tất cả mã"] = "Redeem All Codes", ["Menu tiện ích"] = "Utility Menu",
     ["Mở nâng cấp kỹ năng"] = "Open Skill Upgrade", ["Mở học kỹ năng"] = "Open Skill Learning",
-    ["Mở giao diện trao đổi"] = "Open Trade UI", ["Mở đặc tính"] = "Open Traits", ["Phím tắt"] = "Hotkeys",
+    ["Mở giao diện trao đổi"] = "Open Trade UI", ["Mở đặc tính"] = "Open Traits",
     ["Tắt phím tắt"] = "Disable Hotkeys", ["Phím bật bay"] = "Fly Toggle Key", ["Phím bật xuyên vật thể"] = "Noclip Toggle Key",
     ["Máy chủ"] = "Server", ["Vào lại máy chủ"] = "Rejoin Server", ["Đổi máy chủ ít người"] = "Join Low-Population Server",
     ["Tự vào lại"] = "Auto Rejoin", ["Tự vào lại khi mất kết nối"] = "Auto Rejoin on Disconnect",
@@ -1439,7 +1439,7 @@ function Library:CreateWindow(o)
         _tabs = {},
         _visible = false,
         _basePos = main.Position,
-        _toggleKey = o.ToggleUIKeybind or Enum.KeyCode.LeftControl,
+        _toggleKey = o.ToggleUIKeybind or Enum.KeyCode.LeftAlt,
     }, Window)
 
     -- title bar
@@ -2822,18 +2822,25 @@ function UzexFilter.Classify()
         local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(tostring(fishId)) or nil
         if fishObj then
             table.insert(names, fishObj.Name)
+            local fishObjectName = string.lower(tostring(fishObj.Name))
+            if string.find(fishObjectName, "secret", 1, true)
+                or string.find(fishObjectName, "diaohai", 1, true)
+                or string.find(fishObjectName, "wuzhi", 1, true) then
+                isSecret = true
+            end
             for k, v in pairs(fishObj:GetAttributes()) do
                 local lk = string.lower(tostring(k))
-                if type(v) == "string" then
-                    table.insert(names, v)
-                    if lk == "rarity" then
-                        local lv = string.lower(v)
-                        if lv == "secret" then isSecret = true end
-                        if lv == "boss" then isBoss = true end
-                    end
-                elseif v == true then
-                    if lk == "boss" or lk == "isboss" then isBoss = true end
-                    if lk == "secret" or lk == "issecret" then isSecret = true end
+                local lv = string.lower(tostring(v))
+                if type(v) == "string" then table.insert(names, v) end
+                if string.find(lk, "secret", 1, true) and (v == true or lv == "true" or lv == "1") then
+                    isSecret = true
+                end
+                if string.find(lk, "boss", 1, true) and (v == true or lv == "true" or lv == "1") then
+                    isBoss = true
+                end
+                if (lk == "rarity" or lk == "fishrarity" or lk == "tier") then
+                    if string.find(lv, "secret", 1, true) then isSecret = true end
+                    if string.find(lv, "boss", 1, true) then isBoss = true end
                 end
             end
         end
@@ -3565,7 +3572,7 @@ task.spawn(function()
                             Duration = 4,
                         })
                     end)
-                elseif (known and waited > 0.15) or waited > 3.0 then
+                elseif (known and waited > 0.15) or waited > 5.0 then
                     cancelStage = 1
                     if now - UzexFilter.LastNotify > 3 then
                         UzexFilter.LastNotify = now
@@ -5586,7 +5593,7 @@ local Window = Library:CreateWindow({
     MinSize = Vector2.new(480, 360),
     SidebarWidth = 170,
     DefaultTheme = "Taichi",
-    ToggleUIKeybind = Enum.KeyCode.LeftControl,
+    ToggleUIKeybind = Enum.KeyCode.LeftAlt,
     ConfigurationSaving = { Enabled = false, FolderName = SAVE_FOLDER },
     SaveSize = false,
     Home = {
@@ -7199,62 +7206,14 @@ Tabs.Misc:CreateButton({
 Tabs.Settings:CreateKeybind({
     Flag = "ToggleUIKeybind",
     Name = "Phím thu nhỏ giao diện",
-    CurrentKeybind = "LeftControl",
+    CurrentKeybind = "LeftAlt",
     OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftAlt
         Window:SetKeybind(keyCode)
     end
 })
 
-Tabs.Settings:CreateSection("Phím tắt")
-
-Tabs.Settings:CreateToggle({
-    Flag = "DisableAllKeybindsToggle",
-    Name = "Tắt phím tắt",
-    CurrentValue = Config.DisableAllKeybinds or false,
-    Callback = function(Value)
-        Config.DisableAllKeybinds = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Settings:CreateKeybind({
-    Flag = "FlyKeybind",
-    Name = "Phím bật bay",
-    CurrentKeybind = Config.FlyKeybind or "F",
-    Callback = function()
-        if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.FlyKeybindEnabled ~= false then
-            toggleFly()
-        end
-    end,
-    OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
-        if keyCode then
-            Config.FlyKeybind = keyCode.Name
-            SaveConfig()
-        end
-    end
-})
-
-Tabs.Settings:CreateKeybind({
-    Flag = "NoclipKeybind",
-    Name = "Phím bật xuyên vật thể",
-    CurrentKeybind = Config.NoclipKeybind or "J",
-    Callback = function()
-        if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.NoclipKeybindEnabled ~= false then
-            toggleNoclip()
-        end
-    end,
-    OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
-        if keyCode then
-            Config.NoclipKeybind = keyCode.Name
-            SaveConfig()
-        end
-    end
-})
-
-
+-- Hotkey controls removed from Settings UI.
 
 do
     local function HopLowServer()
@@ -8297,77 +8256,6 @@ do
             task.wait(1)
         end
     end)
-end
-
--------------------------------------------------------------------------------
--- Support helper: copies what the boss menu looks like so the difficulty picker
--- (Normal / Hard / Nightmare) can be matched to the game exactly.
--------------------------------------------------------------------------------
-do
-    Tabs.Misc:CreateButton({
-        Name = "Copy Boss Menu Info",
-        Description = "Open the boss menu, pick Nightmare by hand, then press this and send the text",
-        Callback = function()
-            local out = { "BossMode setting: " .. tostring(Config.BossMode) }
-            local frame = FindBossMenuFrame()
-            if not frame then
-                out[#out + 1] = "Boss menu frame not found (open the boss menu first)"
-            else
-                out[#out + 1] = "Frame: " .. frame:GetFullName() .. " | Visible=" .. tostring(frame.Visible)
-                local count = 0
-                for _, d in ipairs(frame:GetDescendants()) do
-                    if count >= 140 then
-                        out[#out + 1] = "... (more items not listed)"
-                        break
-                    end
-                    local line
-                    if d:IsA("GuiButton") then
-                        line = string.format("[Button] %s | text=%q | vis=%s | bg=%s",
-                            d.Name, GetButtonLabelText(d), tostring(d.Visible), tostring(d.BackgroundColor3))
-                    elseif d:IsA("TextLabel") then
-                        line = string.format("[Label] %s | text=%q | vis=%s", d.Name, d.Text, tostring(d.Visible))
-                    elseif d:IsA("UIStroke") then
-                        line = string.format("[Stroke] on %s | color=%s | thick=%s | enabled=%s",
-                            d.Parent and d.Parent.Name or "?", tostring(d.Color), tostring(d.Thickness), tostring(d.Enabled))
-                    end
-                    if line then
-                        local attrs = {}
-                        for k, v in pairs(d:GetAttributes()) do
-                            attrs[#attrs + 1] = k .. "=" .. tostring(v)
-                        end
-                        if #attrs > 0 then
-                            line = line .. " | attrs: " .. table.concat(attrs, ", ")
-                        end
-                        out[#out + 1] = line
-                        count = count + 1
-                    end
-                end
-            end
-            local remotes = {}
-            for _, folder in ipairs({ Events, ReplicatedStorage:FindFirstChild("Remotes") }) do
-                if folder then
-                    for _, r in ipairs(folder:GetChildren()) do
-                        if (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) and string.find(string.lower(r.Name), "boss", 1, true) then
-                            remotes[#remotes + 1] = r.ClassName .. ":" .. r.Name
-                        end
-                    end
-                end
-            end
-            out[#out + 1] = "Boss remotes: " .. (#remotes > 0 and table.concat(remotes, ", ") or "none")
-
-            local dump = table.concat(out, "\n")
-            if #dump > 7000 then
-                dump = string.sub(dump, 1, 7000)
-            end
-            local copied = type(setclipboard) == "function" and pcall(setclipboard, dump)
-            Library:Notify({
-                Title = "Boss menu",
-                Content = copied and "Copied. Paste it into the chat." or "Could not copy to the clipboard.",
-                Type = copied and "success" or "error",
-                Duration = 4,
-            })
-        end
-    })
 end
 
 Window:SelectTab(Tabs.Main)
