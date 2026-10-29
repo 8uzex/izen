@@ -1672,7 +1672,7 @@ local Config = {
     AutoBoss = false,
     AutoSecretBoss = false,
     FarmBossEnabled = false,
-    SelectedFarmBoss = "Enzo",
+    SelectedFarmBoss = "Boss Fish",
     SelectedFarmBossIsland = "Beginning Isle",
     AutoSkill = false,
     SkillOrder = {"Z", "X", "C", "V"},
@@ -6867,7 +6867,7 @@ Tabs.Main:CreateToggle({
 })
 
 do
-    Tabs.Main:CreateSection("Farm Boss")
+    Tabs.Main:CreateSection("Farm Boss Fish")
     local islandOptions = {
         "Beginning Isle", "Bamboo Isle", "Fallout Isle", "Sovereign Isle", "Perch Isle",
         "Frost Isle", "Coconut Isle", "Amber Isle", "Battlefield Isle", "Mistpeak Isle",
@@ -6885,17 +6885,21 @@ do
             SaveConfig()
         end
     })
-    local bossOptions = {"Enzo", "Long DiaoHai"}
-    if not table.find(bossOptions, Config.SelectedFarmBoss) then Config.SelectedFarmBoss = "Enzo" end
+
+    local fishTypeOptions = {"Boss Fish", "Secret Boss Fish"}
+    if Config.SelectedFarmBoss ~= "Boss Fish" and Config.SelectedFarmBoss ~= "Secret Boss Fish" then
+        Config.SelectedFarmBoss = "Boss Fish"
+    end
     Tabs.Main:CreateDropdown({
-        Flag = "FarmBossTargetDropdown", Name = "Chọn boss trong isle", Options = bossOptions,
+        Flag = "FarmBossTargetDropdown", Name = "Chọn loại cá", Options = fishTypeOptions,
         CurrentOption = Config.SelectedFarmBoss, MultipleOptions = false, AllowNone = false,
         Callback = function(value)
-            Config.SelectedFarmBoss = value or "Enzo"
+            Config.SelectedFarmBoss = value or "Boss Fish"
             SaveConfig()
             if Config.FarmBossEnabled then
-                Config.AutoBoss = Config.SelectedFarmBoss ~= "Long DiaoHai"
-                Config.AutoSecretBoss = Config.SelectedFarmBoss == "Long DiaoHai"
+                Config.FilterBossFish = Config.SelectedFarmBoss == "Boss Fish"
+                Config.FilterSecretFish = Config.SelectedFarmBoss == "Secret Boss Fish"
+                Config.AutoCast = true
             end
         end
     })
@@ -6903,10 +6907,11 @@ do
         Flag = "FarmBossUnifiedToggle", Name = "Farm Boss", CurrentValue = Config.FarmBossEnabled or false,
         Callback = function(value)
             Config.FarmBossEnabled = value
-            Config.AutoBoss = value and Config.SelectedFarmBoss ~= "Long DiaoHai"
-            Config.AutoSecretBoss = value and Config.SelectedFarmBoss == "Long DiaoHai"
-            Config.FilterBossFish = false
-            Config.FilterSecretFish = false
+            Config.FilterBossFish = value and Config.SelectedFarmBoss == "Boss Fish"
+            Config.FilterSecretFish = value and Config.SelectedFarmBoss == "Secret Boss Fish"
+            Config.AutoBoss = false
+            Config.AutoSecretBoss = false
+            if value then Config.AutoCast = true end
             SaveConfig()
         end
     })
@@ -7077,35 +7082,8 @@ do
     })
 end
 
-Tabs.Main:CreateToggle({
-    Flag = "AutoBossToggle",
-    Name = "Tự động Enzo",
-    CurrentValue = Config.AutoBoss,
-    Callback = function(Value)
-        Config.AutoBoss = Value
-        SaveConfig()
-        if Value then
-            task.spawn(function()
-                CheckBossStatusOnToggle(false)
-            end)
-        end
-    end
-})
+-- Legacy NPC boss toggles removed: Farm Boss now targets Boss Fish / Secret Boss Fish.
 
-Tabs.Main:CreateToggle({
-    Flag = "AutoSecretBossToggle",
-    Name = "Tự động Long DiaoHai",
-    CurrentValue = Config.AutoSecretBoss,
-    Callback = function(Value)
-        Config.AutoSecretBoss = Value
-        SaveConfig()
-        if Value then
-            task.spawn(function()
-                CheckBossStatusOnToggle(true)
-            end)
-        end
-    end
-})
 
 Tabs.Main:CreateToggle({
     Flag = "AutoMiniGameToggle",
