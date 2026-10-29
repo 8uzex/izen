@@ -2767,7 +2767,10 @@ end
 
 local function IsSecretBossEntity(obj)
     if not obj then return false end
-    if obj:GetAttribute("Secret") == true or obj:GetAttribute("Rarity") == "Secret" then
+    local secretAttr = obj:GetAttribute("Secret")
+    local rarityAttr = obj:GetAttribute("Rarity")
+    if secretAttr == true or (type(secretAttr) == "string" and string.lower(secretAttr) == "true")
+        or (type(rarityAttr) == "string" and string.lower(rarityAttr) == "secret") then
         return true
     end
     local rawName = tostring(obj:GetAttribute("Name") or obj:GetAttribute("FishName") or obj.Name)
@@ -2811,178 +2814,6 @@ local function UzexFishData(name)
     local data = mod and GetModuleData(mod) or nil
     UzexFilter.Cache[key] = data or false
     return data
-end
-
--- Public HWF Trello board data source. The board is read-only here; if Trello
--- blocks anonymous JSON access, the script safely falls back to the game's own data.
-local HWF_TRELLO_JSON_URLS = {
-    "https://trello.com/b/iGl0DGHa.json",
-    "https://trello.com/b/iGl0DGHa/hwf-trello.json",
-}
-local HWF_TRELLO_FISH = {}
-local HWF_TRELLO_LAST_FETCH = 0
-local HWF_TRELLO_STATUS = "not loaded"
-
-local function HWFNormalizeFishName(value)
-    local v = string.lower(UzexCleanName(tostring(value or "")))
-    v = string.gsub(v, "<[^>]+>", "")
-    v = string.gsub(v, "[%p%c%s_%-]+", "")
-    return v
-end
-
-local function HWFExtractDropInfo(desc)
-    desc = tostring(desc or "")
-    desc = string.gsub(desc, "\r", "")
-    local lines = {}
-    for line in string.gmatch(desc .. "\n", "(.-)\n") do
-        line = string.gsub(line, "^%s+", "")
-        line = string.gsub(line, "%s+$", "")
-        if line ~= "" then table.insert(lines, line) end
-    end
-    local drops = {}
-    local info = {}
-    for _, line in ipairs(lines) do
-        local low = string.lower(line)
-        if string.find(low, "drop", 1, true)
-            or string.find(low, "obtain", 1, true)
-            or string.find(low, "reward", 1, true)
-            or string.find(low, "dropped", 1, true)
-            or string.find(low, "loot", 1, true)
-            or string.find(low, "rơi", 1, true)
-            or string.find(low, "vật phẩm", 1, true)
-            or string.find(low, "nhận được", 1, true)
-            or string.find(low, "item", 1, true) then
-            table.insert(drops, line)
-        else
-            table.insert(info, line)
-        end
-    end
-    return table.concat(drops, "\n"), table.concat(info, "\n")
-end
-
-local function HWFLoadTrelloFishData(force)
-    if not force and os.clock() - HWF_TRELLO_LAST_FETCH < 900 then return end
-    HWF_TRELLO_LAST_FETCH = os.clock()
-    task.spawn(function()
-        local raw, board
-        for _, url in ipairs(HWF_TRELLO_JSON_URLS) do
-            local ok, response = pcall(function()
-                -- Prefer executor HTTP APIs; game:HttpGet can fail with SslConnectFail
-                -- on some Android executors. Each method is isolated so one failure
-                -- does not abort the rest of the fallback chain.
-                local req = (syn and syn.request) or (http and http.request) or http_request or request
-                if type(req) == "function" then
-                    local reqOk, result = pcall(function()
-                        return req({Url = url, Method = "GET"})
-                    end)
-                    if reqOk and type(result) == "table" then
-                        local status = tonumber(result.StatusCode or result.Status or result.status_code)
-                        local body = result.Body or result.body
-                        if type(body) == "string" and body ~= "" and (not status or (status >= 200 and status < 300)) then
-                            return body
-                        end
-                    end
-                end
-                if type(game.HttpGet) == "function" then
-                    local getOk, body = pcall(function() return game:HttpGet(url) end)
-                    if getOk and type(body) == "string" and body ~= "" then
-                        return body
-                    end
-                end
-                return nil
-            end)
-            if ok and type(response) == "string" and response ~= "" then
-                local decodedOk, decoded = pcall(function()
-                    return HttpService:JSONDecode(response)
-                end)
-                if decodedOk and type(decoded) == "table" and type(decoded.cards) == "table" then
-                    raw, board = response, decoded
-                    break
-                end
-            end
-        end
-        if not board then
-            HWF_TRELLO_STATUS = "unavailable or invalid JSON"
-            warn("[Uzex Hub] Could not load public HWF Trello board JSON; using in-game data.")
-            return
-        end
-
-        local listNames = {}
-        for _, list in ipairs(board.lists or {}) do
-            if type(list) == "table" and list.id then
-                listNames[tostring(list.id)] = tostring(list.name or "")
-            end
-        end
-
-        local newData = {}
-        for _, card in ipairs(board.cards) do
-            if type(card) == "table" and card.closed ~= true then
-                local cardName = tostring(card.name or "")
-                local normalized = HWFNormalizeFishName(cardName)
-                if normalized ~= "" then
-                    local labels = {}
-                    for _, label in ipairs(card.labels or {}) do
-                        if type(label) == "table" then
-                            table.insert(labels, tostring(label.name or ""))
-                        elseif type(label) == "string" then
-                            table.insert(labels, label)
-                        end
-                    end
-                    local listName = tostring(listNames[tostring(card.idList or "")] or "")
-                    local desc = tostring(card.desc or "")
-                    local metadata = string.lower(table.concat({cardName, desc, listName, table.concat(labels, " ")}, " "))
-                    local dropInfo, generalInfo = HWFExtractDropInfo(desc)
-                    local entry = newData[normalized] or {
-                        Name = cardName, Description = desc, DropInfo = "", Info = "",
-                        List = listName, Labels = {}, Boss = false, Secret = false,
-                        Source = "Trello", URL = tostring(card.url or card.shortUrl or "")
-                    }
-                    if entry.Description == "" then entry.Description = desc end
-                    if entry.List == "" then entry.List = listName end
-                    if entry.DropInfo == "" then entry.DropInfo = dropInfo end
-                    if entry.Info == "" then entry.Info = generalInfo end
-                    for _, label in ipairs(labels) do
-                        if label ~= "" then table.insert(entry.Labels, label) end
-                    end
-                    if string.find(metadata, "secret", 1, true)
-                        or string.find(metadata, "bí mật", 1, true)
-                        or string.find(metadata, "diaohai", 1, true)
-                        or string.find(metadata, "wuzhi", 1, true) then
-                        entry.Secret = true
-                    end
-                    if string.find(metadata, "boss", 1, true) then entry.Boss = true end
-                    newData[normalized] = entry
-                end
-            end
-        end
-        HWF_TRELLO_FISH = newData
-        HWF_TRELLO_STATUS = "loaded"
-    end)
-end
-
-task.delay(2, function()
-    pcall(function() HWFLoadTrelloFishData(true) end)
-end)
-
-local function HWFGetTrelloFishData(name)
-    local normalized = HWFNormalizeFishName(name)
-    if normalized == "" then return nil end
-    local exact = HWF_TRELLO_FISH[normalized]
-    if exact then return exact end
-    -- Fallback for game UI names that append rarity, level, or other suffixes.
-    for key, entry in pairs(HWF_TRELLO_FISH) do
-        if #key >= 4 and (#normalized >= 4) and
-            (string.find(normalized, key, 1, true) or string.find(key, normalized, 1, true)) then
-            return entry
-        end
-    end
-    return nil
-end
-
-
-local function HWFIsSecretFishName(name)
-    local data = HWFGetTrelloFishData(name)
-    return data ~= nil and data.Secret == true
 end
 
 -- returns isBoss, isSecret, shownName for the fish currently on the line
@@ -3033,17 +2864,6 @@ function UzexFilter.Classify()
                     if type(data.Rarity) == "string" and string.lower(data.Rarity) == "boss" then
                         isBoss = true
                     end
-                end
-                -- Supplement local game metadata with the public Trello board when a
-                -- matching card exists. Game-provided attributes still take priority.
-                local trelloData = HWFGetTrelloFishData(clean)
-                if trelloData then
-                    known = true
-                    if not data and trelloData.Name and trelloData.Name ~= "" then
-                        shown = trelloData.Name
-                    end
-                    if trelloData.Boss then isBoss = true end
-                    if trelloData.Secret then isSecret = true end
                 end
                 local lower = string.lower(clean)
                 if string.find(lower, "secret", 1, true) or string.find(lower, "diaohai", 1, true)
@@ -3123,58 +2943,59 @@ local function FindBossTarget(wantSecret)
     local npcFolder = workspace:FindFirstChild("NPC")
     local bossFolder = npcFolder and npcFolder:FindFirstChild("Boss")
 
-    if not wantSecret then
-        if bossFolder then
-            for _, boss in ipairs(bossFolder:GetChildren()) do
-                local part = GetModelPart(boss)
-                if part and not IsSecretBossEntity(boss) and not IsLongDiaoHaiName(boss) then
-                    return boss, part
-                end
-            end
+    local function candidateMatches(obj)
+        if not obj or not (obj:IsA("Model") or obj:IsA("BasePart") or obj:IsA("Folder")) then
+            return false
         end
-        local wsBoss = workspace:FindFirstChild("Boss") or workspace:FindFirstChild("BossZone")
-        if wsBoss then
-            local part = GetModelPart(wsBoss)
-            if part then
-                return wsBoss, part
-            end
+        local part = GetModelPart(obj)
+        if not part then return false end
+        if wantSecret then
+            return IsLongDiaoHaiName(obj) or IsSecretBossEntity(obj)
         end
-        return nil, nil
+        return not IsSecretBossEntity(obj) and not IsLongDiaoHaiName(obj)
     end
 
-    -- Secret boss (Long DiaoHai) can live in several folders, so check all of them
-    local containers = {}
-    if bossFolder then table.insert(containers, bossFolder) end
-    if npcFolder then
-        local god = npcFolder:FindFirstChild("God")
-        if god then table.insert(containers, god) end
+    -- Prefer the known boss container, then search nested models because some
+    -- game updates move the spawned boss deeper into NPC/God/BossSetUp.
+    local roots = {}
+    local function addRoot(root)
+        if root then table.insert(roots, root) end
     end
-    for _, n in ipairs({"God", "BossSetUp"}) do
-        local f = workspace:FindFirstChild(n)
-        if f then table.insert(containers, f) end
+    if wantSecret then
+        addRoot(bossFolder)
+        addRoot(npcFolder and npcFolder:FindFirstChild("God"))
+        addRoot(workspace:FindFirstChild("God"))
+        addRoot(workspace:FindFirstChild("BossSetUp"))
+        addRoot(workspace:FindFirstChild("Boss"))
+        addRoot(workspace:FindFirstChild("BossZone"))
+    else
+        addRoot(bossFolder)
+        addRoot(workspace:FindFirstChild("Boss"))
+        addRoot(workspace:FindFirstChild("BossZone"))
     end
-    for _, c in ipairs(containers) do
-        for _, boss in ipairs(c:GetChildren()) do
-            if IsLongDiaoHaiName(boss) or IsSecretBossEntity(boss)
-                or HWFIsSecretFishName(tostring(boss:GetAttribute("Name") or boss:GetAttribute("FishName") or boss.Name)) then
-                local part = GetModelPart(boss)
-                if part then
-                    return boss, part
+
+    local seen = {}
+    for _, root in ipairs(roots) do
+        if not seen[root] then
+            seen[root] = true
+            if candidateMatches(root) then return root, GetModelPart(root) end
+            for _, obj in ipairs(root:GetDescendants()) do
+                if candidateMatches(obj) then
+                    return obj, GetModelPart(obj)
                 end
+            end
+            for _, obj in ipairs(root:GetChildren()) do
+                if candidateMatches(obj) then return obj, GetModelPart(obj) end
             end
         end
     end
-    -- last resort: search by name inside the NPC folders
-    for _, n in ipairs({"NPC", "God", "BossSetUp"}) do
-        local f = workspace:FindFirstChild(n)
-        if f then
-            for _, d in ipairs(f:GetDescendants()) do
-                if d:IsA("Model") and (IsLongDiaoHaiName(d) or HWFIsSecretFishName(tostring(d:GetAttribute("Name") or d:GetAttribute("FishName") or d.Name))) then
-                    local part = GetModelPart(d)
-                    if part then
-                        return d, part
-                    end
-                end
+
+    -- Last resort: look through workspace models using explicit secret/boss
+    -- metadata or known Secret Boss names, without treating arbitrary parts as bosses.
+    if wantSecret then
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and candidateMatches(obj) then
+                return obj, GetModelPart(obj)
             end
         end
     end
@@ -6272,13 +6093,30 @@ Tabs.Shop:CreateButton({
             local mg = (pg and pg:FindFirstChild("MainGui")) or MainGui
             if not mg then return end
             local root = nil
+            local bestDepth = math.huge
             for _, d in ipairs(mg:GetDescendants()) do
                 if d:IsA("Frame") or d:IsA("ScrollingFrame") then
                     local n = string.lower(d.Name)
-                    if n == "index" or string.find(n, "fishindex", 1, true) or string.find(n, "codex", 1, true)
-                        or string.find(n, "collection", 1, true) or string.find(n, "bestiary", 1, true) then
-                        root = d
-                        break
+                    local matches = n == "index" or string.find(n, "fishindex", 1, true)
+                        or string.find(n, "codex", 1, true) or string.find(n, "collection", 1, true)
+                        or string.find(n, "bestiary", 1, true) or string.find(n, "fishbook", 1, true)
+                    if matches and d.Visible then
+                        local depth, node = 0, d
+                        while node and node ~= mg do depth = depth + 1; node = node.Parent end
+                        if depth < bestDepth then root, bestDepth = d, depth end
+                    end
+                end
+            end
+            if not root then
+                for _, d in ipairs(mg:GetDescendants()) do
+                    if d:IsA("Frame") or d:IsA("ScrollingFrame") then
+                        local n = string.lower(d.Name)
+                        if n == "index" or string.find(n, "fishindex", 1, true) or string.find(n, "codex", 1, true)
+                            or string.find(n, "collection", 1, true) or string.find(n, "bestiary", 1, true)
+                            or string.find(n, "fishbook", 1, true) then
+                            root = d
+                            break
+                        end
                     end
                 end
             end
@@ -6332,60 +6170,11 @@ Tabs.Shop:CreateButton({
                     end
                 end
             end
-
-            -- Attach verified Trello card details to matching Index entries.
-            -- Only show drop information when the source description actually contains it.
-            local infoCount = 0
-            for _, label in ipairs(root:GetDescendants()) do
-                if label:IsA("TextLabel") and label.Visible and label.Text ~= "" then
-                    local fishData = HWFGetTrelloFishData(label.Text)
-                    if fishData then
-                        -- Prefer the canonical card title when this label is a fish-name label.
-                        local currentNorm = HWFNormalizeFishName(label.Text)
-                        local titleNorm = HWFNormalizeFishName(fishData.Name)
-                        if currentNorm == titleNorm or (currentNorm ~= "" and titleNorm ~= ""
-                            and (string.find(currentNorm, titleNorm, 1, true) or string.find(titleNorm, currentNorm, 1, true))) then
-                            label.Text = fishData.Name
-                        end
-                        local detailText = ""
-                        if fishData.DropInfo and fishData.DropInfo ~= "" then
-                            detailText = fishData.DropInfo
-                        elseif fishData.Info and fishData.Info ~= "" then
-                            detailText = fishData.Info
-                        end
-                        if detailText ~= "" and label.Parent and label.Parent:IsA("GuiObject") then
-                            local card = label.Parent
-                            local detail = card:FindFirstChild("HWF_TrelloFishInfo")
-                            if not detail then
-                                detail = Instance.new("TextLabel")
-                                detail.Name = "HWF_TrelloFishInfo"
-                                detail.BackgroundTransparency = 1
-                                detail.TextColor3 = Color3.fromRGB(220, 220, 220)
-                                detail.TextSize = 11
-                                detail.TextWrapped = true
-                                detail.TextXAlignment = Enum.TextXAlignment.Left
-                                detail.TextYAlignment = Enum.TextYAlignment.Top
-                                detail.Font = Enum.Font.Gotham
-                                detail.ZIndex = label.ZIndex + 1
-                                detail.Parent = card
-                            end
-                            detail.Text = detailText
-                            detail.Size = UDim2.new(1, -8, 0, 34)
-                            detail.Position = UDim2.new(0, 4, 1, -36)
-                            detail.Visible = true
-                            infoCount = infoCount + 1
-                        end
-                    end
-                end
-            end
-            if infoCount > 0 then
-                count = count + infoCount
-            end
         end)
         pcall(function()
             Library:Notify({
                 Title = "Unlock all fish",
-                Content = found and ("Processed " .. count .. " Index items. Trello drop details appear only when the card description contains them.") or "Index menu not found - open it once, then press again",
+                Content = found and ("Unlocked " .. count .. " entries") or "Index menu not found - open it once, then press again",
                 Type = found and "success" or "warning",
                 Duration = 4,
             })
