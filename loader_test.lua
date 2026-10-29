@@ -1439,7 +1439,7 @@ function Library:CreateWindow(o)
         _tabs = {},
         _visible = false,
         _basePos = main.Position,
-        _toggleKey = o.ToggleUIKeybind or Enum.KeyCode.LeftAlt,
+        _toggleKey = o.ToggleUIKeybind or Enum.KeyCode.LeftControl,
     }, Window)
 
     -- title bar
@@ -2813,6 +2813,139 @@ local function UzexFishData(name)
     return data
 end
 
+-- Public HWF Trello board data source. The board is read-only here; if Trello
+-- blocks anonymous JSON access, the script safely falls back to the game's own data.
+local HWF_TRELLO_JSON_URL = "https://trello.com/b/iGl0DGHa/hwf-trello.json"
+local HWF_TRELLO_FISH = {}
+local HWF_TRELLO_LAST_FETCH = 0
+local HWF_TRELLO_STATUS = "not loaded"
+
+local function HWFNormalizeFishName(value)
+    local v = string.lower(UzexCleanName(tostring(value or "")))
+    v = string.gsub(v, "<[^>]+>", "")
+    v = string.gsub(v, "[%p%c%s_%-]+", "")
+    return v
+end
+
+local function HWFExtractDropInfo(desc)
+    desc = tostring(desc or "")
+    desc = string.gsub(desc, "\r", "")
+    local lines = {}
+    for line in string.gmatch(desc .. "\n", "(.-)\n") do
+        line = string.gsub(line, "^%s+", "")
+        line = string.gsub(line, "%s+$", "")
+        if line ~= "" then table.insert(lines, line) end
+    end
+    local drops = {}
+    local info = {}
+    for _, line in ipairs(lines) do
+        local low = string.lower(line)
+        if string.find(low, "drop", 1, true)
+            or string.find(low, "obtain", 1, true)
+            or string.find(low, "reward", 1, true)
+            or string.find(low, "dropped", 1, true)
+            or string.find(low, "loot", 1, true)
+            or string.find(low, "rơi", 1, true)
+            or string.find(low, "vật phẩm", 1, true)
+            or string.find(low, "nhận được", 1, true)
+            or string.find(low, "item", 1, true) then
+            table.insert(drops, line)
+        else
+            table.insert(info, line)
+        end
+    end
+    return table.concat(drops, "\n"), table.concat(info, "\n")
+end
+
+local function HWFLoadTrelloFishData(force)
+    if not force and os.clock() - HWF_TRELLO_LAST_FETCH < 900 then return end
+    HWF_TRELLO_LAST_FETCH = os.clock()
+    task.spawn(function()
+        local ok, raw = pcall(function()
+            return game:HttpGet(HWF_TRELLO_JSON_URL)
+        end)
+        if not ok or type(raw) ~= "string" or raw == "" then
+            HWF_TRELLO_STATUS = "unavailable"
+            return
+        end
+        local decodedOk, board = pcall(function()
+            return HttpService:JSONDecode(raw)
+        end)
+        if not decodedOk or type(board) ~= "table" or type(board.cards) ~= "table" then
+            HWF_TRELLO_STATUS = "invalid response"
+            return
+        end
+
+        local listNames = {}
+        for _, list in ipairs(board.lists or {}) do
+            if type(list) == "table" and list.id then
+                listNames[tostring(list.id)] = tostring(list.name or "")
+            end
+        end
+
+        local newData = {}
+        for _, card in ipairs(board.cards) do
+            if type(card) == "table" and card.closed ~= true then
+                local cardName = tostring(card.name or "")
+                local normalized = HWFNormalizeFishName(cardName)
+                if normalized ~= "" then
+                    local labels = {}
+                    for _, label in ipairs(card.labels or {}) do
+                        if type(label) == "table" then
+                            table.insert(labels, tostring(label.name or ""))
+                        elseif type(label) == "string" then
+                            table.insert(labels, label)
+                        end
+                    end
+                    local listName = tostring(listNames[tostring(card.idList or "")] or "")
+                    local desc = tostring(card.desc or "")
+                    local metadata = string.lower(table.concat({cardName, desc, listName, table.concat(labels, " ")}, " "))
+                    local dropInfo, generalInfo = HWFExtractDropInfo(desc)
+                    local entry = newData[normalized] or {
+                        Name = cardName, Description = desc, DropInfo = "", Info = "",
+                        List = listName, Labels = {}, Boss = false, Secret = false,
+                        Source = "Trello", URL = tostring(card.url or card.shortUrl or "")
+                    }
+                    if entry.Description == "" then entry.Description = desc end
+                    if entry.List == "" then entry.List = listName end
+                    if entry.DropInfo == "" then entry.DropInfo = dropInfo end
+                    if entry.Info == "" then entry.Info = generalInfo end
+                    for _, label in ipairs(labels) do
+                        if label ~= "" then table.insert(entry.Labels, label) end
+                    end
+                    if string.find(metadata, "secret", 1, true)
+                        or string.find(metadata, "bí mật", 1, true)
+                        or string.find(metadata, "diaohai", 1, true)
+                        or string.find(metadata, "wuzhi", 1, true) then
+                        entry.Secret = true
+                    end
+                    if string.find(metadata, "boss", 1, true) then entry.Boss = true end
+                    newData[normalized] = entry
+                end
+            end
+        end
+        HWF_TRELLO_FISH = newData
+        HWF_TRELLO_STATUS = "loaded"
+    end)
+end
+
+HWFLoadTrelloFishData(true)
+
+local function HWFGetTrelloFishData(name)
+    local normalized = HWFNormalizeFishName(name)
+    if normalized == "" then return nil end
+    local exact = HWF_TRELLO_FISH[normalized]
+    if exact then return exact end
+    -- Fallback for game UI names that append rarity, level, or other suffixes.
+    for key, entry in pairs(HWF_TRELLO_FISH) do
+        if #key >= 4 and (#normalized >= 4) and
+            (string.find(normalized, key, 1, true) or string.find(key, normalized, 1, true)) then
+            return entry
+        end
+    end
+    return nil
+end
+
 -- returns isBoss, isSecret, shownName for the fish currently on the line
 function UzexFilter.Classify()
     local isBoss, isSecret, shown, known = false, false, "", false
@@ -2861,6 +2994,17 @@ function UzexFilter.Classify()
                     if type(data.Rarity) == "string" and string.lower(data.Rarity) == "boss" then
                         isBoss = true
                     end
+                end
+                -- Supplement local game metadata with the public Trello board when a
+                -- matching card exists. Game-provided attributes still take priority.
+                local trelloData = HWFGetTrelloFishData(clean)
+                if trelloData then
+                    known = true
+                    if not data and trelloData.Name and trelloData.Name ~= "" then
+                        shown = trelloData.Name
+                    end
+                    if trelloData.Boss then isBoss = true end
+                    if trelloData.Secret then isSecret = true end
                 end
                 local lower = string.lower(clean)
                 if string.find(lower, "secret", 1, true) or string.find(lower, "diaohai", 1, true)
@@ -3545,18 +3689,15 @@ task.spawn(function()
             and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
         local curFishId = LocalPlayer:GetAttribute("FishID")
         if filterOn and (isMinigame or curFishId ~= nil) then
-            -- Wait for stable fish identity before cancelling anything: Secret Boss
-            -- metadata can appear after the minigame UI starts.
-            local _, _, visibleFishName = UzexFilter.Classify()
-            local key = curFishId ~= nil and ("id:" .. tostring(curFishId))
-                or (visibleFishName ~= "" and ("name:" .. string.lower(visibleFishName)) or nil)
-            if key and key ~= fightKey then
+            -- every new fish on the line starts a new decision (decided as soon as the fish is known)
+            local key = tostring(curFishId or "gui")
+            if key ~= fightKey then
                 fightKey = key
                 fightStart = now
                 fightAllowed = false
                 cancelStage = 0
             end
-            if key and not fightAllowed and cancelStage == 0 then
+            if not fightAllowed and cancelStage == 0 then
                 local isBoss, isSecret, shown, known = UzexFilter.Classify()
                 local waited = now - fightStart
                 if (Config.FilterBossFish and isBoss and not isSecret) or (Config.FilterSecretFish and isSecret) then
@@ -3587,7 +3728,7 @@ task.spawn(function()
                 -- the next cast and skip a Secret Boss bite.
                 cancelStage = 2
             end
-            UzexFilter.Skip = key ~= nil and not fightAllowed
+            UzexFilter.Skip = not fightAllowed
         else
             fightAllowed = false
             fightStart = nil
@@ -5589,7 +5730,7 @@ local Window = Library:CreateWindow({
     MinSize = Vector2.new(480, 360),
     SidebarWidth = 170,
     DefaultTheme = "Taichi",
-    ToggleUIKeybind = Enum.KeyCode.LeftAlt,
+    ToggleUIKeybind = Enum.KeyCode.LeftControl,
     ConfigurationSaving = { Enabled = false, FolderName = SAVE_FOLDER },
     SaveSize = false,
     Home = {
@@ -5773,105 +5914,8 @@ local Tabs = {
     Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
     Upgrade = Window:CreateTab({ Name = "Nâng cấp", Icon = "arrow-up" }),
     Misc = Window:CreateTab({ Name = "Khác", Icon = "layers" }),
-    FishIndex = Window:CreateTab({ Name = "Index cá", Icon = "book-open" }),
     Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" })
 }
-
-Tabs.FishIndex:CreateSection("Dữ liệu Index trong game")
-Tabs.FishIndex:CreateParagraph({
-    Title = "Cách lấy dữ liệu",
-    Content = "Mở Index cá trong game trước, sau đó bấm Quét Index. Script sẽ đọc tên và thông tin đang hiển thị trong giao diện Index; không tự bịa Fish ID nếu game không hiển thị ID."
-})
-Tabs.FishIndex:CreateButton({
-    Name = "Quét và sao chép dữ liệu Index",
-    Description = "Đọc tên cá và thông tin có trong giao diện Index hiện tại",
-    Callback = function()
-        local ok, result, message = pcall(function()
-            local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
-            local mg = (pg and pg:FindFirstChild("MainGui")) or MainGui
-            if not mg then return nil, "Không tìm thấy MainGui." end
-
-            local root
-            for _, d in ipairs(mg:GetDescendants()) do
-                if d:IsA("Frame") or d:IsA("ScrollingFrame") then
-                    local n = string.lower(tostring(d.Name or ""))
-                    if n == "index" or string.find(n, "fishindex", 1, true)
-                        or string.find(n, "codex", 1, true)
-                        or string.find(n, "collection", 1, true)
-                        or string.find(n, "bestiary", 1, true) then
-                        root = d
-                        break
-                    end
-                end
-            end
-            if not root then return nil, "Không tìm thấy giao diện Index. Hãy mở Index cá trong game rồi thử lại." end
-
-            local lines, seen = {}, {}
-            local function addLine(value)
-                value = tostring(value or ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-                if value ~= "" and value ~= "???" and value ~= "??? ???" and not seen[value] then
-                    seen[value] = true
-                    table.insert(lines, value)
-                end
-            end
-
-            addLine("HEAVYWEIGHT FISHING - INDEX DATA")
-            for _, d in ipairs(root:GetDescendants()) do
-                if d:IsA("TextLabel") or d:IsA("TextButton") then
-                    addLine(d.Text)
-                end
-                -- Keep useful object names as fallback when the UI stores fish names in card names.
-                if d:IsA("Frame") or d:IsA("ImageButton") then
-                    local n = tostring(d.Name or "")
-                    local low = string.lower(n)
-                    if n ~= "" and not ({
-                        index=true, fishindex=true, codex=true, collection=true,
-                        bestiary=true, fish=true, item=true, entry=true, card=true,
-                        template=true, content=true, list=true, grid=true, holder=true,
-                        container=true, scrollingframe=true, frame=true
-                    })[low] and not string.find(low, "template", 1, true) then
-                        addLine("Card/Object: " .. n)
-                    end
-                end
-                -- Include public attributes that may contain fish metadata.
-                pcall(function()
-                    local attrs = d:GetAttributes()
-                    for key, value in pairs(attrs) do
-                        if type(value) == "string" or type(value) == "number" or type(value) == "boolean" then
-                            local k = string.lower(tostring(key))
-                            if string.find(k, "fish", 1, true) or string.find(k, "name", 1, true)
-                                or string.find(k, "rarity", 1, true) or string.find(k, "weight", 1, true)
-                                or string.find(k, "value", 1, true) or string.find(k, "id", 1, true)
-                                or string.find(k, "island", 1, true) or string.find(k, "weather", 1, true) then
-                                addLine(tostring(key) .. ": " .. tostring(value))
-                            end
-                        end
-                    end
-                end)
-            end
-
-            local output = table.concat(lines, "\n")
-            if #lines <= 1 then return nil, "Index đã tìm thấy nhưng chưa có dữ liệu đọc được. Hãy mở trang danh sách cá rồi quét lại." end
-            local copied = false
-            if type(setclipboard) == "function" then
-                copied = pcall(setclipboard, output)
-            elseif type(toclipboard) == "function" then
-                copied = pcall(toclipboard, output)
-            end
-            return output, copied and ("Đã quét " .. tostring(#lines - 1) .. " dòng và sao chép vào clipboard.") or
-                ("Đã quét " .. tostring(#lines - 1) .. " dòng, nhưng executor không hỗ trợ clipboard.")
-        end)
-        if not ok then
-            warn("[Fish Index] " .. tostring(result))
-            return
-        end
-        if not result then
-            warn("[Fish Index] " .. tostring(message or "Không lấy được dữ liệu Index."))
-            return
-        end
-        warn("[Fish Index] " .. tostring(message or "Đã quét xong Index."))
-    end
-})
 
 Tabs.Settings:CreateSection("Language / Ngôn ngữ")
 Tabs.Settings:CreateDropdown({
@@ -6248,11 +6292,60 @@ Tabs.Shop:CreateButton({
                     end
                 end
             end
+
+            -- Attach verified Trello card details to matching Index entries.
+            -- Only show drop information when the source description actually contains it.
+            local infoCount = 0
+            for _, label in ipairs(root:GetDescendants()) do
+                if label:IsA("TextLabel") and label.Visible and label.Text ~= "" then
+                    local fishData = HWFGetTrelloFishData(label.Text)
+                    if fishData then
+                        -- Prefer the canonical card title when this label is a fish-name label.
+                        local currentNorm = HWFNormalizeFishName(label.Text)
+                        local titleNorm = HWFNormalizeFishName(fishData.Name)
+                        if currentNorm == titleNorm or (currentNorm ~= "" and titleNorm ~= ""
+                            and (string.find(currentNorm, titleNorm, 1, true) or string.find(titleNorm, currentNorm, 1, true))) then
+                            label.Text = fishData.Name
+                        end
+                        local detailText = ""
+                        if fishData.DropInfo and fishData.DropInfo ~= "" then
+                            detailText = fishData.DropInfo
+                        elseif fishData.Info and fishData.Info ~= "" then
+                            detailText = fishData.Info
+                        end
+                        if detailText ~= "" and label.Parent and label.Parent:IsA("GuiObject") then
+                            local card = label.Parent
+                            local detail = card:FindFirstChild("HWF_TrelloFishInfo")
+                            if not detail then
+                                detail = Instance.new("TextLabel")
+                                detail.Name = "HWF_TrelloFishInfo"
+                                detail.BackgroundTransparency = 1
+                                detail.TextColor3 = Color3.fromRGB(220, 220, 220)
+                                detail.TextSize = 11
+                                detail.TextWrapped = true
+                                detail.TextXAlignment = Enum.TextXAlignment.Left
+                                detail.TextYAlignment = Enum.TextYAlignment.Top
+                                detail.Font = Enum.Font.Gotham
+                                detail.ZIndex = label.ZIndex + 1
+                                detail.Parent = card
+                            end
+                            detail.Text = detailText
+                            detail.Size = UDim2.new(1, -8, 0, 34)
+                            detail.Position = UDim2.new(0, 4, 1, -36)
+                            detail.Visible = true
+                            infoCount = infoCount + 1
+                        end
+                    end
+                end
+            end
+            if infoCount > 0 then
+                count = count + infoCount
+            end
         end)
         pcall(function()
             Library:Notify({
                 Title = "Unlock all fish",
-                Content = found and ("Unlocked " .. count .. " entries") or "Index menu not found - open it once, then press again",
+                Content = found and ("Processed " .. count .. " Index items. Trello drop details appear only when the card description contains them.") or "Index menu not found - open it once, then press again",
                 Type = found and "success" or "warning",
                 Duration = 4,
             })
@@ -7299,12 +7392,61 @@ Tabs.Misc:CreateButton({
 Tabs.Settings:CreateKeybind({
     Flag = "ToggleUIKeybind",
     Name = "Phím thu nhỏ giao diện",
-    CurrentKeybind = "LeftAlt",
+    CurrentKeybind = "LeftControl",
     OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftAlt
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
         Window:SetKeybind(keyCode)
     end
 })
+
+Tabs.Settings:CreateSection("Phím tắt")
+
+Tabs.Settings:CreateToggle({
+    Flag = "DisableAllKeybindsToggle",
+    Name = "Tắt phím tắt",
+    CurrentValue = Config.DisableAllKeybinds or false,
+    Callback = function(Value)
+        Config.DisableAllKeybinds = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Settings:CreateKeybind({
+    Flag = "FlyKeybind",
+    Name = "Phím bật bay",
+    CurrentKeybind = Config.FlyKeybind or "F",
+    Callback = function()
+        if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.FlyKeybindEnabled ~= false then
+            toggleFly()
+        end
+    end,
+    OnChanged = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.FlyKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
+Tabs.Settings:CreateKeybind({
+    Flag = "NoclipKeybind",
+    Name = "Phím bật xuyên vật thể",
+    CurrentKeybind = Config.NoclipKeybind or "J",
+    Callback = function()
+        if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.NoclipKeybindEnabled ~= false then
+            toggleNoclip()
+        end
+    end,
+    OnChanged = function(NewKey)
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
+        if keyCode then
+            Config.NoclipKeybind = keyCode.Name
+            SaveConfig()
+        end
+    end
+})
+
 
 
 do
@@ -8354,5 +8496,71 @@ end
 -- Support helper: copies what the boss menu looks like so the difficulty picker
 -- (Normal / Hard / Nightmare) can be matched to the game exactly.
 -------------------------------------------------------------------------------
+do
+    Tabs.Misc:CreateButton({
+        Name = "Copy Boss Menu Info",
+        Description = "Open the boss menu, pick Nightmare by hand, then press this and send the text",
+        Callback = function()
+            local out = { "BossMode setting: " .. tostring(Config.BossMode) }
+            local frame = FindBossMenuFrame()
+            if not frame then
+                out[#out + 1] = "Boss menu frame not found (open the boss menu first)"
+            else
+                out[#out + 1] = "Frame: " .. frame:GetFullName() .. " | Visible=" .. tostring(frame.Visible)
+                local count = 0
+                for _, d in ipairs(frame:GetDescendants()) do
+                    if count >= 140 then
+                        out[#out + 1] = "... (more items not listed)"
+                        break
+                    end
+                    local line
+                    if d:IsA("GuiButton") then
+                        line = string.format("[Button] %s | text=%q | vis=%s | bg=%s",
+                            d.Name, GetButtonLabelText(d), tostring(d.Visible), tostring(d.BackgroundColor3))
+                    elseif d:IsA("TextLabel") then
+                        line = string.format("[Label] %s | text=%q | vis=%s", d.Name, d.Text, tostring(d.Visible))
+                    elseif d:IsA("UIStroke") then
+                        line = string.format("[Stroke] on %s | color=%s | thick=%s | enabled=%s",
+                            d.Parent and d.Parent.Name or "?", tostring(d.Color), tostring(d.Thickness), tostring(d.Enabled))
+                    end
+                    if line then
+                        local attrs = {}
+                        for k, v in pairs(d:GetAttributes()) do
+                            attrs[#attrs + 1] = k .. "=" .. tostring(v)
+                        end
+                        if #attrs > 0 then
+                            line = line .. " | attrs: " .. table.concat(attrs, ", ")
+                        end
+                        out[#out + 1] = line
+                        count = count + 1
+                    end
+                end
+            end
+            local remotes = {}
+            for _, folder in ipairs({ Events, ReplicatedStorage:FindFirstChild("Remotes") }) do
+                if folder then
+                    for _, r in ipairs(folder:GetChildren()) do
+                        if (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) and string.find(string.lower(r.Name), "boss", 1, true) then
+                            remotes[#remotes + 1] = r.ClassName .. ":" .. r.Name
+                        end
+                    end
+                end
+            end
+            out[#out + 1] = "Boss remotes: " .. (#remotes > 0 and table.concat(remotes, ", ") or "none")
+
+            local dump = table.concat(out, "\n")
+            if #dump > 7000 then
+                dump = string.sub(dump, 1, 7000)
+            end
+            local copied = type(setclipboard) == "function" and pcall(setclipboard, dump)
+            Library:Notify({
+                Title = "Boss menu",
+                Content = copied and "Copied. Paste it into the chat." or "Could not copy to the clipboard.",
+                Type = copied and "success" or "error",
+                Duration = 4,
+            })
+        end
+    })
+end
 
 Window:SelectTab(Tabs.Main)
