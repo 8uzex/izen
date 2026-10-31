@@ -2832,13 +2832,9 @@ function UzexFilter.Classify()
                 local lk = string.lower(tostring(k))
                 local lv = string.lower(tostring(v))
                 if type(v) == "string" then table.insert(names, v) end
-                -- key contains "secret" with a truthy value
                 if string.find(lk, "secret", 1, true) and (v == true or lv == "true" or lv == "1") then
                     isSecret = true
                 end
-                -- direct equality: attribute named exactly "Secret" or "Rarity" == "Secret"
-                if lk == "secret" and v == true then isSecret = true end
-                if (lk == "rarity" or lk == "fishrarity") and lv == "secret" then isSecret = true end
                 if string.find(lk, "boss", 1, true) and (v == true or lv == "true" or lv == "1") then
                     isBoss = true
                 end
@@ -2865,11 +2861,8 @@ function UzexFilter.Classify()
                     shown = clean
                     known = true
                     if data.Boss == true then isBoss = true end
-                    -- secret when game says so, or when it's a boss with an extremely low drop chance
+                    -- secret only when the game says so (no guessing from drop chance)
                     if data.Secret == true or data.Rarity == "Secret" then
-                        isSecret = true
-                    end
-                    if data.Boss == true and (tonumber(data.Chance) or 100) <= 1 then
                         isSecret = true
                     end
                     if type(data.Rarity) == "string" and string.lower(data.Rarity) == "boss" then
@@ -2927,7 +2920,7 @@ function UzexFilter.Recycle()
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if char and hrp and UzexFilter.HoldingRod() then
             local t = 0
-            while char:GetAttribute("Fishing") and t < 1.2 do
+            while char:GetAttribute("Fishing") and t < 0.4 do
                 task.wait(0.01)
                 t = t + 0.01
             end
@@ -2994,26 +2987,17 @@ local function FindBossTarget(wantSecret)
             end
         end
     end
-    -- last resort: search by name inside the NPC folders (also catches BasePart entities and IsSecretBossEntity)
+    -- last resort: search by name inside the NPC folders
     for _, n in ipairs({"NPC", "God", "BossSetUp"}) do
         local f = workspace:FindFirstChild(n)
         if f then
             for _, d in ipairs(f:GetDescendants()) do
-                if (d:IsA("Model") or d:IsA("BasePart")) and (IsLongDiaoHaiName(d) or IsSecretBossEntity(d)) then
+                if d:IsA("Model") and IsLongDiaoHaiName(d) then
                     local part = GetModelPart(d)
                     if part then
                         return d, part
                     end
                 end
-            end
-        end
-    end
-    -- last resort: full workspace scan for secret boss entity
-    for _, d in ipairs(workspace:GetDescendants()) do
-        if (d:IsA("Model") or d:IsA("BasePart")) and (IsLongDiaoHaiName(d) or IsSecretBossEntity(d)) then
-            local part = GetModelPart(d)
-            if part then
-                return d, part
             end
         end
     end
@@ -3114,17 +3098,6 @@ local function FindBossMenuFrame()
             end
             if child:FindFirstChild("Normal", true) and child:FindFirstChild("Hard", true) and child:FindFirstChild("Nightmare", true) then
                 return child
-            end
-            -- Secret Boss frames may only have one mode — catch them by presence of a fight/start button
-            for _, desc in ipairs(child:GetDescendants()) do
-                if desc:IsA("GuiButton") then
-                    local dName = string.lower(desc.Name)
-                    local dText = string.lower(GetButtonLabelText(desc))
-                    if dName == "fight" or dText == "fight" or string.find(dName, "fight") or string.find(dText, "fight")
-                        or string.find(dName, "start") or string.find(dText, "start") then
-                        return child
-                    end
-                end
             end
         end
     end
@@ -3352,17 +3325,8 @@ local function ClickBossModeAndStart(bossFrame, bossName, mode, wantSecret)
                 -- argument layouts: later calls can overwrite Nightmare with Normal.
                 if ev:IsA("RemoteEvent") then
                     ev:FireServer(targetMode)
-                    -- Secret Boss remotes may expect the boss name as the primary arg
-                    if wantSecret and bossName and bossName ~= "" then
-                        task.wait(0.05)
-                        pcall(function() ev:FireServer(bossName, targetMode) end)
-                        pcall(function() ev:FireServer(bossName) end)
-                    end
                 elseif ev:IsA("RemoteFunction") then
                     ev:InvokeServer(targetMode)
-                    if wantSecret and bossName and bossName ~= "" then
-                        pcall(function() ev:InvokeServer(bossName, targetMode) end)
-                    end
                 end
             end)
         end
@@ -3460,7 +3424,7 @@ local function StepAutoBoss(char, isMinigame)
     if now - lastBossActionTick < 0.8 then return end
     lastBossActionTick = now
 
-    if bossSummoned and (now - bossSummonTick > (wantSecret and 90 or 45)) then
+    if bossSummoned and (now - bossSummonTick > 45) then
         bossSummoned = false
     end
 
@@ -3608,7 +3572,7 @@ task.spawn(function()
                             Duration = 4,
                         })
                     end)
-                elseif not isSecret and ((known and waited > 0.15) or waited > 8.0) then
+                elseif (known and waited > 0.15) or waited > 5.0 then
                     cancelStage = 1
                     if now - UzexFilter.LastNotify > 3 then
                         UzexFilter.LastNotify = now
@@ -3621,7 +3585,6 @@ task.spawn(function()
                         end)
                     end
                     UzexFilter.Recycle()
-                    fightKey = nil -- force re-evaluate next tick so new fish isn't blocked by stale cancelStage
                 end
             elseif cancelStage == 1 and isMinigame and (now - fightStart) > 4 then
                 -- One recycle attempt per fish only; repeated recycle calls can cancel
@@ -7472,6 +7435,62 @@ do
         return s
     end
 
+    -- Read the real currency icons from the game's live UI. Discord cannot
+    -- render Roblox's rbxassetid:// scheme directly, so convert each discovered
+    -- image asset id to Roblox's public thumbnail URL for the embed thumbnails.
+    local currencyImageCache = {}
+    local function getCurrencyImage(slot, keywords)
+        if currencyImageCache[slot] then return currencyImageCache[slot] end
+        local roots = {}
+        local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if playerGui then roots[#roots + 1] = playerGui end
+        roots[#roots + 1] = CoreGui
+
+        local function containsCurrencyText(root)
+            -- Check only this container and its immediate children to avoid
+            -- repeatedly walking the entire UI tree for every image object.
+            for _, obj in ipairs(root:GetChildren()) do
+                if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+                    local txt = string.lower(tostring(obj.Text or ""))
+                    for _, word in ipairs(keywords) do
+                        if string.find(txt, word, 1, true) then return true end
+                    end
+                end
+            end
+            return false
+        end
+
+        for _, root in ipairs(roots) do
+            for _, obj in ipairs(root:GetDescendants()) do
+                if (obj:IsA("ImageLabel") or obj:IsA("ImageButton")) and obj.Image and obj.Image ~= "" then
+                    local node = obj
+                    local matched = false
+                    for _ = 1, 4 do
+                        if not node then break end
+                        local nodeName = string.lower(tostring(node.Name or ""))
+                        for _, word in ipairs(keywords) do
+                            if string.find(nodeName, word, 1, true) then matched = true break end
+                        end
+                        if matched then break end
+                        if containsCurrencyText(node) then matched = true break end
+                        node = node.Parent
+                    end
+                    if matched then
+                        local assetId = tostring(obj.Image):match("[?&]id=(%d+)")
+                            or tostring(obj.Image):match("rbxassetid://(%d+)")
+                            or tostring(obj.Image):match("(%d+)")
+                        if assetId then
+                            local imageUrl = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. assetId .. "&width=150&height=150&format=png"
+                            currencyImageCache[slot] = imageUrl
+                            return imageUrl
+                        end
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
     local function sendWebhook(title, description, color, extra, bypassToggle)
         if not (Config.WebhookEnabled or bypassToggle) then
             return false, "disabled"
@@ -7508,6 +7527,36 @@ do
             fields[#fields + 1] = field
         end
 
+        local embeds = {
+            {
+                title = title,
+                description = description,
+                color = color or COLOR_INFO,
+                fields = fields,
+                footer = { text = "Uzex Hub" },
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+            },
+        }
+
+        -- Separate compact embeds let Discord show the game's own icon beside
+        -- each live currency balance (when the corresponding UI icon is found).
+        local currencyCards = {
+            { slot = "gem", label = "Gems", keys = { "gem", "crystal" }, value = readCurrency("gem", { "gems", "gem", "crystals", "crystal" }) },
+            { slot = "cash", label = "Cash", keys = { "cash", "money", "balance" }, value = readCurrency("cash", { "cash", "money", "balance", "coins", "gold" }) },
+            { slot = "ticket", label = "Tickets", keys = { "ticket" }, value = readCurrency("ticket", { "tickets", "ticket" }, "quest") },
+        }
+        for _, currency in ipairs(currencyCards) do
+            local imageUrl = getCurrencyImage(currency.slot, currency.keys)
+            if imageUrl then
+                embeds[#embeds + 1] = {
+                    title = currency.label,
+                    description = "**" .. currency.value .. "**",
+                    color = color or COLOR_INFO,
+                    thumbnail = { url = imageUrl },
+                }
+            end
+        end
+
         local ok, res = pcall(function()
             return req({
                 Url = url,
@@ -7515,16 +7564,7 @@ do
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = HttpService:JSONEncode({
                     username = "Uzex Hub",
-                    embeds = {
-                        {
-                            title = title,
-                            description = description,
-                            color = color or COLOR_INFO,
-                            fields = fields,
-                            footer = { text = "Uzex Hub" },
-                            timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-                        },
-                    },
+                    embeds = embeds,
                 }),
             })
         end)
