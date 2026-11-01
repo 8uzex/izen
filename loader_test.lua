@@ -7435,60 +7435,58 @@ do
         return s
     end
 
-    -- Read the real currency icons from the game's live UI. Discord cannot
-    -- render Roblox's rbxassetid:// scheme directly, so convert each discovered
-    -- image asset id to Roblox's public thumbnail URL for the embed thumbnails.
-    local currencyImageCache = {}
-    local function getCurrencyImage(slot, keywords)
-        if currencyImageCache[slot] then return currencyImageCache[slot] end
-        local roots = {}
-        local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        if playerGui then roots[#roots + 1] = playerGui end
-        roots[#roots + 1] = CoreGui
+    -- Currency icon images shown in webhook embeds.
+    local iconCache = {}  -- { cash = url | false, ticket = url | false, gem = url | false }
+    local iconSearchDone = false
 
-        local function containsCurrencyText(root)
-            -- Check only this container and its immediate children to avoid
-            -- repeatedly walking the entire UI tree for every image object.
-            for _, obj in ipairs(root:GetChildren()) do
-                if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
-                    local txt = string.lower(tostring(obj.Text or ""))
-                    for _, word in ipairs(keywords) do
-                        if string.find(txt, word, 1, true) then return true end
-                    end
-                end
-            end
-            return false
-        end
+    local function rbxIconUrl(assetId)
+        if not assetId then return nil end
+        return "https://www.roblox.com/asset-thumbnail/image?assetId=" .. tostring(assetId) .. "&width=150&height=150&format=png"
+    end
 
-        for _, root in ipairs(roots) do
-            for _, obj in ipairs(root:GetDescendants()) do
-                if (obj:IsA("ImageLabel") or obj:IsA("ImageButton")) and obj.Image and obj.Image ~= "" then
-                    local node = obj
-                    local matched = false
-                    for _ = 1, 4 do
-                        if not node then break end
-                        local nodeName = string.lower(tostring(node.Name or ""))
-                        for _, word in ipairs(keywords) do
-                            if string.find(nodeName, word, 1, true) then matched = true break end
-                        end
-                        if matched then break end
-                        if containsCurrencyText(node) then matched = true break end
-                        node = node.Parent
-                    end
-                    if matched then
-                        local assetId = tostring(obj.Image):match("[?&]id=(%d+)")
-                            or tostring(obj.Image):match("rbxassetid://(%d+)")
-                            or tostring(obj.Image):match("(%d+)")
-                        if assetId then
-                            local imageUrl = "https://www.roblox.com/asset-thumbnail/image?assetId=" .. assetId .. "&width=150&height=150&format=png"
-                            currencyImageCache[slot] = imageUrl
-                            return imageUrl
+    -- Walks PlayerGui looking for an ImageLabel/ImageButton whose parent also
+    -- contains a TextLabel whose text fuzzy-matches one of `keys`.
+    local function findIconId(keys)
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then return nil end
+        local lowerKeys = {}
+        for _, k in ipairs(keys) do lowerKeys[#lowerKeys + 1] = string.lower(k) end
+        for _, img in ipairs(playerGui:GetDescendants()) do
+            if (img:IsA("ImageLabel") or img:IsA("ImageButton")) and img.Visible then
+                local raw = img.Image
+                local id = tonumber(string.match(raw, "rbxassetid://(%d+)") or string.match(raw, "^(%d+)$"))
+                if id and id > 0 then
+                    local parent = img.Parent
+                    if parent then
+                        for _, sib in ipairs(parent:GetChildren()) do
+                            if sib:IsA("TextLabel") or sib:IsA("TextButton") then
+                                local low = string.lower(sib.Text)
+                                low = string.gsub(low, "[%s_%-]", "")
+                                for _, key in ipairs(lowerKeys) do
+                                    if string.find(low, key, 1, true) then
+                                        return id
+                                    end
+                                end
+                            end
                         end
                     end
                 end
             end
         end
         return nil
+    end
+
+    local function ensureIcons()
+        if iconSearchDone then return end
+        iconSearchDone = true
+        pcall(function()
+            local cashId   = findIconId({ "cash", "money", "balance", "coin", "gold" })
+            local ticketId = findIconId({ "ticket" })
+            local gemId    = findIconId({ "gem", "crystal" })
+            iconCache.cash   = cashId   and rbxIconUrl(cashId)   or false
+            iconCache.ticket = ticketId and rbxIconUrl(ticketId) or false
+            iconCache.gem    = gemId    and rbxIconUrl(gemId)    or false
+        end)
     end
 
     local function sendWebhook(title, description, color, extra, bypassToggle)
@@ -7527,33 +7525,33 @@ do
             fields[#fields + 1] = field
         end
 
-        local embeds = {
-            {
-                title = title,
-                description = description,
-                color = color or COLOR_INFO,
-                fields = fields,
-                footer = { text = "Uzex Hub" },
-                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-            },
-        }
+        -- Try to find currency icons once (non-blocking, best-effort)
+        if not iconSearchDone then
+            task.spawn(ensureIcons)
+        end
 
-        -- Separate compact embeds let Discord show the game's own icon beside
-        -- each live currency balance (when the corresponding UI icon is found).
-        local currencyCards = {
-            { slot = "gem", label = "Gems", keys = { "gem", "crystal" }, value = readCurrency("gem", { "gems", "gem", "crystals", "crystal" }) },
-            { slot = "cash", label = "Cash", keys = { "cash", "money", "balance" }, value = readCurrency("cash", { "cash", "money", "balance", "coins", "gold" }) },
-            { slot = "ticket", label = "Tickets", keys = { "ticket" }, value = readCurrency("ticket", { "tickets", "ticket" }, "quest") },
+        -- Build embeds: main embed + up to 3 image-only embeds (same url trick
+        -- makes Discord display them as an image gallery attached to this message)
+        local sharedUrl = "https://www.roblox.com/games/" .. tostring(game.GameId)
+        local mainEmbed = {
+            title       = title,
+            description = description,
+            color       = color or COLOR_INFO,
+            fields      = fields,
+            footer      = { text = "Uzex Hub" },
+            timestamp   = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+            url         = sharedUrl,
         }
-        for _, currency in ipairs(currencyCards) do
-            local imageUrl = getCurrencyImage(currency.slot, currency.keys)
-            if imageUrl then
-                embeds[#embeds + 1] = {
-                    title = currency.label,
-                    description = "**" .. currency.value .. "**",
-                    color = color or COLOR_INFO,
-                    thumbnail = { url = imageUrl },
-                }
+        -- Thumbnail: gem (top-right corner of the main embed)
+        if iconCache.gem then
+            mainEmbed.thumbnail = { url = iconCache.gem }
+        end
+
+        local embeds = { mainEmbed }
+        -- Extra image embeds for cash and ticket (shown as image gallery)
+        for _, iconUrl in ipairs({ iconCache.cash, iconCache.ticket }) do
+            if iconUrl then
+                embeds[#embeds + 1] = { url = sharedUrl, image = { url = iconUrl } }
             end
         end
 
@@ -7564,7 +7562,7 @@ do
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = HttpService:JSONEncode({
                     username = "Uzex Hub",
-                    embeds = embeds,
+                    embeds   = embeds,
                 }),
             })
         end)
