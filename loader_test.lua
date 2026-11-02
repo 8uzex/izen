@@ -1719,6 +1719,7 @@ local Config = {
     AutoFarmIsland = false,
     SelectedFarmIsland = "Beginning Isle",
     AutoTicketQuest = false,
+    AutoDailyQuest = false,
     TicketQuestMode = "Hard",
     AutoEquipBestBait = false,
     AutoEquipRod = false
@@ -4812,10 +4813,148 @@ do
     end)
 end
 
+-------------------------------------------------------------------------------
+-- Auto Claim Daily Quest (menu-based, not NPC)
+-- Clicks the checkmark button on each completed daily quest task in the Quest
+-- menu, then claims the Daily Reward if it's ready.
+-- Works by firing the same remote that the game's own claim button fires.
+-------------------------------------------------------------------------------
+do
+    local lastDailyAttempt = 0
+    local DAILY_COOLDOWN = 30  -- seconds between full sweeps
+
+    -- Best-effort remote discovery: the game may use different names.
+    local function findRemote(names)
+        for _, name in ipairs(names) do
+            local r = Events:FindFirstChild(name)
+            if r then return r end
+        end
+        for _, name in ipairs(names) do
+            local r = ReplicatedStorage:FindFirstChild(name, true)
+            if r then return r end
+        end
+        return nil
+    end
+
+    -- Try to claim via known remote patterns, then via GUI buttons.
+    local function TryClaimDaily()
+        -- ---- 1) RemoteEvent / RemoteFunction approach ----
+        local claimRemote = findRemote({
+            "ClaimDailyQuest", "ClaimDailyReward", "ClaimDaily",
+            "DailyQuestClaim", "DailyRewardClaim", "ClaimDailyTask",
+            "DailyQuest", "DailyReward",
+        })
+        if claimRemote then
+            if claimRemote:IsA("RemoteFunction") then
+                pcall(function() claimRemote:InvokeServer() end)
+            else
+                pcall(function() claimRemote:FireServer() end)
+            end
+        end
+
+        -- ---- 2) GUI button approach: find the Quest menu and click all
+        --         visible claim / checkmark buttons inside Daily Quest tab ----
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local mg = pg and pg:FindFirstChild("MainGui")
+        local menu = mg and mg:FindFirstChild("Menu")
+        local questMenu = menu and menu:FindFirstChild("Quest")
+        if not questMenu then return end
+
+        -- Navigate to the Daily Quest sub-tab if needed
+        local function clickButton(container, names)
+            for _, name in ipairs(names) do
+                local btn = container:FindFirstChild(name, true)
+                if btn and btn:IsA("GuiButton") and btn.Visible then
+                    local fireClick = btn.MouseButton1Click
+                    if fireClick then
+                        pcall(function() fireClick:Fire() end)
+                        task.wait(0.15)
+                    end
+                end
+            end
+        end
+
+        clickButton(questMenu, { "DailyQuest", "Daily Quest", "Daily", "DailyTab" })
+        task.wait(0.3)
+
+        -- Now scan for completed task claim buttons
+        local function tryClaimButtons(root)
+            if not root then return end
+            local claimed = 0
+            for _, descendant in ipairs(root:GetDescendants()) do
+                if descendant:IsA("GuiButton") and descendant.Visible then
+                    local name = string.lower(descendant.Name)
+                    -- Buttons named Claim, ClaimBtn, CheckMark, Done, Collect etc.
+                    if name == "claim" or name == "claimbtn" or name == "claimbutton"
+                        or name == "checkmark" or name == "done" or name == "collect"
+                        or name == "collectbtn" or name == "completebtn"
+                        or string.find(name, "claim", 1, true)
+                        or string.find(name, "collect", 1, true) then
+                        -- Only click if the parent frame looks like a completed task
+                        -- (has a progress label showing the goal is met, or is just enabled)
+                        local parent = descendant.Parent
+                        local completed = false
+                        if parent then
+                            for _, child in ipairs(parent:GetDescendants()) do
+                                if child:IsA("TextLabel") then
+                                    local t = child.Text
+                                    -- "10/10" or "25/25" pattern
+                                    local a, b = t:match("(%d+)/(%d+)")
+                                    if a and b and tonumber(a) >= tonumber(b) then
+                                        completed = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if completed or descendant.BackgroundTransparency < 0.9 then
+                            pcall(function() descendant.MouseButton1Click:Fire() end)
+                            claimed = claimed + 1
+                            task.wait(0.2)
+                        end
+                    end
+                end
+            end
+            return claimed
+        end
+
+        -- Try inside daily quest panel
+        local dailyPanel = questMenu:FindFirstChild("DailyQuest", true)
+            or questMenu:FindFirstChild("Daily Quest", true)
+            or questMenu:FindFirstChild("Daily", true)
+        tryClaimButtons(dailyPanel or questMenu)
+
+        -- Also try to claim the Daily Reward (calendar tab)
+        local rewardPanel = questMenu:FindFirstChild("DailyReward", true)
+            or questMenu:FindFirstChild("Daily Reward", true)
+        if rewardPanel then
+            local claimBtn = rewardPanel:FindFirstChild("Claim", true)
+                or rewardPanel:FindFirstChild("ClaimBtn", true)
+                or rewardPanel:FindFirstChild("CollectBtn", true)
+            if claimBtn and claimBtn:IsA("GuiButton") and claimBtn.Visible then
+                pcall(function() claimBtn.MouseButton1Click:Fire() end)
+            end
+        end
+    end
+
+    -- Expose step function to the main 1-second loop
+    _G.StepDailyQuest = function()
+        if not Config.AutoDailyQuest then return end
+        if os.clock() - lastDailyAttempt < DAILY_COOLDOWN then return end
+        lastDailyAttempt = os.clock()
+        task.spawn(TryClaimDaily)
+    end
+end
+
+
+
 task.spawn(function()
     while task.wait(1) do
         if Config.AutoTicketQuest then
             StepSmartTicketQuest()
+        end
+        if type(_G.StepDailyQuest) == "function" then
+            _G.StepDailyQuest()
         end
         if Config.AutoEquipBestBait then
             StepAutoEquipBestBait()
@@ -5840,6 +5979,19 @@ Tabs.Main:CreateDropdown({
     AllowNone = false,
     Callback = function(Value)
         Config.AutoSellMethod = Value or "Spam"
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateSection("Nhiệm vụ hàng ngày")
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoDailyQuestToggle",
+    Name = "Tự nhận nhiệm vụ hàng ngày",
+    Description = "Tự tương tác với NPC nhiệm vụ hàng ngày và nhận thưởng",
+    CurrentValue = Config.AutoDailyQuest,
+    Callback = function(Value)
+        Config.AutoDailyQuest = Value
         SaveConfig()
     end
 })
@@ -7206,53 +7358,7 @@ Tabs.Settings:CreateKeybind({
     end
 })
 
-Tabs.Settings:CreateSection("Phím tắt")
 
-Tabs.Settings:CreateToggle({
-    Flag = "DisableAllKeybindsToggle",
-    Name = "Tắt phím tắt",
-    CurrentValue = Config.DisableAllKeybinds or false,
-    Callback = function(Value)
-        Config.DisableAllKeybinds = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Settings:CreateKeybind({
-    Flag = "FlyKeybind",
-    Name = "Phím bật bay",
-    CurrentKeybind = Config.FlyKeybind or "F",
-    Callback = function()
-        if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.FlyKeybindEnabled ~= false then
-            toggleFly()
-        end
-    end,
-    OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
-        if keyCode then
-            Config.FlyKeybind = keyCode.Name
-            SaveConfig()
-        end
-    end
-})
-
-Tabs.Settings:CreateKeybind({
-    Flag = "NoclipKeybind",
-    Name = "Phím bật xuyên vật thể",
-    CurrentKeybind = Config.NoclipKeybind or "J",
-    Callback = function()
-        if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.NoclipKeybindEnabled ~= false then
-            toggleNoclip()
-        end
-    end,
-    OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
-        if keyCode then
-            Config.NoclipKeybind = keyCode.Name
-            SaveConfig()
-        end
-    end
-})
 
 
 
