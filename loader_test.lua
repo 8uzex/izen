@@ -7604,7 +7604,6 @@ do
         local fields = {
             { name = "Player", value = LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")", inline = true },
             { name = "Uptime", value = uptime(), inline = true },
-            { name = "Game", value = gameName, inline = false },
         }
         if Library.Tier then
             table.insert(fields, 2, { name = "Tier", value = tostring(Library.Tier), inline = true })
@@ -7677,7 +7676,7 @@ do
             local minutes = tonumber(Config.WebhookInterval) or 0
             if Config.WebhookEnabled and minutes >= 1 and os.clock() - lastReport >= minutes * 60 then
                 lastReport = os.clock()
-                sendWebhook("Status report", "Auto farm is running.", COLOR_INFO, {
+                sendWebhook(gameName, "", COLOR_INFO, {
                     { name = "Fish caught", value = tostring(fishCaught), inline = true },
                 })
             end
