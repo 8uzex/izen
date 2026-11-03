@@ -66,7 +66,7 @@ local EN_TRANSLATIONS = {
     ["Xóa vị trí"] = "Delete Position", ["Đã xóa vị trí!"] = "Position deleted!",
     ["Mã quà tặng"] = "Gift Codes", ["Nhập tất cả mã"] = "Redeem All Codes", ["Menu tiện ích"] = "Utility Menu",
     ["Mở nâng cấp kỹ năng"] = "Open Skill Upgrade", ["Mở học kỹ năng"] = "Open Skill Learning",
-    ["Mở giao diện trao đổi"] = "Open Trade UI", ["Mở đặc tính"] = "Open Traits",
+    ["Mở giao diện trao đổi"] = "Open Trade UI", ["Mở đặc tính"] = "Open Traits", ["Phím tắt"] = "Hotkeys",
     ["Tắt phím tắt"] = "Disable Hotkeys", ["Phím bật bay"] = "Fly Toggle Key", ["Phím bật xuyên vật thể"] = "Noclip Toggle Key",
     ["Máy chủ"] = "Server", ["Vào lại máy chủ"] = "Rejoin Server", ["Đổi máy chủ ít người"] = "Join Low-Population Server",
     ["Tự vào lại"] = "Auto Rejoin", ["Tự vào lại khi mất kết nối"] = "Auto Rejoin on Disconnect",
@@ -1439,7 +1439,7 @@ function Library:CreateWindow(o)
         _tabs = {},
         _visible = false,
         _basePos = main.Position,
-        _toggleKey = o.ToggleUIKeybind or Enum.KeyCode.LeftAlt,
+        _toggleKey = o.ToggleUIKeybind or Enum.KeyCode.LeftControl,
     }, Window)
 
     -- title bar
@@ -1719,6 +1719,7 @@ local Config = {
     AutoFarmIsland = false,
     SelectedFarmIsland = "Beginning Isle",
     AutoTicketQuest = false,
+    AutoDailyQuest = false,
     TicketQuestMode = "Hard",
     AutoEquipBestBait = false,
     AutoEquipRod = false
@@ -2822,25 +2823,18 @@ function UzexFilter.Classify()
         local fishObj = (fishId and FishesFolder) and FishesFolder:FindFirstChild(tostring(fishId)) or nil
         if fishObj then
             table.insert(names, fishObj.Name)
-            local fishObjectName = string.lower(tostring(fishObj.Name))
-            if string.find(fishObjectName, "secret", 1, true)
-                or string.find(fishObjectName, "diaohai", 1, true)
-                or string.find(fishObjectName, "wuzhi", 1, true) then
-                isSecret = true
-            end
             for k, v in pairs(fishObj:GetAttributes()) do
                 local lk = string.lower(tostring(k))
-                local lv = string.lower(tostring(v))
-                if type(v) == "string" then table.insert(names, v) end
-                if string.find(lk, "secret", 1, true) and (v == true or lv == "true" or lv == "1") then
-                    isSecret = true
-                end
-                if string.find(lk, "boss", 1, true) and (v == true or lv == "true" or lv == "1") then
-                    isBoss = true
-                end
-                if (lk == "rarity" or lk == "fishrarity" or lk == "tier") then
-                    if string.find(lv, "secret", 1, true) then isSecret = true end
-                    if string.find(lv, "boss", 1, true) then isBoss = true end
+                if type(v) == "string" then
+                    table.insert(names, v)
+                    if lk == "rarity" then
+                        local lv = string.lower(v)
+                        if lv == "secret" then isSecret = true end
+                        if lv == "boss" then isBoss = true end
+                    end
+                elseif v == true then
+                    if lk == "boss" or lk == "isboss" then isBoss = true end
+                    if lk == "secret" or lk == "issecret" then isSecret = true end
                 end
             end
         end
@@ -3572,7 +3566,7 @@ task.spawn(function()
                             Duration = 4,
                         })
                     end)
-                elseif (known and waited > 0.15) or waited > 5.0 then
+                elseif (known and waited > 0.15) or waited > 3.0 then
                     cancelStage = 1
                     if now - UzexFilter.LastNotify > 3 then
                         UzexFilter.LastNotify = now
@@ -4819,10 +4813,148 @@ do
     end)
 end
 
+-------------------------------------------------------------------------------
+-- Auto Claim Daily Quest (menu-based, not NPC)
+-- Clicks the checkmark button on each completed daily quest task in the Quest
+-- menu, then claims the Daily Reward if it's ready.
+-- Works by firing the same remote that the game's own claim button fires.
+-------------------------------------------------------------------------------
+do
+    local lastDailyAttempt = 0
+    local DAILY_COOLDOWN = 30  -- seconds between full sweeps
+
+    -- Best-effort remote discovery: the game may use different names.
+    local function findRemote(names)
+        for _, name in ipairs(names) do
+            local r = Events:FindFirstChild(name)
+            if r then return r end
+        end
+        for _, name in ipairs(names) do
+            local r = ReplicatedStorage:FindFirstChild(name, true)
+            if r then return r end
+        end
+        return nil
+    end
+
+    -- Try to claim via known remote patterns, then via GUI buttons.
+    local function TryClaimDaily()
+        -- ---- 1) RemoteEvent / RemoteFunction approach ----
+        local claimRemote = findRemote({
+            "ClaimDailyQuest", "ClaimDailyReward", "ClaimDaily",
+            "DailyQuestClaim", "DailyRewardClaim", "ClaimDailyTask",
+            "DailyQuest", "DailyReward",
+        })
+        if claimRemote then
+            if claimRemote:IsA("RemoteFunction") then
+                pcall(function() claimRemote:InvokeServer() end)
+            else
+                pcall(function() claimRemote:FireServer() end)
+            end
+        end
+
+        -- ---- 2) GUI button approach: find the Quest menu and click all
+        --         visible claim / checkmark buttons inside Daily Quest tab ----
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local mg = pg and pg:FindFirstChild("MainGui")
+        local menu = mg and mg:FindFirstChild("Menu")
+        local questMenu = menu and menu:FindFirstChild("Quest")
+        if not questMenu then return end
+
+        -- Navigate to the Daily Quest sub-tab if needed
+        local function clickButton(container, names)
+            for _, name in ipairs(names) do
+                local btn = container:FindFirstChild(name, true)
+                if btn and btn:IsA("GuiButton") and btn.Visible then
+                    local fireClick = btn.MouseButton1Click
+                    if fireClick then
+                        pcall(function() fireClick:Fire() end)
+                        task.wait(0.15)
+                    end
+                end
+            end
+        end
+
+        clickButton(questMenu, { "DailyQuest", "Daily Quest", "Daily", "DailyTab" })
+        task.wait(0.3)
+
+        -- Now scan for completed task claim buttons
+        local function tryClaimButtons(root)
+            if not root then return end
+            local claimed = 0
+            for _, descendant in ipairs(root:GetDescendants()) do
+                if descendant:IsA("GuiButton") and descendant.Visible then
+                    local name = string.lower(descendant.Name)
+                    -- Buttons named Claim, ClaimBtn, CheckMark, Done, Collect etc.
+                    if name == "claim" or name == "claimbtn" or name == "claimbutton"
+                        or name == "checkmark" or name == "done" or name == "collect"
+                        or name == "collectbtn" or name == "completebtn"
+                        or string.find(name, "claim", 1, true)
+                        or string.find(name, "collect", 1, true) then
+                        -- Only click if the parent frame looks like a completed task
+                        -- (has a progress label showing the goal is met, or is just enabled)
+                        local parent = descendant.Parent
+                        local completed = false
+                        if parent then
+                            for _, child in ipairs(parent:GetDescendants()) do
+                                if child:IsA("TextLabel") then
+                                    local t = child.Text
+                                    -- "10/10" or "25/25" pattern
+                                    local a, b = t:match("(%d+)/(%d+)")
+                                    if a and b and tonumber(a) >= tonumber(b) then
+                                        completed = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if completed or descendant.BackgroundTransparency < 0.9 then
+                            pcall(function() descendant.MouseButton1Click:Fire() end)
+                            claimed = claimed + 1
+                            task.wait(0.2)
+                        end
+                    end
+                end
+            end
+            return claimed
+        end
+
+        -- Try inside daily quest panel
+        local dailyPanel = questMenu:FindFirstChild("DailyQuest", true)
+            or questMenu:FindFirstChild("Daily Quest", true)
+            or questMenu:FindFirstChild("Daily", true)
+        tryClaimButtons(dailyPanel or questMenu)
+
+        -- Also try to claim the Daily Reward (calendar tab)
+        local rewardPanel = questMenu:FindFirstChild("DailyReward", true)
+            or questMenu:FindFirstChild("Daily Reward", true)
+        if rewardPanel then
+            local claimBtn = rewardPanel:FindFirstChild("Claim", true)
+                or rewardPanel:FindFirstChild("ClaimBtn", true)
+                or rewardPanel:FindFirstChild("CollectBtn", true)
+            if claimBtn and claimBtn:IsA("GuiButton") and claimBtn.Visible then
+                pcall(function() claimBtn.MouseButton1Click:Fire() end)
+            end
+        end
+    end
+
+    -- Expose step function to the main 1-second loop
+    _G.StepDailyQuest = function()
+        if not Config.AutoDailyQuest then return end
+        if os.clock() - lastDailyAttempt < DAILY_COOLDOWN then return end
+        lastDailyAttempt = os.clock()
+        task.spawn(TryClaimDaily)
+    end
+end
+
+
+
 task.spawn(function()
     while task.wait(1) do
         if Config.AutoTicketQuest then
             StepSmartTicketQuest()
+        end
+        if type(_G.StepDailyQuest) == "function" then
+            _G.StepDailyQuest()
         end
         if Config.AutoEquipBestBait then
             StepAutoEquipBestBait()
@@ -5593,7 +5725,7 @@ local Window = Library:CreateWindow({
     MinSize = Vector2.new(480, 360),
     SidebarWidth = 170,
     DefaultTheme = "Taichi",
-    ToggleUIKeybind = Enum.KeyCode.LeftAlt,
+    ToggleUIKeybind = Enum.KeyCode.LeftControl,
     ConfigurationSaving = { Enabled = false, FolderName = SAVE_FOLDER },
     SaveSize = false,
     Home = {
@@ -5847,6 +5979,19 @@ Tabs.Main:CreateDropdown({
     AllowNone = false,
     Callback = function(Value)
         Config.AutoSellMethod = Value or "Spam"
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateSection("Nhiệm vụ hàng ngày")
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoDailyQuestToggle",
+    Name = "Tự nhận nhiệm vụ hàng ngày",
+    Description = "Tự tương tác với NPC nhiệm vụ hàng ngày và nhận thưởng",
+    CurrentValue = Config.AutoDailyQuest,
+    Callback = function(Value)
+        Config.AutoDailyQuest = Value
         SaveConfig()
     end
 })
@@ -7206,14 +7351,16 @@ Tabs.Misc:CreateButton({
 Tabs.Settings:CreateKeybind({
     Flag = "ToggleUIKeybind",
     Name = "Phím thu nhỏ giao diện",
-    CurrentKeybind = "LeftAlt",
+    CurrentKeybind = "LeftControl",
     OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftAlt
+        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey)] or Enum.KeyCode.LeftControl
         Window:SetKeybind(keyCode)
     end
 })
 
--- Hotkey controls removed from Settings UI.
+
+
+
 
 do
     local function HopLowServer()
@@ -7457,7 +7604,6 @@ do
         local fields = {
             { name = "Player", value = LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")", inline = true },
             { name = "Uptime", value = uptime(), inline = true },
-            { name = "Game", value = gameName, inline = false },
         }
         if Library.Tier then
             table.insert(fields, 2, { name = "Tier", value = tostring(Library.Tier), inline = true })
@@ -7521,10 +7667,7 @@ do
 
     task.spawn(function()
         task.wait(4)
-        sendWebhook("Uzex Hub started", "The script is running.", COLOR_INFO, {
-            { name = "Server", value = string.sub(game.JobId, 1, 8), inline = true },
-            { name = "Players", value = tostring(#Players:GetPlayers()), inline = true },
-        })
+        sendWebhook("Uzex Hub", "The script is running.", COLOR_INFO, {})
     end)
 
     task.spawn(function()
@@ -7533,10 +7676,8 @@ do
             local minutes = tonumber(Config.WebhookInterval) or 0
             if Config.WebhookEnabled and minutes >= 1 and os.clock() - lastReport >= minutes * 60 then
                 lastReport = os.clock()
-                sendWebhook("Status report", "Still running.", COLOR_INFO, {
+                sendWebhook(gameName, "", COLOR_INFO, {
                     { name = "Fish caught", value = tostring(fishCaught), inline = true },
-                    { name = "Last fish", value = lastFish ~= "" and lastFish or "-", inline = true },
-                    { name = "Players in server", value = tostring(#Players:GetPlayers()), inline = true },
                 })
             end
         end
@@ -8256,6 +8397,77 @@ do
             task.wait(1)
         end
     end)
+end
+
+-------------------------------------------------------------------------------
+-- Support helper: copies what the boss menu looks like so the difficulty picker
+-- (Normal / Hard / Nightmare) can be matched to the game exactly.
+-------------------------------------------------------------------------------
+do
+    Tabs.Misc:CreateButton({
+        Name = "Copy Boss Menu Info",
+        Description = "Open the boss menu, pick Nightmare by hand, then press this and send the text",
+        Callback = function()
+            local out = { "BossMode setting: " .. tostring(Config.BossMode) }
+            local frame = FindBossMenuFrame()
+            if not frame then
+                out[#out + 1] = "Boss menu frame not found (open the boss menu first)"
+            else
+                out[#out + 1] = "Frame: " .. frame:GetFullName() .. " | Visible=" .. tostring(frame.Visible)
+                local count = 0
+                for _, d in ipairs(frame:GetDescendants()) do
+                    if count >= 140 then
+                        out[#out + 1] = "... (more items not listed)"
+                        break
+                    end
+                    local line
+                    if d:IsA("GuiButton") then
+                        line = string.format("[Button] %s | text=%q | vis=%s | bg=%s",
+                            d.Name, GetButtonLabelText(d), tostring(d.Visible), tostring(d.BackgroundColor3))
+                    elseif d:IsA("TextLabel") then
+                        line = string.format("[Label] %s | text=%q | vis=%s", d.Name, d.Text, tostring(d.Visible))
+                    elseif d:IsA("UIStroke") then
+                        line = string.format("[Stroke] on %s | color=%s | thick=%s | enabled=%s",
+                            d.Parent and d.Parent.Name or "?", tostring(d.Color), tostring(d.Thickness), tostring(d.Enabled))
+                    end
+                    if line then
+                        local attrs = {}
+                        for k, v in pairs(d:GetAttributes()) do
+                            attrs[#attrs + 1] = k .. "=" .. tostring(v)
+                        end
+                        if #attrs > 0 then
+                            line = line .. " | attrs: " .. table.concat(attrs, ", ")
+                        end
+                        out[#out + 1] = line
+                        count = count + 1
+                    end
+                end
+            end
+            local remotes = {}
+            for _, folder in ipairs({ Events, ReplicatedStorage:FindFirstChild("Remotes") }) do
+                if folder then
+                    for _, r in ipairs(folder:GetChildren()) do
+                        if (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) and string.find(string.lower(r.Name), "boss", 1, true) then
+                            remotes[#remotes + 1] = r.ClassName .. ":" .. r.Name
+                        end
+                    end
+                end
+            end
+            out[#out + 1] = "Boss remotes: " .. (#remotes > 0 and table.concat(remotes, ", ") or "none")
+
+            local dump = table.concat(out, "\n")
+            if #dump > 7000 then
+                dump = string.sub(dump, 1, 7000)
+            end
+            local copied = type(setclipboard) == "function" and pcall(setclipboard, dump)
+            Library:Notify({
+                Title = "Boss menu",
+                Content = copied and "Copied. Paste it into the chat." or "Could not copy to the clipboard.",
+                Type = copied and "success" or "error",
+                Duration = 4,
+            })
+        end
+    })
 end
 
 Window:SelectTab(Tabs.Main)
