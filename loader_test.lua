@@ -8,6 +8,1208 @@ globalEnv.NNVN_AccessTier = "PREMIUM"
 
 print("[UZEX Hub] Key verified. Loading main script...")
 local hubVersion = "4.6.7"
+
+-- ============================================================
+-- UZEX Hub UI Preview (HTML)
+-- Dùng với executor hỗ trợ WebView, hoặc lưu ra file .html
+-- ============================================================
+local UZEX_HUB_HTML = [===[
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UZEX Hub — Heavyweight Fishing</title>
+<style>
+:root {
+  --bg: #0e0f12;
+  --sidebar: #12141a;
+  --panel: #181b22;
+  --card: #1e2129;
+  --border: rgba(255,255,255,0.07);
+  --accent: #7B6FEE;
+  --accent-dim: rgba(123,111,238,0.15);
+  --text: #f0f2f5;
+  --text2: #8a8f9e;
+  --text3: #545866;
+  --toggle-off: #2a2d38;
+  --toggle-on: #7B6FEE;
+  --radius: 8px;
+  --sidebar-w: 200px;
+  color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.hub {
+  width: 780px;
+  height: 520px;
+  background: var(--panel);
+  border-radius: 14px;
+  border: 1.5px solid #6B5FE4;
+  display: flex;
+  overflow: hidden;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(123,111,238,0.25), 0 0 30px rgba(107,95,228,0.15);
+  position: relative;
+}
+
+/* title bar */
+.titlebar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 40px;
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 10px;
+  z-index: 10;
+  user-select: none;
+}
+.titlebar-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.titlebar-dot:nth-child(1) { background: #ff5f57; }
+.titlebar-dot:nth-child(2) { background: #febc2e; }
+.titlebar-dot:nth-child(3) { background: #28c840; }
+.titlebar-title {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  letter-spacing: 0.02em;
+}
+.titlebar-version {
+  font-size: 11px;
+  color: var(--text3);
+}
+
+/* sidebar */
+.sidebar {
+  width: var(--sidebar-w);
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+  padding-top: 48px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.sidebar::-webkit-scrollbar { display: none; }
+.sidebar-hub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+.hub-icon {
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #1a1240, #2b1f8a);
+  border: 1px solid rgba(107,95,228,0.4);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+}
+.hub-name { font-size: 13px; font-weight: 600; }
+.hub-sub { font-size: 10px; color: var(--text3); }
+.sidebar-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text3);
+  padding: 6px 14px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 14px;
+  cursor: pointer;
+  border-radius: 0;
+  transition: background 0.15s;
+  position: relative;
+  font-size: 13px;
+  color: var(--text2);
+}
+.tab:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+.tab.active {
+  background: rgba(123,111,238,0.12);
+  color: #c8c0f5;
+}
+.tab.active::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, #6B5FE4, #5B8FFF);
+  border-radius: 0 2px 2px 0;
+}
+.tab-icon { font-size: 15px; width: 16px; text-align: center; }
+
+/* content */
+.content {
+  flex: 1;
+  padding-top: 40px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.content-inner {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--card) transparent;
+}
+.content-inner::-webkit-scrollbar { width: 4px; }
+.content-inner::-webkit-scrollbar-track { background: transparent; }
+.content-inner::-webkit-scrollbar-thumb { background: var(--card); border-radius: 4px; }
+.search-bar {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-bar input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--text);
+  flex: 1;
+}
+.search-bar input::placeholder { color: var(--text3); }
+.search-icon { color: var(--text3); font-size: 14px; }
+
+/* sections */
+.section {
+  background: var(--card);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+.section-header:hover { background: rgba(255,255,255,0.02); }
+.section-icon { font-size: 14px; color: #9b92f5; }
+.section-title { font-size: 13px; font-weight: 600; flex: 1; }
+.section-arrow { font-size: 11px; color: var(--text3); transition: transform 0.2s; }
+.section.collapsed .section-arrow { transform: rotate(-90deg); }
+.section.collapsed .section-body { display: none; }
+.section-body { padding: 4px 0; }
+
+/* controls */
+.control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 13px;
+  transition: background 0.12s;
+}
+.control:hover { background: rgba(255,255,255,0.025); }
+.control-info { flex: 1; min-width: 0; }
+.control-label { font-size: 13px; font-weight: 500; }
+.control-desc { font-size: 11px; color: var(--text3); margin-top: 1px; }
+
+/* toggle */
+.toggle {
+  width: 34px; height: 18px;
+  border-radius: 9px;
+  background: var(--toggle-off);
+  border: 1px solid rgba(255,255,255,0.08);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+.toggle.on { background: linear-gradient(135deg, #6B5FE4, #5B8FFF); border-color: transparent; }
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s cubic-bezier(.4,0,.2,1);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+.toggle.on::after { transform: translateX(16px); }
+
+/* slider */
+.slider-wrap { display: flex; align-items: center; gap: 8px; }
+.slider-track {
+  flex: 1; height: 3px;
+  background: var(--toggle-off);
+  border-radius: 2px;
+  position: relative;
+}
+.slider-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #6B5FE4, #5B8FFF);
+}
+.slider-thumb {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  cursor: pointer;
+}
+.slider-val { font-size: 12px; color: var(--text2); min-width: 28px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* dropdown */
+.dropdown {
+  background: var(--sidebar);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  min-width: 110px;
+  transition: border-color 0.15s;
+}
+.dropdown:hover { border-color: rgba(107,95,228,0.5); }
+.dropdown-arrow { color: var(--text3); font-size: 10px; margin-left: auto; }
+
+/* button */
+.btn {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.btn:hover { background: rgba(107,95,228,0.15); border-color: rgba(107,95,228,0.45); color: #c8c0f5; }
+.btn.primary { background: linear-gradient(135deg, #6B5FE4, #5B8FFF); border-color: transparent; color: #fff; font-weight: 500; }
+.btn.primary:hover { background: linear-gradient(135deg, #7d72f0, #6b9eff); }
+
+/* input field */
+.input-field {
+  background: var(--sidebar);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  color: var(--text);
+  outline: none;
+  min-width: 130px;
+  transition: border-color 0.15s;
+}
+.input-field:focus { border-color: rgba(107,95,228,0.6); }
+.input-field::placeholder { color: var(--text3); }
+
+/* status bar */
+.statusbar {
+  height: 26px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--text3);
+}
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #28c840;
+  box-shadow: 0 0 6px rgba(40,200,64,0.5);
+}
+.status-badge {
+  background: rgba(107,95,228,0.18);
+  color: #c8c0f5;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid rgba(107,95,228,0.3);
+}
+
+/* tab switch animation */
+.panel { display: none; }
+.panel.active { display: block; }
+</style>
+</head>
+<body>
+<div class="hub">
+  <!-- title bar -->
+  <div class="titlebar">
+    <div class="titlebar-dot"></div>
+    <div class="titlebar-dot"></div>
+    <div class="titlebar-dot"></div>
+    <span class="titlebar-title">UZEX Hub</span>
+    <span class="titlebar-version">v4.6.7</span>
+  </div>
+
+  <!-- sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-hub">
+      <div class="hub-icon" style="background:none;border:none;width:32px;height:32px;overflow:visible;">
+        <svg width="32" height="32" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="uglow" cx="50%" cy="60%" r="55%">
+              <stop offset="0%" stop-color="#2a1d5c"/>
+              <stop offset="100%" stop-color="#0a0a0f"/>
+            </radialGradient>
+            <linearGradient id="ufill" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#e8e2ff"/>
+              <stop offset="100%" stop-color="#b8b0f0"/>
+            </linearGradient>
+          </defs>
+          <rect width="100" height="100" rx="22" fill="url(#uglow)"/>
+          <rect width="100" height="100" rx="22" fill="none" stroke="url(#ufill)" stroke-width="3" opacity="0.6"/>
+          <path d="M28 18 L28 58 Q28 80 50 80 Q72 80 72 58 L72 18 L60 18 L60 57 Q60 68 50 68 Q40 68 40 57 L40 18 Z" fill="url(#ufill)" filter="url(#glow)"/>
+          <line x1="42" y1="26" x2="58" y2="40" stroke="#6B9EE8" stroke-width="5" stroke-linecap="round"/>
+          <line x1="58" y1="26" x2="42" y2="40" stroke="#6B9EE8" stroke-width="5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div>
+        <div class="hub-name">UZEX Hub</div>
+        <div class="hub-sub">Heavyweight Fishing</div>
+      </div>
+    </div>
+
+    <div class="sidebar-label">Main</div>
+    <div class="tab active" onclick="switchTab('fishing', this)">
+      <span class="tab-icon">🐟</span> Fishing
+    </div>
+    <div class="tab" onclick="switchTab('boss', this)">
+      <span class="tab-icon">⚔️</span> Boss
+    </div>
+    <div class="tab" onclick="switchTab('quest', this)">
+      <span class="tab-icon">📋</span> Quest
+    </div>
+    <div class="tab" onclick="switchTab('sell', this)">
+      <span class="tab-icon">🪙</span> Sell
+    </div>
+    <div class="tab" onclick="switchTab('teleport', this)">
+      <span class="tab-icon">📍</span> Teleport
+    </div>
+    <div class="sidebar-label">Tools</div>
+    <div class="tab" onclick="switchTab('visual', this)">
+      <span class="tab-icon">👁️</span> Visual
+    </div>
+    <div class="tab" onclick="switchTab('weather', this)">
+      <span class="tab-icon">☁️</span> Weather
+    </div>
+    <div class="tab" onclick="switchTab('bait', this)">
+      <span class="tab-icon">🪱</span> Bait
+    </div>
+    <div class="tab" onclick="switchTab('extra', this)">
+      <span class="tab-icon">✨</span> Extra
+    </div>
+    <div class="sidebar-label">System</div>
+    <div class="tab" onclick="switchTab('settings', this)">
+      <span class="tab-icon">⚙️</span> Settings
+    </div>
+  </div>
+
+  <!-- content -->
+  <div class="content">
+    <div class="search-bar">
+      <span class="search-icon">🔍</span>
+      <input type="text" placeholder="Search features...">
+    </div>
+
+    <div class="content-inner">
+
+      <!-- FISHING TAB -->
+      <div class="panel active" id="panel-fishing">
+
+        <!-- Safety Controls -->
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🛡️</span>
+            <span class="section-title">Safety Controls</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Enable Safety Mode</div>
+                <div class="control-desc">Limits remote spam. Recommended.</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Remote Min Interval</div>
+                <div class="control-desc">Seconds between protected remotes</div>
+              </div>
+              <div class="slider-wrap" style="width:130px">
+                <div class="slider-track">
+                  <div class="slider-fill" style="width:50%"></div>
+                  <div class="slider-thumb" style="left:50%"></div>
+                </div>
+                <span class="slider-val">0.75</span>
+              </div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Tween Start Delay</div>
+                <div class="control-desc">Pause between tween trips</div>
+              </div>
+              <div class="slider-wrap" style="width:130px">
+                <div class="slider-track">
+                  <div class="slider-fill" style="width:20%"></div>
+                  <div class="slider-thumb" style="left:20%"></div>
+                </div>
+                <span class="slider-val">0.20</span>
+              </div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Block Duplicate Tween</div>
+                <div class="control-desc">Skip repeated movement to same spot</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fishing -->
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🐟</span>
+            <span class="section-title">Fishing</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Operation Method</div>
+              </div>
+              <div class="dropdown">Tween [Safe] <span class="dropdown-arrow">▾</span></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Tween Speed</div>
+              </div>
+              <div class="slider-wrap" style="width:130px">
+                <div class="slider-track">
+                  <div class="slider-fill" style="width:60%"></div>
+                  <div class="slider-thumb" style="left:60%"></div>
+                </div>
+                <span class="slider-val">60</span>
+              </div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Cast Rod</div>
+                <div class="control-desc">Automatically cast fishing rod</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Cast Delay</div>
+              </div>
+              <div class="slider-wrap" style="width:130px">
+                <div class="slider-track">
+                  <div class="slider-fill" style="width:10%"></div>
+                  <div class="slider-thumb" style="left:10%"></div>
+                </div>
+                <span class="slider-val">0.5</span>
+              </div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Anchor Bar</div>
+                <div class="control-desc">Hold balance bar steady</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Use Skills</div>
+                <div class="control-desc">Activate skills automatically</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Skills Method</div>
+              </div>
+              <div class="dropdown">Sequential <span class="dropdown-arrow">▾</span></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Sky Farm</div>
+                <div class="control-desc">Farm from elevated position</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Configuration -->
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">⚙️</span>
+            <span class="section-title">Configuration</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Position Name</div>
+              </div>
+              <input class="input-field" placeholder="Type position name...">
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Create Position</div>
+              </div>
+              <div class="btn">Save Current</div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Select Position</div>
+              </div>
+              <div class="dropdown">None <span class="dropdown-arrow">▾</span></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Teleport Mode</div>
+              </div>
+              <div class="dropdown">Tween [Safe] <span class="dropdown-arrow">▾</span></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Position Lock</div>
+                <div class="control-desc">Stay at saved position</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Auto Equip -->
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">📦</span>
+            <span class="section-title">Auto Equip</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Equip Best Bait</div>
+                <div class="control-desc">By luck stat</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Equip Rod</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Equip Best Orb</div>
+                <div class="control-desc">By stats</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Equip Best Rod Now</div></div>
+              <div class="btn">Run</div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Equip Best Orb Now</div></div>
+              <div class="btn">Run</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- end fishing -->
+
+      <!-- BOSS TAB -->
+      <div class="panel" id="panel-boss">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">⚔️</span>
+            <span class="section-title">Enzo</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Fight Enzo</div>
+                <div class="control-desc">Automatically fight Enzo boss</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Start Enzo Fight Now</div></div>
+              <div class="btn primary">Start</div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Phase 2</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Hop &amp; Fight Enzo</div>
+                <div class="control-desc">Server hop to find Enzo</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">⚔️</span>
+            <span class="section-title">Long Diao Hai</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Start Fight Now</div></div>
+              <div class="btn primary">Start</div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Fight Long Diao Hai</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Phase 2</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🐛</span>
+            <span class="section-title">Nameless Octoparasite</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Teleport to Boss</div></div>
+              <div class="btn">Teleport</div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Minigame Mode</div>
+              </div>
+              <div class="dropdown">Safe Band <span class="dropdown-arrow">▾</span></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Minigame</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Boss ESP</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- QUEST TAB -->
+      <div class="panel" id="panel-quest">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🎫</span>
+            <span class="section-title">Auto Ticket Quest</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Farm Mode</div>
+              </div>
+              <div class="dropdown">Tween [Safe] <span class="dropdown-arrow">▾</span></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Accept Delay</div>
+              </div>
+              <div class="slider-wrap" style="width:130px">
+                <div class="slider-track">
+                  <div class="slider-fill" style="width:30%"></div>
+                  <div class="slider-thumb" style="left:30%"></div>
+                </div>
+                <span class="slider-val">1.5</span>
+              </div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Start Auto Ticket</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Accept Quest</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Turn In Quest</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">📅</span>
+            <span class="section-title">Auto Claim Daily Reward</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Claim Daily</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">✨</span>
+            <span class="section-title">God Spirit</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Check God Status</div>
+                <div class="control-desc">Monitor god spirit automatically</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SELL TAB -->
+      <div class="panel" id="panel-sell">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🛍️</span>
+            <span class="section-title">Auto Sell Fish</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Sell</div>
+                <div class="control-desc">Sell fish automatically when inventory full</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TELEPORT TAB -->
+      <div class="panel" id="panel-teleport">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🗺️</span>
+            <span class="section-title">Island Teleport</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Select Island</div>
+              </div>
+              <div class="dropdown">Starter Island <span class="dropdown-arrow">▾</span></div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Teleport Now</div></div>
+              <div class="btn primary">Go</div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">👤</span>
+            <span class="section-title">Player Teleport</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Teleport to Player</div></div>
+              <div class="btn">Select Player</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- VISUAL TAB -->
+      <div class="panel" id="panel-visual">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">👁️</span>
+            <span class="section-title">ESP Objects</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Player ESP</div></div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Fish ESP</div></div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🎭</span>
+            <span class="section-title">Avatar Visuals</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Full Bright</div></div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">No Fog</div></div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Hide Game UI</div></div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WEATHER TAB -->
+      <div class="panel" id="panel-weather">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🌤️</span>
+            <span class="section-title">Weather Info</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Current Weather</div></div>
+              <div style="font-size:12px;color:#9b92f5">Sunny</div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">📍</span>
+            <span class="section-title">Weather Farm</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Auto Farm Weather Event</div></div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BAIT TAB -->
+      <div class="panel" id="panel-bait">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🪱</span>
+            <span class="section-title">Buy Bait</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Select Bait</div></div>
+              <div class="dropdown">Basic Worm <span class="dropdown-arrow">▾</span></div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Buy Bait</div></div>
+              <div class="btn primary">Buy</div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">⚒️</span>
+            <span class="section-title">Craft Bait</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info"><div class="control-label">Select Recipe</div></div>
+              <div class="dropdown">None <span class="dropdown-arrow">▾</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- EXTRA TAB -->
+      <div class="panel" id="panel-extra">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">✨</span>
+            <span class="section-title">Extra Utilities</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Anti AFK</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">WalkSpeed</div>
+              </div>
+              <div class="slider-wrap" style="width:130px">
+                <div class="slider-track">
+                  <div class="slider-fill" style="width:25%"></div>
+                  <div class="slider-thumb" style="left:25%"></div>
+                </div>
+                <span class="slider-val">16</span>
+              </div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">No Clip</div>
+                <div class="control-desc">Walk through walls</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETTINGS TAB -->
+      <div class="panel" id="panel-settings">
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🌐</span>
+            <span class="section-title">Language</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Select Language</div>
+                <div class="control-desc">Runtime only. Default: English.</div>
+              </div>
+              <div class="dropdown">English <span class="dropdown-arrow">▾</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">🖥️</span>
+            <span class="section-title">Display</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Show Watermark</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Accent Color</div>
+                <div class="control-desc">Hex color for highlights</div>
+              </div>
+              <input class="input-field" value="#568CFF" style="width:100px">
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Background Asset</div>
+              </div>
+              <input class="input-field" placeholder="rbxassetid://...">
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Background Transparency</div>
+              </div>
+              <div class="slider-wrap" style="width:130px">
+                <div class="slider-track">
+                  <div class="slider-fill" style="width:72%"></div>
+                  <div class="slider-thumb" style="left:72%"></div>
+                </div>
+                <span class="slider-val">0.72</span>
+              </div>
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Clear Background</div></div>
+              <div class="btn">Clear</div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <div class="section-header" onclick="toggleSection(this)">
+            <span class="section-icon">💾</span>
+            <span class="section-title">Config</span>
+            <span class="section-arrow">▾</span>
+          </div>
+          <div class="section-body">
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Config Name</div>
+              </div>
+              <input class="input-field" placeholder="Type config name...">
+            </div>
+            <div class="control">
+              <div class="control-info"><div class="control-label">Create Config</div></div>
+              <div class="btn">Create</div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Load Config</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="control">
+              <div class="control-info">
+                <div class="control-label">Auto Save Config</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- end content-inner -->
+
+    <!-- status bar -->
+    <div class="statusbar">
+      <div class="status-dot"></div>
+      <span>Connected · PlaceId 98502499119821</span>
+      <span class="status-badge">PREMIUM</span>
+      <span style="margin-left:auto;color:var(--accent)">UZEX</span>
+    </div>
+  </div>
+</div>
+
+<script>
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const panel = document.getElementById('panel-' + name);
+  if (panel) panel.classList.add('active');
+}
+function toggleSection(header) {
+  header.parentElement.classList.toggle('collapsed');
+}
+
+const searchInput = document.querySelector('.search-bar input');
+searchInput.addEventListener('input', function() {
+  const q = this.value.toLowerCase().trim();
+  document.querySelectorAll('.control').forEach(c => {
+    const label = c.querySelector('.control-label');
+    const desc = c.querySelector('.control-desc');
+    const text = ((label ? label.textContent : '') + ' ' + (desc ? desc.textContent : '')).toLowerCase();
+    c.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+  document.querySelectorAll('.section').forEach(s => {
+    const visible = Array.from(s.querySelectorAll('.control')).some(c => c.style.display !== 'none');
+    s.style.display = (!q || visible) ? '' : 'none';
+  });
+  if (q) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.add('active'));
+  } else {
+    const active = document.querySelector('.tab.active');
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    if (active) {
+      const name = active.querySelector('span:last-child')?.textContent.toLowerCase().replace(/\s+/g, '');
+      const id = 'panel-' + ['fishing','boss','quest','sell','teleport','visual','weather','bait','extra','settings'].find(n => n.startsWith(name?.[0]||'f'));
+      document.getElementById(id)?.classList.add('active');
+    }
+  }
+});
+
+document.querySelectorAll('.slider-track').forEach(track => {
+  const fill = track.querySelector('.slider-fill');
+  const thumb = track.querySelector('.slider-thumb');
+  const val = track.parentElement.querySelector('.slider-val');
+  let dragging = false;
+  function update(e) {
+    const rect = track.getBoundingClientRect();
+    let pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    fill.style.width = (pct * 100) + '%';
+    thumb.style.left = (pct * 100) + '%';
+    if (val) {
+      const cur = parseFloat(val.textContent);
+      if (cur < 2) val.textContent = (pct * 1).toFixed(2);
+      else val.textContent = Math.round(pct * 100);
+    }
+  }
+  track.addEventListener('mousedown', e => { dragging = true; update(e); });
+  document.addEventListener('mousemove', e => { if (dragging) update(e); });
+  document.addEventListener('mouseup', () => { dragging = false; });
+});
+</script>
+</body>
+</html>
+
+]===]
+
+-- Để lưu HTML ra file (nếu executor hỗ trợ writefile):
+-- writefile("UZEX_Hub_UI.html", UZEX_HUB_HTML)
+-- Để copy vào clipboard:
+-- setclipboard(UZEX_HUB_HTML)
+-- ============================================================
+
 if _G.SCRIPT_LOADED and getgenv().NNVN_Loaded == true then
     warn("[UZEX Hub] Already loaded — skip re-exec")
     return
@@ -826,7 +2028,7 @@ end
 
 local function applyWindowScheme()
     if type(item2.Scheme) == "table" then
-        local colorFromHexResult = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(86, 140, 255))
+        local colorFromHexResult = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(123, 111, 238))
         item2.Scheme.BackgroundColor = Color3.fromRGB(16, 17, 20)
         item2.Scheme.MainColor = Color3.fromRGB(27, 29, 34)
         item2.Scheme.AccentColor = colorFromHexResult
@@ -4353,7 +5555,7 @@ local Window = item2:CreateWindow({
     SideBarWidth = isAllowed2 and (isMatched and 56 or 156) or 220,
     SidebarWidth = isAllowed2 and (isMatched and 56 or 156) or 220,
     MinSidebarWidth = isAllowed2 and 132 or 220,
-    Accent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(86, 140, 255)),
+    Accent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(123, 111, 238)),
     BackgroundColor = Color3.fromRGB(16, 17, 20),
     Acrylic = false,
     Transparent = true,
@@ -15495,13 +16697,13 @@ do
     DisplaySection:AddInput("NNVN_AccentColorHex", {
         Title = "Accent Color",
         Description = "Hex color for highlights and effects. Default: #568CFF.",
-        Placeholder = "#568CFF",
-        Default = tostring(getgenv().NNVN_AccentColorHex or "#568CFF"),
+        Placeholder = "#7B6FEE",
+        Default = tostring(getgenv().NNVN_AccentColorHex or "#7B6FEE"),
         Finished = true,
         Callback = function(selectedValue)
-            local selectedValueText = tostring(selectedValue or "#568CFF")
+            local selectedValueText = tostring(selectedValue or "#7B6FEE")
             if not selectedValueText:match("^#?[%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F]$") then
-                selectedValueText = "#568CFF"
+                selectedValueText = "#7B6FEE"
             elseif selectedValueText:sub(1, 1) ~= "#" then
                 selectedValueText = "#" .. selectedValueText
             end
