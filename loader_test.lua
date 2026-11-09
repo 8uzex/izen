@@ -1,5 +1,3 @@
--- UZEX Hub - Neon Glass integrated visual refresh
--- Existing feature logic and callbacks are retained; only window palette/layout styling is adjusted.
 local globalEnv = (getgenv and getgenv()) or _G
 _G.NNVN_IsPremium = true
 _G.SCRIPT_IsPremium = true
@@ -401,12 +399,15 @@ local function resolveGetService(inputValue)
         Author = "By N0NAMEVN · PVP Lite",
         Icon = UZEX_LOGO_ASSET,
         Folder = "NNVN_Hub_PVP_Lite",
-        Size = UDim2.fromOffset(420, 380),
-        MinSize = Vector2.new(350, 300),
-        MaxSize = Vector2.new(560, 480),
+        Size = UDim2.fromOffset(760, 490),
+        MinSize = Vector2.new(560, 390),
+        MaxSize = Vector2.new(900, 620),
         Transparent = true,
-        Theme = "Dark",
-        SideBarWidth = 160,
+        Acrylic = true,
+        Theme = "Midnight",
+        SideBarWidth = 190,
+        CornerRadius = 18,
+        Font = Enum.Font.Gotham,
         HideSearchBar = true,
         ScrollBarEnabled = false,
         User = { Enabled = true, Anonymous = true }
@@ -420,7 +421,7 @@ local function resolveGetService(inputValue)
             Icon = UZEX_LOGO_ASSET,
             CornerRadius = UDim.new(0, 10),
             StrokeThickness = 1.5,
-            Color = ColorSequence.new(Color3.fromRGB(111, 54, 224), Color3.fromRGB(198, 160, 255)),
+            Color = ColorSequence.new(Color3.fromRGB(76, 39, 125), Color3.fromRGB(177, 111, 255)),
             OnlyMobile = false,
             Enabled = true,
             Draggable = true
@@ -832,16 +833,15 @@ end
 
 local function applyWindowScheme()
     if type(item2.Scheme) == "table" then
-        -- UZEX Neon Glass palette: deep violet surfaces with restrained neon accents.
-        local requestedAccent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(157, 83, 255))
-        item2.Scheme.BackgroundColor = Color3.fromRGB(9, 7, 19)
-        item2.Scheme.MainColor = Color3.fromRGB(20, 14, 40)
+        -- UZEX Neon Glass palette.
+        local requestedAccent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(166, 107, 255))
+        item2.Scheme.BackgroundColor = Color3.fromRGB(13, 9, 24)
+        item2.Scheme.MainColor = Color3.fromRGB(27, 19, 44)
         item2.Scheme.AccentColor = requestedAccent
-        item2.Scheme.OutlineColor = Color3.fromRGB(83, 53, 132)
-        item2.Scheme.FontColor = Color3.fromRGB(246, 241, 255)
-        item2.Scheme.DarkColor = Color3.fromRGB(6, 4, 14)
+        item2.Scheme.OutlineColor = Color3.fromRGB(105, 69, 153)
+        item2.Scheme.FontColor = Color3.fromRGB(245, 238, 255)
+        item2.Scheme.DarkColor = Color3.fromRGB(8, 5, 16)
         item2.Scheme.WhiteColor = Color3.fromRGB(255, 255, 255)
-        -- Keep the interface abstract: no character/background artwork by default.
         item2.Scheme.BackgroundImage = getgenv().NNVN_BackgroundImage or ""
     end
     if type(item2.UpdateColors) == "function" then
@@ -4348,6 +4348,24 @@ pcall(function()
         item2:SetDPIScale(100)
     end
 end)
+
+-- Apply the Neon Glass palette before creating the replacement window.
+pcall(function()
+    if type(item2.Scheme) == "table" then
+        item2.Scheme.BackgroundColor = Color3.fromRGB(13, 9, 24)
+        item2.Scheme.MainColor = Color3.fromRGB(27, 19, 44)
+        item2.Scheme.AccentColor = Color3.fromRGB(166, 107, 255)
+        item2.Scheme.OutlineColor = Color3.fromRGB(105, 69, 153)
+        item2.Scheme.FontColor = Color3.fromRGB(245, 238, 255)
+        item2.Scheme.DarkColor = Color3.fromRGB(8, 5, 16)
+        item2.Scheme.WhiteColor = Color3.fromRGB(255, 255, 255)
+        item2.Scheme.BackgroundImage = getgenv().NNVN_BackgroundImage or ""
+    end
+    if type(item2.UpdateColors) == "function" then
+        item2:UpdateColors()
+    end
+end)
+
 local Window = item2:CreateWindow({
     Title = uiStrings.win_title,
     Author = uiStrings.win_sub,
@@ -4355,23 +4373,23 @@ local Window = item2:CreateWindow({
     Folder = "NNVN_Hub",
     Footer = resolveUnknown(),
     CopyableFooter = true,
-    Size = isAllowed2 and UDim2.fromOffset(maxResult, maxResult2) or UDim2.fromOffset(860, 600),
-    MinSize = isAllowed2 and Vector2.new(500, 360) or Vector2.new(620, 420),
-    MaxSize = isAllowed2 and Vector2.new(760, 560) or Vector2.new(1080, 760),
-    SideBarWidth = isAllowed2 and (isMatched and 56 or 156) or 184,
-    SidebarWidth = isAllowed2 and (isMatched and 56 or 156) or 184,
-    MinSidebarWidth = isAllowed2 and 132 or 184,
-    Accent = Color3.fromRGB(157, 83, 255),
-    BackgroundColor = Color3.fromRGB(9, 7, 19),
-    Acrylic = false,
+    Size = isAllowed2 and UDim2.fromOffset(maxResult, maxResult2) or UDim2.fromOffset(960, 650),
+    MinSize = isAllowed2 and Vector2.new(500, 360) or Vector2.new(700, 500),
+    MaxSize = isAllowed2 and Vector2.new(760, 560) or Vector2.new(1180, 820),
+    SideBarWidth = isAllowed2 and (isMatched and 56 or 170) or 204,
+    SidebarWidth = isAllowed2 and (isMatched and 56 or 170) or 204,
+    MinSidebarWidth = isAllowed2 and 132 or 190,
+    Accent = Color3.fromRGB(166, 107, 255),
+    BackgroundColor = Color3.fromRGB(13, 9, 24),
+    Acrylic = true,
     Transparent = true,
-    Theme = "Dark",
+    Theme = "Midnight",
     BackgroundImage = getgenv().NNVN_BackgroundImage or "",
-    BackgroundImageTransparency = tonumber(getgenv().NNVN_BackgroundTransparency) or 1,
+    BackgroundImageTransparency = tonumber(getgenv().NNVN_BackgroundTransparency) or 0.72,
     BackgroundImageScaleType = Enum.ScaleType.Crop,
     HideSearchBar = false,
     ScrollBarEnabled = true,
-    ToggleKey = Enum.KeyCode.K,
+    ToggleKey = Enum.KeyCode.RightShift,
     ShowCustomCursor = false,
     Minimizable = true,
     MinimizedWidth = 300,
@@ -4386,7 +4404,7 @@ local Window = item2:CreateWindow({
     DisableCompactingSnap = false,
     MobileOptimized = true,
     CornerRadius = 18,
-    Font = Enum.Font.GothamMedium,
+    Font = Enum.Font.Gotham,
     User = { Enabled = true, Anonymous = false }
 })
 if not Window then
@@ -4406,7 +4424,7 @@ do
         Icon = UZEX_LOGO_ASSET,
         CornerRadius = UDim.new(0, 16),
         StrokeThickness = 2,
-        Color = ColorSequence.new(Color3.fromRGB(111, 54, 224), Color3.fromRGB(198, 160, 255)),
+        Color = ColorSequence.new(Color3.fromRGB(76, 39, 125), Color3.fromRGB(177, 111, 255)),
         OnlyMobile = false,
         Enabled = true,
         Draggable = true
@@ -4546,10 +4564,10 @@ do
             return
         end
         getgenv()._NNVN_GlassApplied = true
-        local delaySeconds = 0.28
-        local delaySeconds2 = 0.18
-        local delaySeconds3 = 0.22
-        local delaySeconds4 = 0.28
+        local delaySeconds = 0.72
+        local delaySeconds2 = 0.64
+        local delaySeconds3 = 0.76
+        local delaySeconds4 = 0.55
         isHubGui = function(instance)
             if not instance then
                 return false
@@ -4596,7 +4614,6 @@ do
         end
     end
     getgenv().NNVN_WindUIGlassLoop = true
-    pcall(applyWindUIGlassStyle)
     patchContainer(Window)
     if not Window.AddTab and Window.Tab then
         Window.AddTab = function(inputValue, secondValue)
@@ -4614,8 +4631,8 @@ do
             return selectTab(inputValue, secondValue)
         end
     end
-    -- New compact navigation. Legacy feature keys below are aliases to these
-    -- seven pages so the existing feature callbacks and controls remain wired.
+    -- Neon Glass navigation replacement. Legacy feature keys below are aliases
+    -- to these seven pages so existing controls remain connected.
     local homeTab = Window:AddTab({ Title = "Home", Icon = "house", Order = 1 })
     local autoFarmTab = Window:AddTab({ Title = "Auto Farm", Icon = "fish", Order = 2 })
     local bossTab = Window:AddTab({ Title = "Boss", Icon = "crown", Order = 3 })
@@ -15481,14 +15498,14 @@ do
     DisplaySection = patchContainer(SettingsTab:Section({ Title = "Display", Icon = "monitor", Opened = true }))
     DisplaySection:AddInput("NNVN_AccentColorHex", {
         Title = "Accent Color",
-        Description = "Hex color for highlights and effects. Default: #568CFF.",
-        Placeholder = "#568CFF",
-        Default = tostring(getgenv().NNVN_AccentColorHex or "#568CFF"),
+        Description = "Hex color for highlights and effects. Default: #A66BFF.",
+        Placeholder = "#A66BFF",
+        Default = tostring(getgenv().NNVN_AccentColorHex or "#A66BFF"),
         Finished = true,
         Callback = function(selectedValue)
-            local selectedValueText = tostring(selectedValue or "#568CFF")
+            local selectedValueText = tostring(selectedValue or "#A66BFF")
             if not selectedValueText:match("^#?[%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F]$") then
-                selectedValueText = "#568CFF"
+                selectedValueText = "#A66BFF"
             elseif selectedValueText:sub(1, 1) ~= "#" then
                 selectedValueText = "#" .. selectedValueText
             end
