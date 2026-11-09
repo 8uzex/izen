@@ -6,18 +6,22 @@ globalEnv.SCRIPT_IsPremium = true
 globalEnv.NNVN_IsPremiumAccess = true
 globalEnv.NNVN_AccessTier = "PREMIUM"
 
-print("[NNVN Hub by n0namevnek] Key verified. Loading main script...")
+print("[UZEX Hub by n0namevnek] Key verified. Loading main script...")
 local hubVersion = "4.6.7"
 if _G.SCRIPT_LOADED and getgenv().NNVN_Loaded == true then
-    warn("[NNVN Hub] Already loaded — skip re-exec")
+    warn("[UZEX Hub] Already loaded — skip re-exec")
     return
 end
 _G.SCRIPT_LOADED = true
 getgenv().NNVN_Loaded = false
+-- UZEX Hub logo: upload the supplied PNG to Roblox and set this to its image asset ID.
+-- Example: getgenv().UZEX_LOGO_ASSET = "rbxassetid://1234567890"
+local UZEX_LOGO_ASSET = tostring(getgenv().UZEX_LOGO_ASSET or "rbxassetid://84938944799548")
+
 local targetPlaceId = 98502499119821
 local targetPlaceId2 = 98502499119821
 if game.PlaceId ~= targetPlaceId then
-    warn("[NNVN Hub] Wrong game PlaceId=" .. tostring(game.PlaceId) .. " — expected " .. tostring(targetPlaceId))
+    warn("[UZEX Hub] Wrong game PlaceId=" .. tostring(game.PlaceId) .. " — expected " .. tostring(targetPlaceId))
     return
 end
 local isAllowed = not (function()
@@ -45,9 +49,9 @@ if not isAllowed then
         loadstring(game:HttpGet("https://raw.soteria.rip/972faf0b538cea2defc1f63af3d7eaca"))()
     end)
     if not ok then
-        warn("[NNVN Hub] Failed to load external PVP script: " .. tostring(result))
+        warn("[UZEX Hub] Failed to load external PVP script: " .. tostring(result))
     else
-        print("[NNVN Hub] External PVP script loaded · PlaceId=" .. tostring(game.PlaceId) .. " · PVP=true")
+        print("[UZEX Hub] External PVP script loaded · PlaceId=" .. tostring(game.PlaceId) .. " · PVP=true")
     end
     return
 end
@@ -387,13 +391,13 @@ local function resolveGetService(inputValue)
         item = loadstring(ultraObsidianSource)()
     end)
     if not item then
-        warn("[NNVN Hub] PVP Lite: WindUI failed")
+        warn("[UZEX Hub] PVP Lite: WindUI failed")
         return
     end
     local Window = item:CreateWindow({
-        Title = "NNVN Hub",
+        Title = "UZEX Hub",
         Author = "By N0NAMEVN · PVP Lite",
-        Icon = "rbxassetid://138952058031836",
+        Icon = UZEX_LOGO_ASSET,
         Folder = "NNVN_Hub_PVP_Lite",
         Size = UDim2.fromOffset(420, 380),
         MinSize = Vector2.new(350, 300),
@@ -411,7 +415,7 @@ local function resolveGetService(inputValue)
     pcall(function()
         Window:EditOpenButton({
             Title = "Open Menu",
-            Icon = "rbxassetid://138952058031836",
+            Icon = UZEX_LOGO_ASSET,
             CornerRadius = UDim.new(0, 10),
             StrokeThickness = 1.5,
             Color = ColorSequence.new(Color3.fromHex("0A1128"), Color3.fromHex("1E90FF")),
@@ -522,12 +526,12 @@ local function resolveGetService(inputValue)
     end)
     pcall(function()
         item:Notify({
-            Title = "NNVN Hub · PVP Lite",
+            Title = "UZEX Hub · PVP Lite",
             Description = "PVP server detected — only PVP tools loaded",
             Time = 4
         })
     end)
-    print("[NNVN Hub] PVP Lite loaded · PlaceId=" .. tostring(game.PlaceId))
+    print("[UZEX Hub] PVP Lite loaded · PlaceId=" .. tostring(game.PlaceId))
 end
 
 getgenv().NNVN_Loaded = false
@@ -797,7 +801,7 @@ pcall(function()
     item = loadstring(ultraObsidianSource)()
 end)
 if not item then
-    warn("[NNVN Hub] Failed to load WindUI")
+    warn("[UZEX Hub] Failed to load WindUI")
     return
 end
 local item2 = item
@@ -1148,7 +1152,7 @@ if playerGui then
     item3 = playerGui:FindFirstChild("MainGui") or playerGui:WaitForChild("MainGui", 15)
 end
 if not item3 then
-    warn("[NNVN Hub] MainGui not found within 15s — waiting for it in background")
+    warn("[UZEX Hub] MainGui not found within 15s — waiting for it in background")
     task.spawn(function()
         local playerGui = LocalPlayer:WaitForChild("PlayerGui", 60)
         if not playerGui then
@@ -1218,7 +1222,7 @@ local weatherLookup = {
 }
 getgenv().NNVN_LastTrackerReportKeys = getgenv().NNVN_LastTrackerReportKeys or {}
 local uiStrings = {
-    win_title = "NNVN Hub",
+    win_title = "UZEX Hub",
     win_sub = "By N0NAMEVN | Heavyweight Fishing v" .. hubVersion,
     tab_fishing = "Main",
     tab_boss = "Boss",
@@ -1516,7 +1520,7 @@ local languageDict = {
         ["Native config unavailable; legacy config storage is active (manual save only)."] = "Config native không khả dụng; đang dùng lưu legacy (chỉ lưu thủ công).",
         ["WindUI-V2 ConfigManager"] = "WindUI-V2 ConfigManager",
         ["Match place detected — only PVP tools loaded"] = "Phát hiện map trận — chỉ tải công cụ PVP",
-        ["NNVN Hub · PVP Lite"] = "NNVN Hub · PVP Lite",
+        ["UZEX Hub · PVP Lite"] = "UZEX Hub · PVP Lite",
         Tween = "Tween",
         Instant = "Tức thì",
         ["Tween Speed"] = "Tốc độ Tween",
@@ -4328,7 +4332,7 @@ local function resolveUnknown()
         defaultStatus = tostring(getCurrentIslandName() or "Unknown")
     end)
     return {
-        { Text = "NNVN Hub", Copyable = false },
+        { Text = "UZEX Hub", Copyable = false },
         { Text = "|", Copyable = false },
         { Text = "Heavyweight Fishing", Copyable = false },
         { Text = "|", Copyable = false },
@@ -4346,7 +4350,7 @@ end)
 local Window = item2:CreateWindow({
     Title = uiStrings.win_title,
     Author = uiStrings.win_sub,
-    Icon = "rbxassetid://138952058031836",
+    Icon = UZEX_LOGO_ASSET,
     Folder = "NNVN_Hub",
     Footer = resolveUnknown(),
     CopyableFooter = true,
@@ -4385,7 +4389,7 @@ local Window = item2:CreateWindow({
     User = { Enabled = true, Anonymous = false }
 })
 if not Window then
-    warn("[NNVN Hub] UltraObsidian window failed to initialize")
+    warn("[UZEX Hub] UltraObsidian window failed to initialize")
     return
 end
 local mainMap
@@ -4397,8 +4401,8 @@ do
         end
     end)
     Window:EditOpenButton({
-        Title = "NNVN Hub",
-        Icon = "rbxassetid://138952058031836",
+        Title = "UZEX Hub",
+        Icon = UZEX_LOGO_ASSET,
         CornerRadius = UDim.new(0, 16),
         StrokeThickness = 2,
         Color = ColorSequence.new(Color3.fromHex("0A1128"), Color3.fromHex("4B0082")),
@@ -4476,7 +4480,7 @@ do
             {
                 Icon = "fish",
                 Text = function()
-                    return "NNVN Hub · Heavyweight Fishing " .. tostring(hubVersion)
+                    return "UZEX Hub · Heavyweight Fishing " .. tostring(hubVersion)
                 end,
                 Accent = true
             },
@@ -4513,27 +4517,20 @@ do
         itemList[#itemList + 1] = { Icon = "badge-check", Text = resolveIsPremium }
         return itemList
     end
-    local item15
-    if item2.AddWatermark then
-        item15 = item2:AddWatermark(resolveIcon())
-        pcall(function()
-            local uiScale = item15 and item15.Holder and item15.Holder:FindFirstChildOfClass("UIScale")
-            if uiScale then
-                uiScale.Scale = 0.88
-            end
-        end)
-    end
+    -- Watermark/status strip removed as requested (the circled floating bar).
+    -- Keep a compatibility setter so older config callbacks cannot break.
+    local item15 = nil
     NNVN_SetWatermarkVisible = function(inputValue)
-        getgenv().NNVN_Watermark = inputValue == true
+        getgenv().NNVN_Watermark = false
         pcall(function()
             if item15 and item15.SetVisible then
-                item15:SetVisible(inputValue == true)
+                item15:SetVisible(false)
             elseif item15 and item15.Holder then
-                item15.Holder.Visible = inputValue == true
+                item15.Holder.Visible = false
             end
         end)
     end
-    NNVN_SetWatermarkVisible(getgenv().NNVN_Watermark)
+    NNVN_SetWatermarkVisible(false)
     task.spawn(function()
         while task.wait(1) do
             if Window and Window.SetFooter then
@@ -8708,7 +8705,7 @@ do
             maxPlayers = Players.MaxPlayers,
             ping = getWeatherReporterPing(),
             island = type(getCurrentIslandName) == "function" and getCurrentIslandName() or "Unknown",
-            source = "NNVN Hub client"
+            source = "UZEX Hub client"
         }
     end
     postHeavyweightTracker = function(inputValue, secondValue, thirdValue)
@@ -9352,11 +9349,11 @@ do
             inline = false
         })
         table.insert(stateMap, { name = "How to use", value = "`Tab Teleport → Job ID`", inline = false })
-        local nnvnHubTrackerPremiumLabel = whIsPremiumResult and "NNVN Hub Tracker ⭐ PREMIUM" or "NNVN Hub Tracker"
-        local nnvnHubPremiumByLabel = whIsPremiumResult and "NNVN Hub Premium • By N0NAMEVN" or "NNVN Hub • By N0NAMEVN"
+        local nnvnHubTrackerPremiumLabel = whIsPremiumResult and "UZEX Hub Tracker ⭐ PREMIUM" or "UZEX Hub Tracker"
+        local nnvnHubPremiumByLabel = whIsPremiumResult and "UZEX Hub Premium • By N0NAMEVN" or "UZEX Hub • By N0NAMEVN"
         local description = secondValue.description or ""
         if whIsPremiumResult then
-            description = description .. "\n\n⭐ *Reported by a Premium NNVN Hub client — priority signal.*"
+            description = description .. "\n\n⭐ *Reported by a Premium UZEX Hub client — priority signal.*"
         end
         local whHttpPostWith = whHttpPostWithFallback(urlsEntry3, urlsEntry22, {
             username = nnvnHubTrackerPremiumLabel,
@@ -14113,14 +14110,6 @@ do
             getgenv().NNVN_Notify = enabled
         end
     })
-    utilSec:AddToggle("NNVN_Watermark", {
-        Title = "Show Watermark",
-        Description = "Shows or hides the hub status watermark.",
-        Default = getgenv().NNVN_Watermark == true,
-        Callback = function(enabled)
-            NNVN_SetWatermarkVisible(enabled == true)
-        end
-    })
     local item40
     utilSec:AddToggle("NNVN_BlankPlayerId", {
         Title = "Hide Player ID",
@@ -14864,13 +14853,13 @@ do
     ServerHop = {}
     ServerHop.Teleport = function(inputValue, secondValue)
         if not canAutoServerHop() then
-            warn("[NNVN Hub] Server hop blocked — not armed / boot lock / config apply")
+            warn("[UZEX Hub] Server hop blocked — not armed / boot lock / config apply")
             return false
         end
         local hasTriggered = false
         while not hasTriggered do
             if not canAutoServerHop() then
-                warn("[NNVN Hub] Server hop aborted mid-loop — disarmed")
+                warn("[UZEX Hub] Server hop aborted mid-loop — disarmed")
                 return false
             end
             pcall(function()
@@ -14883,7 +14872,7 @@ do
     end
     ServerHop.TeleportManual = function(inputValue, secondValue)
         if getgenv().NNVN_IsApplyingConfig or getgenv().NNVN_HopBootLocked then
-            warn("[NNVN Hub] Manual hop blocked during boot/config")
+            warn("[UZEX Hub] Manual hop blocked during boot/config")
             return false
         end
         local allowAutomaticServerHop = getgenv().NNVN_AllowAutomaticServerHop
@@ -15310,19 +15299,19 @@ do
     })
     DISCORD_INVITE = "https://discord.gg/5JJAuHRUgJ"
     DISCORD_CODE = "5JJAuHRUgJ"
-    infoSec = mainMap.Main:AddSection({ Title = "NNVN Hub", Icon = "home" })
+    infoSec = mainMap.Main:AddSection({ Title = "UZEX Hub", Icon = "home" })
     hubRuntimeStatus = infoSec:AddParagraph({ Title = "Status", Content = "Loading hub info..." })
     discordStatus = infoSec:AddParagraph({ Title = "Discord", Content = "Loading invite info..." })
     infoSec:AddParagraph({
         Title = "Update Log",
-        Content = "NNVN Hub v" .. hubVersion .. "\n• Restore Methods" .. "\n• Arrival Gating" .. "\n• Quest Guard" .. "\n• Sky Lock Fix" .. "\n• Executor Check" .. "\n• Mobile UI" .. "\n• Midnight Theme" .. "\n• Image Background" .. "\n• Auto Cast Delay" .. "\n• Safety Controls" .. "\n• Remote Spam Guard" .. "\n• One-Time NPC Check" .. "\n• Hard Sky Farm"
+        Content = "UZEX Hub v" .. hubVersion .. "\n• Restore Methods" .. "\n• Arrival Gating" .. "\n• Quest Guard" .. "\n• Sky Lock Fix" .. "\n• Executor Check" .. "\n• Mobile UI" .. "\n• Midnight Theme" .. "\n• Image Background" .. "\n• Auto Cast Delay" .. "\n• Safety Controls" .. "\n• Remote Spam Guard" .. "\n• One-Time NPC Check" .. "\n• Hard Sky Farm"
     })
     if infoSec.AddDiscordBox then
         infoSec:AddDiscordBox("NNVN_DiscordBox", {
-            Title = "NNVN Hub",
+            Title = "UZEX Hub",
             Subtitle = "Join Discord for updates and support",
-            Banner = "rbxassetid://138952058031836",
-            Avatar = "rbxassetid://138952058031836",
+            Banner = UZEX_LOGO_ASSET,
+            Avatar = UZEX_LOGO_ASSET,
             Status = "online",
             Accent = Color3.fromRGB(88, 101, 242),
             Link = DISCORD_INVITE,
@@ -15405,7 +15394,7 @@ do
         end
     end
     UpdateHubRuntimeInfo = function()
-        hubRuntimeStatus:SetDesc(string.format("NNVN Hub v%s\nIsland: %s\nWeather: %s\nEssence Orbs: %s", tostring(hubVersion), getCurrentIslandName(), getCurrentWeather(), tostring(getgenv().NNVN_MainEssenceOrbValue or checkAttribute4("EssenceOrb"))))
+        hubRuntimeStatus:SetDesc(string.format("UZEX Hub v%s\nIsland: %s\nWeather: %s\nEssence Orbs: %s", tostring(hubVersion), getCurrentIslandName(), getCurrentWeather(), tostring(getgenv().NNVN_MainEssenceOrbValue or checkAttribute4("EssenceOrb"))))
     end
     UpdateDiscordInfo = function()
         task.spawn(function()
@@ -15488,14 +15477,6 @@ do
         end
     })
     DisplaySection = patchContainer(SettingsTab:Section({ Title = "Display", Icon = "monitor", Opened = true }))
-    DisplaySection:AddToggle("NNVN_WatermarkSettings", {
-        Title = "Show Watermark",
-        Description = "Shows or hides the hub status watermark.",
-        Default = getgenv().NNVN_Watermark == true,
-        Callback = function(inputText)
-            NNVN_SetWatermarkVisible(inputText == true)
-        end
-    })
     DisplaySection:AddInput("NNVN_AccentColorHex", {
         Title = "Accent Color",
         Description = "Hex color for highlights and effects. Default: #568CFF.",
@@ -15793,7 +15774,7 @@ do
         getgenv().NNVN_AntiStaff = false
         getgenv().NNVN_IsApplyingConfig = false
         if not ok then
-            warn("[NNVN Hub] applySavedConfig error: " .. tostring(result))
+            warn("[UZEX Hub] applySavedConfig error: " .. tostring(result))
             return false
         end
         return true
@@ -17657,7 +17638,7 @@ do
     Window:SelectTab(1)
     if getgenv().NNVN_Notify then
         item:Notify({
-            Title = "🎣 NNVN Hub v" .. hubVersion .. " [UltraObsidian]",
+            Title = "🎣 UZEX Hub v" .. hubVersion .. " [UltraObsidian]",
             Content = uiStrings.loaded .. "\ndiscord.gg/5JJAuHRUgJ\nUltraObsidian loaded",
             Duration = 3
         })
