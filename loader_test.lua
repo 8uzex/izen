@@ -1,3 +1,5 @@
+-- UZEX Hub - Neon Glass integrated visual refresh
+-- Existing feature logic and callbacks are retained; only window palette/layout styling is adjusted.
 local globalEnv = (getgenv and getgenv()) or _G
 _G.NNVN_IsPremium = true
 _G.SCRIPT_IsPremium = true
@@ -418,7 +420,7 @@ local function resolveGetService(inputValue)
             Icon = UZEX_LOGO_ASSET,
             CornerRadius = UDim.new(0, 10),
             StrokeThickness = 1.5,
-            Color = ColorSequence.new(Color3.fromHex("0A1128"), Color3.fromHex("1E90FF")),
+            Color = ColorSequence.new(Color3.fromRGB(111, 54, 224), Color3.fromRGB(198, 160, 255)),
             OnlyMobile = false,
             Enabled = true,
             Draggable = true
@@ -830,17 +832,16 @@ end
 
 local function applyWindowScheme()
     if type(item2.Scheme) == "table" then
-        -- NNVN monochrome theme: custom accent values are converted to grayscale.
-        local requestedAccent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(235, 235, 235))
-        local gray = math.floor(((requestedAccent.R + requestedAccent.G + requestedAccent.B) / 3) * 255 + 0.5)
-        local monochromeAccent = Color3.fromRGB(gray, gray, gray)
-        item2.Scheme.BackgroundColor = Color3.fromRGB(8, 8, 8)
-        item2.Scheme.MainColor = Color3.fromRGB(23, 23, 23)
-        item2.Scheme.AccentColor = monochromeAccent
-        item2.Scheme.OutlineColor = Color3.fromRGB(67, 67, 67)
-        item2.Scheme.FontColor = Color3.fromRGB(245, 245, 245)
-        item2.Scheme.DarkColor = Color3.fromRGB(4, 4, 4)
+        -- UZEX Neon Glass palette: deep violet surfaces with restrained neon accents.
+        local requestedAccent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(157, 83, 255))
+        item2.Scheme.BackgroundColor = Color3.fromRGB(9, 7, 19)
+        item2.Scheme.MainColor = Color3.fromRGB(20, 14, 40)
+        item2.Scheme.AccentColor = requestedAccent
+        item2.Scheme.OutlineColor = Color3.fromRGB(83, 53, 132)
+        item2.Scheme.FontColor = Color3.fromRGB(246, 241, 255)
+        item2.Scheme.DarkColor = Color3.fromRGB(6, 4, 14)
         item2.Scheme.WhiteColor = Color3.fromRGB(255, 255, 255)
+        -- Keep the interface abstract: no character/background artwork by default.
         item2.Scheme.BackgroundImage = getgenv().NNVN_BackgroundImage or ""
     end
     if type(item2.UpdateColors) == "function" then
@@ -4360,13 +4361,13 @@ local Window = item2:CreateWindow({
     SideBarWidth = isAllowed2 and (isMatched and 56 or 156) or 184,
     SidebarWidth = isAllowed2 and (isMatched and 56 or 156) or 184,
     MinSidebarWidth = isAllowed2 and 132 or 184,
-    Accent = Color3.fromRGB(235, 235, 235),
-    BackgroundColor = Color3.fromRGB(8, 8, 8),
+    Accent = Color3.fromRGB(157, 83, 255),
+    BackgroundColor = Color3.fromRGB(9, 7, 19),
     Acrylic = false,
     Transparent = true,
     Theme = "Dark",
     BackgroundImage = getgenv().NNVN_BackgroundImage or "",
-    BackgroundImageTransparency = tonumber(getgenv().NNVN_BackgroundTransparency) or 0.72,
+    BackgroundImageTransparency = tonumber(getgenv().NNVN_BackgroundTransparency) or 1,
     BackgroundImageScaleType = Enum.ScaleType.Crop,
     HideSearchBar = false,
     ScrollBarEnabled = true,
@@ -4384,8 +4385,8 @@ local Window = item2:CreateWindow({
     EnableCompacting = true,
     DisableCompactingSnap = false,
     MobileOptimized = true,
-    CornerRadius = 12,
-    Font = Enum.Font.Gotham,
+    CornerRadius = 18,
+    Font = Enum.Font.GothamMedium,
     User = { Enabled = true, Anonymous = false }
 })
 if not Window then
@@ -4405,7 +4406,7 @@ do
         Icon = UZEX_LOGO_ASSET,
         CornerRadius = UDim.new(0, 16),
         StrokeThickness = 2,
-        Color = ColorSequence.new(Color3.fromHex("0A1128"), Color3.fromHex("4B0082")),
+        Color = ColorSequence.new(Color3.fromRGB(111, 54, 224), Color3.fromRGB(198, 160, 255)),
         OnlyMobile = false,
         Enabled = true,
         Draggable = true
@@ -4545,10 +4546,10 @@ do
             return
         end
         getgenv()._NNVN_GlassApplied = true
-        local delaySeconds = 0.72
-        local delaySeconds2 = 0.64
-        local delaySeconds3 = 0.76
-        local delaySeconds4 = 0.55
+        local delaySeconds = 0.28
+        local delaySeconds2 = 0.18
+        local delaySeconds3 = 0.22
+        local delaySeconds4 = 0.28
         isHubGui = function(instance)
             if not instance then
                 return false
@@ -4595,6 +4596,7 @@ do
         end
     end
     getgenv().NNVN_WindUIGlassLoop = true
+    pcall(applyWindUIGlassStyle)
     patchContainer(Window)
     if not Window.AddTab and Window.Tab then
         Window.AddTab = function(inputValue, secondValue)
