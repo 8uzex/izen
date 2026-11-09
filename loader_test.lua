@@ -826,14 +826,14 @@ end
 
 local function applyWindowScheme()
     if type(item2.Scheme) == "table" then
-        -- Monochrome black/white UI palette. Custom accent input is converted to grayscale.
+        -- NNVN monochrome theme: custom accent values are converted to grayscale.
         local requestedAccent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(235, 235, 235))
-        local grayAccent = math.floor(((requestedAccent.R + requestedAccent.G + requestedAccent.B) / 3) * 255 + 0.5)
-        local colorFromHexResult = Color3.fromRGB(grayAccent, grayAccent, grayAccent)
+        local gray = math.floor(((requestedAccent.R + requestedAccent.G + requestedAccent.B) / 3) * 255 + 0.5)
+        local monochromeAccent = Color3.fromRGB(gray, gray, gray)
         item2.Scheme.BackgroundColor = Color3.fromRGB(8, 8, 8)
-        item2.Scheme.MainColor = Color3.fromRGB(24, 24, 24)
-        item2.Scheme.AccentColor = colorFromHexResult
-        item2.Scheme.OutlineColor = Color3.fromRGB(64, 64, 64)
+        item2.Scheme.MainColor = Color3.fromRGB(23, 23, 23)
+        item2.Scheme.AccentColor = monochromeAccent
+        item2.Scheme.OutlineColor = Color3.fromRGB(67, 67, 67)
         item2.Scheme.FontColor = Color3.fromRGB(245, 245, 245)
         item2.Scheme.DarkColor = Color3.fromRGB(4, 4, 4)
         item2.Scheme.WhiteColor = Color3.fromRGB(255, 255, 255)
@@ -4350,16 +4350,12 @@ local Window = item2:CreateWindow({
     Folder = "NNVN_Hub",
     Footer = resolveUnknown(),
     CopyableFooter = true,
-    -- Compact, responsive layout: smaller footprint and safer sizing on phones.
-    Size = isAllowed2 and UDim2.fromOffset(
-        math.max(320, math.min(maxResult, viewportSize.X - 24)),
-        math.max(280, math.min(maxResult2, viewportSize.Y - 24))
-    ) or UDim2.fromOffset(700, 480),
-    MinSize = isAllowed2 and Vector2.new(320, 280) or Vector2.new(520, 320),
-    MaxSize = isAllowed2 and Vector2.new(600, 480) or Vector2.new(820, 600),
-    SideBarWidth = isAllowed2 and (isMatched and 52 or 136) or 176,
-    SidebarWidth = isAllowed2 and (isMatched and 52 or 136) or 176,
-    MinSidebarWidth = isAllowed2 and 52 or 150,
+    Size = isAllowed2 and UDim2.fromOffset(maxResult, maxResult2) or UDim2.fromOffset(860, 600),
+    MinSize = isAllowed2 and Vector2.new(500, 360) or Vector2.new(620, 420),
+    MaxSize = isAllowed2 and Vector2.new(760, 560) or Vector2.new(1080, 760),
+    SideBarWidth = isAllowed2 and (isMatched and 56 or 156) or 184,
+    SidebarWidth = isAllowed2 and (isMatched and 56 or 156) or 184,
+    MinSidebarWidth = isAllowed2 and 132 or 184,
     Accent = Color3.fromRGB(235, 235, 235),
     BackgroundColor = Color3.fromRGB(8, 8, 8),
     Acrylic = false,
@@ -4376,15 +4372,15 @@ local Window = item2:CreateWindow({
     MinimizedWidth = 300,
     ShowMobileButtons = true,
     UnlockMouseWhileOpen = not isAllowed2,
-    Resizable = false,
-    EnableSidebarResize = false,
+    Resizable = true,
+    EnableSidebarResize = true,
     SidebarCompactWidth = 48,
     CompactWidthActivation = 128,
     SidebarCompacted = isAllowed2 and isMatched,
     EnableCompacting = true,
     DisableCompactingSnap = false,
     MobileOptimized = true,
-    CornerRadius = 10,
+    CornerRadius = 12,
     Font = Enum.Font.Gotham,
     User = { Enabled = true, Anonymous = false }
 })
@@ -4619,38 +4615,39 @@ do
             return selectTab(inputValue, secondValue)
         end
     end
+    -- New compact navigation. Legacy feature keys below are aliases to these
+    -- seven pages so the existing feature callbacks and controls remain wired.
+    local homeTab = Window:AddTab({ Title = "Home", Icon = "house", Order = 1 })
+    local autoFarmTab = Window:AddTab({ Title = "Auto Farm", Icon = "fish", Order = 2 })
+    local bossTab = Window:AddTab({ Title = "Boss", Icon = "crown", Order = 3 })
+    local teleportTab = Window:AddTab({ Title = "Teleports", Icon = "map-pin", Order = 4 })
+    local toolsTab = Window:AddTab({ Title = "Tools & Tasks", Icon = "layers", Order = 5 })
+    local settingsTab = Window:AddTab({ Title = "Settings", Icon = "settings", Order = 6 })
+    local webhookTab = Window:AddTab({ Title = "Webhook", Icon = "webhook", Order = 7 })
+
     mainMap = {
-        Main = Window:AddTab({ Title = "Home", Icon = "house", Order = 1 }),
-        Fishing = Window:AddTab({ Title = uiStrings.tab_fishing, Icon = "fish" }),
-        Boss = Window:AddTab({ Title = uiStrings.tab_boss, Icon = "swords" }),
-        Quest = Window:AddTab({ Title = uiStrings.tab_quest, Icon = "clipboard-list" }),
-        Sell = Window:AddTab({ Title = "Sell", Icon = "coins" }),
-        Weather = Window:AddTab({ Title = "Weather", Icon = "cloud-sun" }),
-        Teleport = Window:AddTab({ Title = uiStrings.tab_tp, Icon = "map-pin" }),
-        BuyRod = Window:AddTab({ Title = "Rod", Icon = "shopping-cart" }),
-        Learn = Window:AddTab({ Title = "Learn Skill", Icon = "book-open" }),
-        Bait = Window:AddTab({ Title = uiStrings.tab_bait, Icon = "worm" }),
-        Visual = Window:AddTab({ Title = "Visual", Icon = "eye" }),
-        Hop = Window:AddTab({ Title = "Server Hop", Icon = "server" }),
-        Webhook = Window:AddTab({ Title = "Webhook", Icon = "webhook" }),
-        Extra = Window:AddTab({ Title = uiStrings.tab_extra, Icon = "sparkles" }),
-        Settings = Window:AddTab({ Title = uiStrings.tab_settings, Icon = "settings" })
+        Main = homeTab,
+        Fishing = autoFarmTab,
+        Boss = bossTab,
+        Quest = toolsTab,
+        Sell = toolsTab,
+        Weather = toolsTab,
+        Teleport = teleportTab,
+        BuyRod = toolsTab,
+        Learn = toolsTab,
+        Bait = toolsTab,
+        Visual = settingsTab,
+        Hop = toolsTab,
+        Webhook = webhookTab,
+        Extra = settingsTab,
+        Settings = settingsTab
     }
-    patchContainer(mainMap.Main)
-    patchContainer(mainMap.Fishing)
-    patchContainer(mainMap.Boss)
-    patchContainer(mainMap.Quest)
-    patchContainer(mainMap.Sell)
-    patchContainer(mainMap.Weather)
-    patchContainer(mainMap.Teleport)
-    patchContainer(mainMap.BuyRod)
-    patchContainer(mainMap.Learn)
-    patchContainer(mainMap.Bait)
-    patchContainer(mainMap.Visual)
-    patchContainer(mainMap.Hop)
-    patchContainer(mainMap.Extra)
-    patchContainer(mainMap.Settings)
-    patchContainer(mainMap.Webhook)
+
+    -- Patch each physical page once; all old feature groups now render inside
+    -- their new parent page rather than creating the old 15-tab sidebar.
+    for _, page in ipairs({ homeTab, autoFarmTab, bossTab, teleportTab, toolsTab, settingsTab, webhookTab }) do
+        patchContainer(page)
+    end
     local item16
     local item17
     local item18
@@ -15500,15 +15497,15 @@ do
         end
     })
     DisplaySection:AddInput("NNVN_AccentColorHex", {
-        Title = "Accent Color (Grayscale)",
-        Description = "Màu nhấn sẽ luôn được chuyển thành sắc độ xám để giữ giao diện đen-trắng.",
-        Placeholder = "#FFFFFF",
-        Default = tostring(getgenv().NNVN_AccentColorHex or "#FFFFFF"),
+        Title = "Accent Color",
+        Description = "Hex color for highlights and effects. Default: #568CFF.",
+        Placeholder = "#568CFF",
+        Default = tostring(getgenv().NNVN_AccentColorHex or "#568CFF"),
         Finished = true,
         Callback = function(selectedValue)
-            local selectedValueText = tostring(selectedValue or "#FFFFFF")
+            local selectedValueText = tostring(selectedValue or "#568CFF")
             if not selectedValueText:match("^#?[%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F]$") then
-                selectedValueText = "#FFFFFF"
+                selectedValueText = "#568CFF"
             elseif selectedValueText:sub(1, 1) ~= "#" then
                 selectedValueText = "#" .. selectedValueText
             end
