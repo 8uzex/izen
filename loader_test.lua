@@ -7,6 +7,481 @@ globalEnv.NNVN_IsPremiumAccess = true
 globalEnv.NNVN_AccessTier = "PREMIUM"
 
 print("[UZEX Hub by n0namevnek] Key verified. Loading main script...")
+-- ===== UzexUI (UI mới, thay UltraObsidian) =====
+getgenv()._NNVN_UltraObsidianSource = [==[
+-- UzexUI: UI nhẹ, mượt, đóng/mở nhanh. API tương thích kiểu WindUI/UltraObsidian.
+local TS, UIS = game:GetService("TweenService"), game:GetService("UserInputService")
+local C = {
+	bg = Color3.fromRGB(14, 16, 22), side = Color3.fromRGB(18, 21, 29), card = Color3.fromRGB(24, 28, 38),
+	line = Color3.fromRGB(38, 44, 58), txt = Color3.fromRGB(230, 234, 242), sub = Color3.fromRGB(139, 150, 168),
+	acc = Color3.fromRGB(30, 144, 255)
+}
+local FAST = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local OPEN = TweenInfo.new(0.13, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local function noop() end
+local Stub = { __index = function(_, k) if type(k) == "string" and k:sub(1, 2) == "__" then return nil end return noop end }
+local function mk(cls, props, parent)
+	local o = Instance.new(cls)
+	for k, v in pairs(props) do o[k] = v end
+	o.Parent = parent
+	return o
+end
+local function tw(o, p, i) TS:Create(o, i or FAST, p):Play() end
+local function corner(o, r) mk("UICorner", { CornerRadius = UDim.new(0, r or 8) }, o) end
+local function safe(f, ...) if type(f) == "function" then local ok, e = pcall(f, ...) if not ok then warn("[UzexUI] " .. tostring(e)) end end end
+local function cfg(a, b)
+	if type(a) == "table" then return a end
+	local t = type(b) == "table" and b or {}
+	if type(b) == "function" then t = { Callback = b } end
+	if t.Title == nil and a ~= nil then t.Title = a end
+	return t
+end
+local function parentGui()
+	local ok, g = pcall(function() return gethui and gethui() end)
+	if ok and g then return g end
+	return game:GetService("CoreGui")
+end
+local function lbl(p, t, w)
+	return mk("TextLabel", { BackgroundTransparency = 1, Text = tostring(t or ""), Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = C.txt,
+		TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+		Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -(w or 60), 1, 0) }, p)
+end
+local function isPress(i) return i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch end
+local function isMove(i) return i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch end
+
+local Lib = setmetatable({}, Stub)
+local E = {}
+local container
+
+local function row(self, h)
+	local r = mk("Frame", { Size = UDim2.new(1, 0, 0, h or 36), BackgroundColor3 = C.card, BorderSizePixel = 0 }, self._c)
+	corner(r)
+	return r
+end
+
+function E.Toggle(self, a, b)
+	local o = cfg(a, b)
+	local r = row(self)
+	lbl(r, o.Title, 60)
+	local sw = mk("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(34, 19), BackgroundColor3 = C.line, BorderSizePixel = 0 }, r)
+	corner(sw, 10)
+	local kn = mk("Frame", { Position = UDim2.fromOffset(3, 3), Size = UDim2.fromOffset(13, 13), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0 }, sw)
+	corner(kn, 7)
+	local v, dis = false, false
+	if o.Default ~= nil then v = o.Default and true or false elseif o.Value ~= nil then v = o.Value and true or false end
+	local obj = setmetatable({ Value = v }, Stub)
+	local function paint()
+		tw(sw, { BackgroundColor3 = v and C.acc or C.line })
+		tw(kn, { Position = v and UDim2.fromOffset(18, 3) or UDim2.fromOffset(3, 3) })
+	end
+	function obj:Set(x, silent) v = x and true or false self.Value = v paint() if not silent then safe(o.Callback, v) end end
+	obj.SetValue = obj.Set
+	function obj:GetValue() return v end
+	function obj:SetDisabled(d) dis = d and true or false tw(r, { BackgroundTransparency = dis and 0.5 or 0 }) end
+	function obj:SetTitle(t) r:FindFirstChildOfClass("TextLabel").Text = tostring(t) end
+	function obj:Destroy() r:Destroy() end
+	local bt = mk("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "" }, r)
+	bt.Activated:Connect(function() if not dis then obj:Set(not v) end end)
+	paint()
+	return obj
+end
+
+function E.Button(self, a, b)
+	local o = cfg(a, b)
+	local r = row(self)
+	r.BackgroundColor3 = C.acc
+	local bt = mk("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = tostring(o.Title or "Button"), Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = Color3.new(1, 1, 1) }, r)
+	local obj, dis = setmetatable({}, Stub), false
+	bt.Activated:Connect(function()
+		if dis then return end
+		tw(r, { BackgroundColor3 = Color3.fromRGB(20, 110, 205) }, TweenInfo.new(0.06))
+		task.delay(0.08, function() tw(r, { BackgroundColor3 = C.acc }) end)
+		safe(o.Callback)
+	end)
+	function obj:SetDisabled(d) dis = d and true or false tw(r, { BackgroundTransparency = dis and 0.5 or 0 }) end
+	function obj:SetTitle(t) bt.Text = tostring(t) end
+	function obj:Destroy() r:Destroy() end
+	return obj
+end
+
+function E.Slider(self, a, b)
+	local o = cfg(a, b)
+	local mn, mx, def = tonumber(o.Min) or 0, tonumber(o.Max) or 100, nil
+	if type(o.Value) == "table" then
+		mn = tonumber(o.Value.Min) or mn mx = tonumber(o.Value.Max) or mx def = o.Value.Default
+	end
+	if def == nil then def = o.Default end
+	if def == nil and type(o.Value) == "number" then def = o.Value end
+	def = tonumber(def) or mn
+	local step = tonumber(o.Step) or (o.Rounding and 10 ^ -o.Rounding) or 1
+	local r = row(self, 46)
+	local t = lbl(r, o.Title, 90) t.Size = UDim2.new(1, -90, 0, 24) t.Position = UDim2.fromOffset(12, 3)
+	local vl = mk("TextLabel", { BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Right, Position = UDim2.new(1, -78, 0, 3), Size = UDim2.new(0, 66, 0, 24) }, r)
+	local bar = mk("Frame", { Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(1, -24, 0, 5), BackgroundColor3 = C.line, BorderSizePixel = 0 }, r)
+	corner(bar, 3)
+	local fill = mk("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = C.acc, BorderSizePixel = 0 }, bar)
+	corner(fill, 3)
+	local hit = mk("TextButton", { Position = UDim2.fromOffset(0, 24), Size = UDim2.new(1, 0, 1, -24), BackgroundTransparency = 1, Text = "" }, r)
+	local v = def
+	local obj = setmetatable({ Value = v }, Stub)
+	local function show()
+		local al = mx > mn and math.clamp((v - mn) / (mx - mn), 0, 1) or 0
+		fill.Size = UDim2.fromScale(al, 1)
+		vl.Text = tostring(math.floor(v * 1000 + 0.5) / 1000)
+	end
+	local function setv(x, silent)
+		x = math.clamp(math.floor((x - mn) / step + 0.5) * step + mn, mn, mx)
+		if x == v and not silent then return end
+		v = x obj.Value = v show()
+		if not silent then safe(o.Callback, v) end
+	end
+	function obj:Set(x, silent) setv(tonumber(x) or mn, silent) end
+	obj.SetValue = obj.Set
+	function obj:GetValue() return v end
+	function obj:Destroy() r:Destroy() end
+	local drag = false
+	local function fromX(x) setv(mn + (mx - mn) * math.clamp((x - bar.AbsolutePosition.X) / math.max(bar.AbsoluteSize.X, 1), 0, 1)) end
+	hit.InputBegan:Connect(function(i) if isPress(i) then drag = true fromX(i.Position.X) end end)
+	UIS.InputChanged:Connect(function(i) if drag and isMove(i) then fromX(i.Position.X) end end)
+	UIS.InputEnded:Connect(function(i) if isPress(i) then drag = false end end)
+	show()
+	return obj
+end
+
+function E.Input(self, a, b)
+	local o = cfg(a, b)
+	local r = row(self)
+	lbl(r, o.Title, 170)
+	local tb = mk("TextBox", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(150, 24), BackgroundColor3 = C.bg, BorderSizePixel = 0,
+		Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.txt, PlaceholderColor3 = C.sub, PlaceholderText = tostring(o.Placeholder or ""),
+		Text = tostring(o.Value ~= nil and o.Value or (o.Default ~= nil and o.Default or "")), ClearTextOnFocus = false, TextTruncate = Enum.TextTruncate.AtEnd }, r)
+	corner(tb, 6)
+	local obj = setmetatable({ Value = tb.Text }, Stub)
+	tb.FocusLost:Connect(function()
+		if o.Numeric then local n = tonumber(tb.Text) if n then tb.Text = tostring(n) else tb.Text = obj.Value end end
+		obj.Value = tb.Text
+		safe(o.Callback, tb.Text)
+	end)
+	function obj:Set(x, silent) tb.Text = tostring(x) obj.Value = tb.Text if not silent then safe(o.Callback, tb.Text) end end
+	obj.SetValue = obj.Set
+	function obj:GetValue() return tb.Text end
+	function obj:Destroy() r:Destroy() end
+	return obj
+end
+
+function E.Dropdown(self, a, b)
+	local o = cfg(a, b)
+	local multi = o.Multi and true or false
+	local vals, sel, btns = {}, multi and {} or nil, {}
+	local function norm(list)
+		local t = {}
+		for _, v in ipairs(list or {}) do
+			if type(v) == "table" then v = v.Title or v.Name or v[1] end
+			t[#t + 1] = tostring(v)
+		end
+		return t
+	end
+	vals = norm(o.Values)
+	local r = mk("Frame", { Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = C.card, BorderSizePixel = 0, ClipsDescendants = true }, self._c)
+	corner(r)
+	local head = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1, Text = "" }, r)
+	lbl(head, o.Title, 170)
+	local vl = mk("TextLabel", { BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, Position = UDim2.new(1, -152, 0, 0), Size = UDim2.new(0, 140, 1, 0) }, head)
+	local list = mk("ScrollingFrame", { Position = UDim2.fromOffset(0, 36), Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 2, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new() }, r)
+	mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, list)
+	local isOpen = false
+	local obj = setmetatable({}, Stub)
+	local function result()
+		if multi then local t = {} for _, v in ipairs(vals) do if sel[v] then t[#t + 1] = v end end return t end
+		return sel
+	end
+	local function refresh()
+		local res = result()
+		vl.Text = multi and (#res > 0 and table.concat(res, ", ") or "None") or (sel ~= nil and tostring(sel) or "None")
+		for v, bt in pairs(btns) do
+			local on = multi and sel[v] or (not multi and sel == v)
+			bt.TextColor3 = on and C.acc or C.sub
+		end
+		obj.Value = res
+	end
+	local function resize()
+		local h = math.min(#vals, 6) * 28
+		list.Size = UDim2.new(1, 0, 0, h)
+		tw(r, { Size = UDim2.new(1, 0, 0, 36 + (isOpen and h + 4 or 0)) })
+	end
+	local function build()
+		for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+		btns = {}
+		for _, v in ipairs(vals) do
+			local bt = mk("TextButton", { Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 13, Text = v, TextColor3 = C.sub }, list)
+			btns[v] = bt
+			bt.Activated:Connect(function()
+				if multi then sel[v] = (not sel[v]) or nil else sel = v isOpen = false resize() end
+				refresh()
+				safe(o.Callback, result())
+			end)
+		end
+	end
+	local function setSel(x)
+		if multi then
+			sel = {}
+			if type(x) == "table" then for k, v in pairs(x) do if type(k) == "number" then sel[tostring(v)] = true elseif v then sel[tostring(k)] = true end end
+			elseif x ~= nil then sel[tostring(x)] = true end
+		else
+			if type(x) == "table" then x = x[1] end
+			sel = x ~= nil and tostring(x) or nil
+		end
+	end
+	local def = o.Default
+	if def == nil then def = o.Value end
+	setSel(def)
+	build() refresh()
+	head.Activated:Connect(function() isOpen = not isOpen resize() end)
+	function obj:Set(x, silent) setSel(x) refresh() if not silent then safe(o.Callback, result()) end end
+	obj.SetValue = obj.Set obj.Select = obj.Set
+	function obj:GetValue() return result() end
+	function obj:Refresh(newVals, keep)
+		vals = norm(newVals)
+		if not keep then
+			if multi then for k in pairs(sel) do if not table.find(vals, k) then sel[k] = nil end end
+			elseif sel ~= nil and not table.find(vals, sel) then sel = nil end
+		end
+		build() refresh() resize()
+	end
+	obj.SetValues = obj.Refresh
+	function obj:SetDisabled(d) tw(r, { BackgroundTransparency = d and 0.5 or 0 }) end
+	function obj:Destroy() r:Destroy() end
+	return obj
+end
+
+function E.Paragraph(self, a, b)
+	local o = cfg(a, b)
+	local r = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = C.card, BorderSizePixel = 0 }, self._c)
+	corner(r)
+	mk("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12) }, r)
+	mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 2) }, r)
+	local function tl(font, size, col, order)
+		return mk("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Font = font, TextSize = size, TextColor3 = col, TextWrapped = true, RichText = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = order, Text = "" }, r)
+	end
+	local t, d = tl(Enum.Font.GothamMedium, 13, C.txt, 1), tl(Enum.Font.Gotham, 12, C.sub, 2)
+	t.Text = tostring(o.Title or "")
+	local desc = o.Desc or o.Content or o.Text
+	d.Text = desc ~= nil and tostring(desc) or ""
+	d.Visible = d.Text ~= ""
+	local obj = setmetatable({}, Stub)
+	function obj:SetTitle(x) t.Text = tostring(x) end
+	function obj:SetDesc(x) d.Text = tostring(x) d.Visible = d.Text ~= "" end
+	obj.SetContent = obj.SetDesc
+	function obj:Destroy() r:Destroy() end
+	return obj
+end
+
+function E.Divider(self)
+	mk("Frame", { Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.line, BorderSizePixel = 0 }, self._c)
+	return setmetatable({}, Stub)
+end
+
+function E.Section(self, a, b)
+	local o = cfg(a, b)
+	local f = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, self._c)
+	mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6) }, f)
+	mk("TextLabel", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.sub,
+		Text = string.upper(tostring(o.Title or "")), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd }, f)
+	return container(f)
+end
+
+for _, n in ipairs({ "Toggle", "Button", "Slider", "Input", "Dropdown", "Paragraph", "Divider", "Section" }) do E["Add" .. n] = E[n] end
+E.Label = E.Paragraph E.AddLabel = E.Paragraph
+
+function container(frame)
+	local o = setmetatable({ _c = frame }, Stub)
+	for k, v in pairs(E) do o[k] = v end
+	return o
+end
+
+-- Thông báo
+local toastHolder
+function Lib:Notify(o)
+	o = type(o) == "table" and o or { Title = tostring(o) }
+	pcall(function()
+		if not toastHolder or not toastHolder.Parent then
+			local g = mk("ScreenGui", { Name = "UZX_Notify", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 1000 })
+			pcall(function() if syn and syn.protect_gui then syn.protect_gui(g) end end)
+			g.Parent = parentGui()
+			toastHolder = mk("Frame", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 12), Size = UDim2.fromOffset(250, 10), BackgroundTransparency = 1 }, g)
+			mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6), HorizontalAlignment = Enum.HorizontalAlignment.Right }, toastHolder)
+		end
+		local t = mk("CanvasGroup", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundColor3 = C.side, BorderSizePixel = 0, GroupTransparency = 1 }, toastHolder)
+		corner(t, 9) mk("UIStroke", { Color = C.line }, t)
+		mk("Frame", { Size = UDim2.new(0, 3, 1, 0), BackgroundColor3 = C.acc, BorderSizePixel = 0 }, t)
+		mk("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 14), PaddingRight = UDim.new(0, 10) }, t)
+		mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, t)
+		local function tl(txt, font, size, col, ord)
+			return mk("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Font = font, TextSize = size, TextColor3 = col, TextWrapped = true, RichText = true, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = ord, Text = txt }, t)
+		end
+		if o.Title then tl(tostring(o.Title), Enum.Font.GothamMedium, 13, C.txt, 1) end
+		local body = o.Content or o.Desc
+		if body then tl(tostring(body), Enum.Font.Gotham, 12, C.sub, 2) end
+		tw(t, { GroupTransparency = 0 })
+		task.delay(tonumber(o.Duration) or 3, function()
+			tw(t, { GroupTransparency = 1 })
+			task.delay(0.15, function() t:Destroy() end)
+		end)
+	end)
+end
+
+-- Cửa sổ
+function Lib:CreateWindow(o)
+	o = o or {}
+	local pg = parentGui()
+	local old = pg:FindFirstChild("UZX_UI")
+	if old then old:Destroy() end
+	local gui = mk("ScreenGui", { Name = "UZX_UI", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 999, ZIndexBehavior = Enum.ZIndexBehavior.Sibling })
+	pcall(function() if syn and syn.protect_gui then syn.protect_gui(gui) end end)
+	gui.Parent = pg
+	local sz = o.Size or UDim2.fromOffset(560, 380)
+	local W, H = math.clamp(sz.X.Offset, 460, 620), math.clamp(sz.Y.Offset, 320, 420)
+	local SW = math.clamp(tonumber(o.SideBarWidth) or 140, 110, 150)
+	local main = mk("CanvasGroup", { Name = "Main", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(W, H), BackgroundColor3 = C.bg, BorderSizePixel = 0 }, gui)
+	corner(main, 12) mk("UIStroke", { Color = C.line }, main)
+	local sc = mk("UIScale", {}, main)
+	local function base()
+		local cam = workspace.CurrentCamera
+		local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+		return math.min(1, vp.X * 0.94 / W, vp.Y * 0.86 / H)
+	end
+	sc.Scale = base()
+	local win = setmetatable({}, Stub)
+
+	-- thanh trên
+	local top = mk("Frame", { Size = UDim2.new(1, 0, 0, 42), BackgroundTransparency = 1 }, main)
+	local icon = tostring(o.Icon or "")
+	if icon:find("rbxassetid") then
+		mk("ImageLabel", { Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(22, 22), BackgroundTransparency = 1, Image = icon }, top)
+	else
+		local lg = mk("TextLabel", { Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = C.acc, Text = "U", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Color3.new(1, 1, 1) }, top)
+		corner(lg, 7)
+	end
+	mk("TextLabel", { Position = UDim2.fromOffset(42, 0), Size = UDim2.new(0, 120, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.txt, TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(o.Title or "UZEX Hub"), TextTruncate = Enum.TextTruncate.AtEnd }, top)
+	mk("TextLabel", { Position = UDim2.fromOffset(150, 0), Size = UDim2.new(1, -200, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(o.Author or ""), TextTruncate = Enum.TextTruncate.AtEnd }, top)
+	local xb = mk("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(28, 28), BackgroundTransparency = 1, Text = "✕", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.sub }, top)
+	corner(xb, 8)
+	mk("Frame", { Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.line, BorderSizePixel = 0 }, top)
+
+	-- kéo cửa sổ
+	do
+		local d, sm, sp
+		top.InputBegan:Connect(function(i) if isPress(i) then d = true sm = i.Position sp = main.Position end end)
+		UIS.InputChanged:Connect(function(i)
+			if d and isMove(i) then
+				local dl = i.Position - sm
+				main.Position = UDim2.new(sp.X.Scale, sp.X.Offset + dl.X, sp.Y.Scale, sp.Y.Offset + dl.Y)
+			end
+		end)
+		UIS.InputEnded:Connect(function(i) if isPress(i) then d = false end end)
+	end
+
+	local side = mk("ScrollingFrame", { Position = UDim2.fromOffset(0, 42), Size = UDim2.new(0, SW, 1, -42), BackgroundColor3 = C.side, BorderSizePixel = 0, ScrollBarThickness = 0, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new() }, main)
+	mk("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8) }, side)
+	mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 3) }, side)
+	local pages = mk("Frame", { Position = UDim2.fromOffset(SW, 42), Size = UDim2.new(1, -SW, 1, -42), BackgroundTransparency = 1 }, main)
+
+	-- tab
+	local tabs, cur = {}, 0
+	function win:SelectTab(i)
+		if type(i) == "table" then i = i.Index end
+		if type(i) ~= "number" or not tabs[i] then return end
+		for j, t in ipairs(tabs) do
+			local on = j == i
+			t.page.Visible = on
+			t.btn.BackgroundTransparency = on and 0 or 1
+			t.btn.TextColor3 = on and C.txt or C.sub
+			t.bar.Visible = on
+		end
+		cur = i
+	end
+	function win:Tab(a, b)
+		local o2 = cfg(a, b)
+		local idx = #tabs + 1
+		local btn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.card, BackgroundTransparency = 1, BorderSizePixel = 0, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = C.sub, Text = tostring(o2.Title or ("Tab " .. idx)), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = tonumber(o2.Order) or idx }, side)
+		corner(btn, 8)
+		mk("UIPadding", { PaddingLeft = UDim.new(0, 12) }, btn)
+		local bar = mk("Frame", { Position = UDim2.new(0, -12, 0.5, -8), Size = UDim2.fromOffset(3, 16), BackgroundColor3 = C.acc, BorderSizePixel = 0, Visible = false }, btn)
+		corner(bar, 2)
+		local page = mk("ScrollingFrame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.line, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new(), Visible = false }, pages)
+		mk("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 12) }, page)
+		mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6) }, page)
+		tabs[idx] = { btn = btn, bar = bar, page = page }
+		local tab = container(page)
+		tab.Index = idx
+		function tab:Select() win:SelectTab(idx) end
+		btn.Activated:Connect(function() win:SelectTab(idx) end)
+		if idx == 1 then win:SelectTab(1) end
+		return tab
+	end
+	win.AddTab = win.Tab
+
+	-- đóng/mở nhanh
+	local open, tok = true, 0
+	function win:Toggle(s)
+		if s == nil then s = not open end
+		if s == open then return end
+		open = s tok = tok + 1
+		local my, b = tok, base()
+		if s then
+			main.Visible = true sc.Scale = b * 0.95 main.GroupTransparency = 1
+			tw(main, { GroupTransparency = 0 }, OPEN) tw(sc, { Scale = b }, OPEN)
+		else
+			tw(main, { GroupTransparency = 1 }, OPEN) tw(sc, { Scale = b * 0.95 }, OPEN)
+			task.delay(0.14, function() if tok == my and not open then main.Visible = false end end)
+		end
+	end
+	function win:Open() win:Toggle(true) end
+	function win:Close() win:Toggle(false) end
+	function win:Destroy() gui:Destroy() end
+	xb.Activated:Connect(function() win:Toggle(false) end)
+
+	-- nút mở
+	local fab = mk("TextButton", { Name = "OpenButton", Position = UDim2.new(0, 14, 0.5, -23), Size = UDim2.fromOffset(46, 46), BackgroundColor3 = C.acc, Text = icon:find("rbxassetid") and "" or "U", Font = Enum.Font.GothamBold, TextSize = 17, TextColor3 = Color3.new(1, 1, 1), AutoButtonColor = false }, gui)
+	corner(fab, 14) mk("UIStroke", { Color = C.line }, fab)
+	if icon:find("rbxassetid") then mk("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(30, 30), BackgroundTransparency = 1, Image = icon }, fab) end
+	do
+		local d, moved, sm, sp = false, false
+		fab.InputBegan:Connect(function(i)
+			if isPress(i) then
+				d, moved, sm, sp = true, false, i.Position, fab.Position
+				i.Changed:Connect(function()
+					if i.UserInputState == Enum.UserInputState.End then
+						d = false
+						if not moved then win:Toggle() end
+					end
+				end)
+			end
+		end)
+		UIS.InputChanged:Connect(function(i)
+			if d and isMove(i) then
+				local dl = i.Position - sm
+				if dl.Magnitude > 6 then moved = true end
+				if moved then fab.Position = UDim2.new(sp.X.Scale, sp.X.Offset + dl.X, sp.Y.Scale, sp.Y.Offset + dl.Y) end
+			end
+		end)
+	end
+	function win:EditOpenButton(c)
+		c = c or {}
+		if c.Enabled ~= nil then fab.Visible = c.Enabled and true or false end
+	end
+
+	local key = o.ToggleKey or Enum.KeyCode.K
+	function win:SetToggleKey(k) key = k end
+	UIS.InputBegan:Connect(function(i, gp)
+		if not gp and i.UserInputType == Enum.UserInputType.Keyboard and i.KeyCode == key then win:Toggle() end
+	end)
+	return win
+end
+
+return Lib
+]==]
+-- ===== hết UzexUI =====
 local hubVersion = "4.6.7"
 if _G.SCRIPT_LOADED and getgenv().NNVN_Loaded == true then
     warn("[UZEX Hub] Already loaded — skip re-exec")
@@ -399,15 +874,12 @@ local function resolveGetService(inputValue)
         Author = "By N0NAMEVN · PVP Lite",
         Icon = UZEX_LOGO_ASSET,
         Folder = "NNVN_Hub_PVP_Lite",
-        Size = UDim2.fromOffset(760, 490),
-        MinSize = Vector2.new(560, 390),
-        MaxSize = Vector2.new(900, 620),
+        Size = UDim2.fromOffset(420, 380),
+        MinSize = Vector2.new(350, 300),
+        MaxSize = Vector2.new(560, 480),
         Transparent = true,
-        Acrylic = true,
-        Theme = "Midnight",
-        SideBarWidth = 190,
-        CornerRadius = 18,
-        Font = Enum.Font.Gotham,
+        Theme = "Dark",
+        SideBarWidth = 160,
         HideSearchBar = true,
         ScrollBarEnabled = false,
         User = { Enabled = true, Anonymous = true }
@@ -421,7 +893,7 @@ local function resolveGetService(inputValue)
             Icon = UZEX_LOGO_ASSET,
             CornerRadius = UDim.new(0, 10),
             StrokeThickness = 1.5,
-            Color = ColorSequence.new(Color3.fromRGB(76, 39, 125), Color3.fromRGB(177, 111, 255)),
+            Color = ColorSequence.new(Color3.fromHex("0A1128"), Color3.fromHex("1E90FF")),
             OnlyMobile = false,
             Enabled = true,
             Draggable = true
@@ -833,14 +1305,16 @@ end
 
 local function applyWindowScheme()
     if type(item2.Scheme) == "table" then
-        -- UZEX Neon Glass palette.
-        local requestedAccent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(166, 107, 255))
-        item2.Scheme.BackgroundColor = Color3.fromRGB(13, 9, 24)
-        item2.Scheme.MainColor = Color3.fromRGB(27, 19, 44)
-        item2.Scheme.AccentColor = requestedAccent
-        item2.Scheme.OutlineColor = Color3.fromRGB(105, 69, 153)
-        item2.Scheme.FontColor = Color3.fromRGB(245, 238, 255)
-        item2.Scheme.DarkColor = Color3.fromRGB(8, 5, 16)
+        -- NNVN monochrome theme: custom accent values are converted to grayscale.
+        local requestedAccent = NNVN_ColorFromHex(getgenv().NNVN_AccentColorHex, Color3.fromRGB(235, 235, 235))
+        local gray = math.floor(((requestedAccent.R + requestedAccent.G + requestedAccent.B) / 3) * 255 + 0.5)
+        local monochromeAccent = Color3.fromRGB(gray, gray, gray)
+        item2.Scheme.BackgroundColor = Color3.fromRGB(8, 8, 8)
+        item2.Scheme.MainColor = Color3.fromRGB(23, 23, 23)
+        item2.Scheme.AccentColor = monochromeAccent
+        item2.Scheme.OutlineColor = Color3.fromRGB(67, 67, 67)
+        item2.Scheme.FontColor = Color3.fromRGB(245, 245, 245)
+        item2.Scheme.DarkColor = Color3.fromRGB(4, 4, 4)
         item2.Scheme.WhiteColor = Color3.fromRGB(255, 255, 255)
         item2.Scheme.BackgroundImage = getgenv().NNVN_BackgroundImage or ""
     end
@@ -4348,24 +4822,6 @@ pcall(function()
         item2:SetDPIScale(100)
     end
 end)
-
--- Apply the Neon Glass palette before creating the replacement window.
-pcall(function()
-    if type(item2.Scheme) == "table" then
-        item2.Scheme.BackgroundColor = Color3.fromRGB(13, 9, 24)
-        item2.Scheme.MainColor = Color3.fromRGB(27, 19, 44)
-        item2.Scheme.AccentColor = Color3.fromRGB(166, 107, 255)
-        item2.Scheme.OutlineColor = Color3.fromRGB(105, 69, 153)
-        item2.Scheme.FontColor = Color3.fromRGB(245, 238, 255)
-        item2.Scheme.DarkColor = Color3.fromRGB(8, 5, 16)
-        item2.Scheme.WhiteColor = Color3.fromRGB(255, 255, 255)
-        item2.Scheme.BackgroundImage = getgenv().NNVN_BackgroundImage or ""
-    end
-    if type(item2.UpdateColors) == "function" then
-        item2:UpdateColors()
-    end
-end)
-
 local Window = item2:CreateWindow({
     Title = uiStrings.win_title,
     Author = uiStrings.win_sub,
@@ -4373,23 +4829,23 @@ local Window = item2:CreateWindow({
     Folder = "NNVN_Hub",
     Footer = resolveUnknown(),
     CopyableFooter = true,
-    Size = isAllowed2 and UDim2.fromOffset(maxResult, maxResult2) or UDim2.fromOffset(960, 650),
-    MinSize = isAllowed2 and Vector2.new(500, 360) or Vector2.new(700, 500),
-    MaxSize = isAllowed2 and Vector2.new(760, 560) or Vector2.new(1180, 820),
-    SideBarWidth = isAllowed2 and (isMatched and 56 or 170) or 204,
-    SidebarWidth = isAllowed2 and (isMatched and 56 or 170) or 204,
-    MinSidebarWidth = isAllowed2 and 132 or 190,
-    Accent = Color3.fromRGB(166, 107, 255),
-    BackgroundColor = Color3.fromRGB(13, 9, 24),
-    Acrylic = true,
+    Size = isAllowed2 and UDim2.fromOffset(maxResult, maxResult2) or UDim2.fromOffset(860, 600),
+    MinSize = isAllowed2 and Vector2.new(500, 360) or Vector2.new(620, 420),
+    MaxSize = isAllowed2 and Vector2.new(760, 560) or Vector2.new(1080, 760),
+    SideBarWidth = isAllowed2 and (isMatched and 56 or 156) or 184,
+    SidebarWidth = isAllowed2 and (isMatched and 56 or 156) or 184,
+    MinSidebarWidth = isAllowed2 and 132 or 184,
+    Accent = Color3.fromRGB(235, 235, 235),
+    BackgroundColor = Color3.fromRGB(8, 8, 8),
+    Acrylic = false,
     Transparent = true,
-    Theme = "Midnight",
+    Theme = "Dark",
     BackgroundImage = getgenv().NNVN_BackgroundImage or "",
     BackgroundImageTransparency = tonumber(getgenv().NNVN_BackgroundTransparency) or 0.72,
     BackgroundImageScaleType = Enum.ScaleType.Crop,
     HideSearchBar = false,
     ScrollBarEnabled = true,
-    ToggleKey = Enum.KeyCode.RightShift,
+    ToggleKey = Enum.KeyCode.K,
     ShowCustomCursor = false,
     Minimizable = true,
     MinimizedWidth = 300,
@@ -4403,7 +4859,7 @@ local Window = item2:CreateWindow({
     EnableCompacting = true,
     DisableCompactingSnap = false,
     MobileOptimized = true,
-    CornerRadius = 18,
+    CornerRadius = 12,
     Font = Enum.Font.Gotham,
     User = { Enabled = true, Anonymous = false }
 })
@@ -4424,7 +4880,7 @@ do
         Icon = UZEX_LOGO_ASSET,
         CornerRadius = UDim.new(0, 16),
         StrokeThickness = 2,
-        Color = ColorSequence.new(Color3.fromRGB(76, 39, 125), Color3.fromRGB(177, 111, 255)),
+        Color = ColorSequence.new(Color3.fromHex("0A1128"), Color3.fromHex("4B0082")),
         OnlyMobile = false,
         Enabled = true,
         Draggable = true
@@ -4631,8 +5087,8 @@ do
             return selectTab(inputValue, secondValue)
         end
     end
-    -- Neon Glass navigation replacement. Legacy feature keys below are aliases
-    -- to these seven pages so existing controls remain connected.
+    -- New compact navigation. Legacy feature keys below are aliases to these
+    -- seven pages so the existing feature callbacks and controls remain wired.
     local homeTab = Window:AddTab({ Title = "Home", Icon = "house", Order = 1 })
     local autoFarmTab = Window:AddTab({ Title = "Auto Farm", Icon = "fish", Order = 2 })
     local bossTab = Window:AddTab({ Title = "Boss", Icon = "crown", Order = 3 })
@@ -15498,14 +15954,14 @@ do
     DisplaySection = patchContainer(SettingsTab:Section({ Title = "Display", Icon = "monitor", Opened = true }))
     DisplaySection:AddInput("NNVN_AccentColorHex", {
         Title = "Accent Color",
-        Description = "Hex color for highlights and effects. Default: #A66BFF.",
-        Placeholder = "#A66BFF",
-        Default = tostring(getgenv().NNVN_AccentColorHex or "#A66BFF"),
+        Description = "Hex color for highlights and effects. Default: #568CFF.",
+        Placeholder = "#568CFF",
+        Default = tostring(getgenv().NNVN_AccentColorHex or "#568CFF"),
         Finished = true,
         Callback = function(selectedValue)
-            local selectedValueText = tostring(selectedValue or "#A66BFF")
+            local selectedValueText = tostring(selectedValue or "#568CFF")
             if not selectedValueText:match("^#?[%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F]$") then
-                selectedValueText = "#A66BFF"
+                selectedValueText = "#568CFF"
             elseif selectedValueText:sub(1, 1) ~= "#" then
                 selectedValueText = "#" .. selectedValueText
             end
