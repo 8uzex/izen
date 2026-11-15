@@ -14,6 +14,7 @@ local FOLLOW_KEY = Enum.KeyCode.K                  -- phím bật/tắt bám the
 local RESPAWN_KEY = Enum.KeyCode.J                 -- phím bật/tắt auto hồi sinh (PC)
 local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (PC)
 local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
+local RESPAWN_WALK_KEY = Enum.KeyCode.L            -- phím bật/tắt "đi bộ tới người chơi sau khi hồi sinh" (PC)
 local FLY_UP_SPEED = 30                            -- tốc độ bay (chậm) khi người chơi ở trên cao (stud/giây)
 local FLY_START_HEIGHT = 6                         -- người chơi cao hơn mình chừng này stud thì bật bay
 local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
@@ -88,6 +89,7 @@ local respawnOn = false
 local cachedRespawn = nil
 local ui = nil
 local noclipOn = false      -- noclip bật thủ công
+local respawnWalkOn = false  -- riêng: hồi sinh xong tự đi bộ tới người đã chọn (không phụ thuộc nút "Đi bộ tới người")
 local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
 local walking = false       -- đang đi bộ
 local flyConn = nil           -- vòng bay lên (chỉ chạy khi đang đi bộ tới người ở trên cao)
@@ -104,6 +106,7 @@ local rebuildList, setFollowUI, setVisible, toggleFollow, buildUI
 local setRespawnUI, toggleRespawn
 local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
 local setMapUI, cycleMap
+local setRespawnWalkUI, toggleRespawnWalk
 
 local function playerCF(plr)
 	local r = plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
@@ -246,6 +249,26 @@ function toggleWalkMode()
 	end
 	setWalkUI()
 end
+
+-- ===== Đi bộ sau khi hồi sinh (tách riêng, có nút bật/tắt riêng) =====
+function setRespawnWalkUI()
+	if not (ui and ui.rwBtn) then return end
+	ui.rwBtn.Text = respawnWalkOn and "Đi bộ khi hồi sinh: BẬT" or "Đi bộ khi hồi sinh: TẮT"
+	ui.rwBtn.BackgroundColor3 = respawnWalkOn and ON or OFF
+end
+
+function toggleRespawnWalk()
+	respawnWalkOn = not respawnWalkOn
+	setRespawnWalkUI()
+end
+
+player.CharacterAdded:Connect(function(char)
+	if not respawnWalkOn then return end
+	if not char:WaitForChild("HumanoidRootPart", 10) then return end
+	task.wait(1) -- chờ game đặt nhân vật vào map xong
+	if not respawnWalkOn or followOn or player.Character ~= char then return end
+	if selectedPlayer and selectedPlayer.Parent == Players then startWalk() end
+end)
 
 function setFollowUI()
 	if not (ui and ui.autoBtn) then return end
@@ -641,6 +664,7 @@ function buildUI()
 
 	local autoBtn = mkBtn("Bám theo: TẮT", 1)
 	local walkBtn = mkBtn("Đi bộ tới người: TẮT", 2)
+	local rwBtn = mkBtn("Đi bộ khi hồi sinh: TẮT", 3)
 	local respawnBtn = mkBtn("Auto hồi sinh: TẮT", 4)
 	local mapBtn = mkBtn("Map hồi sinh: Mặc định", 5, PANEL)
 	local noclipBtn = mkBtn("Noclip: TẮT", 6)
@@ -666,7 +690,7 @@ function buildUI()
 	}, frame)
 
 	ui = { gui = gui, frame = frame, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
-		noclipBtn = noclipBtn, walkBtn = walkBtn, mapBtn = mapBtn,
+		noclipBtn = noclipBtn, walkBtn = walkBtn, rwBtn = rwBtn, mapBtn = mapBtn,
 		title = titleLbl, modal = modal, rows = {} }
 
 	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
@@ -696,6 +720,7 @@ function buildUI()
 	tap(respawnBtn, toggleRespawn)
 	tap(noclipBtn, toggleNoclip)
 	tap(walkBtn, toggleWalkMode)
+	tap(rwBtn, toggleRespawnWalk)
 	tap(mapBtn, cycleMap)
 	speedBox.FocusLost:Connect(function()
 		local n = tonumber(speedBox.Text)
@@ -720,6 +745,7 @@ function buildUI()
 	setRespawnUI()
 	setNoclipUI()
 	setWalkUI()
+	setRespawnWalkUI()
 	setMapUI()
 end
 
@@ -745,6 +771,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleRespawn()
 	elseif input.KeyCode == NOCLIP_KEY then
 		toggleNoclip()
+	elseif input.KeyCode == RESPAWN_WALK_KEY then
+		toggleRespawnWalk()
 	elseif input.KeyCode == WALK_KEY then
 		toggleWalkMode()
 	end
