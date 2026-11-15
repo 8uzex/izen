@@ -15,6 +15,7 @@ local RESPAWN_KEY = Enum.KeyCode.J                 -- phím bật/tắt auto h�
 local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (PC)
 local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
 local RESPAWN_WALK_KEY = Enum.KeyCode.L            -- phím bật/tắt "đi bộ tới người chơi sau khi hồi sinh" (PC)
+local SPAWNMAP_KEY = Enum.KeyCode.M                -- phím bật/tắt "spawn đúng map của người chơi đã chọn" (PC)
 local FLY_UP_SPEED = 30                            -- tốc độ bay (chậm) khi người chơi ở trên cao (stud/giây)
 local FLY_START_HEIGHT = 6                         -- người chơi cao hơn mình chừng này stud thì bật bay
 local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
@@ -89,6 +90,7 @@ local respawnOn = false
 local cachedRespawn = nil
 local ui = nil
 local noclipOn = false      -- noclip bật thủ công
+local spawnAtPlayerMap = false -- hồi sinh thì tự chọn map mà người chơi đã chọn đang ở
 local respawnWalkOn = false  -- riêng: hồi sinh xong tự đi bộ tới người đã chọn (không phụ thuộc nút "Đi bộ tới người")
 local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
 local walking = false       -- đang đi bộ
@@ -107,6 +109,7 @@ local setRespawnUI, toggleRespawn
 local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
 local setMapUI, cycleMap
 local setRespawnWalkUI, toggleRespawnWalk
+local setSpawnMapUI, toggleSpawnMap
 
 -- Người chơi ở xa có thể bị game "unload" (StreamingEnabled) nên không thấy nhân vật của họ.
 -- Script nhớ vị trí cuối cùng thấy được, đi/teleport tới đó và xin game tải khu vực đó; thấy người rồi thì dùng vị trí thật.
@@ -510,16 +513,197 @@ local function press(name, btn)
 	end
 end
 
-local function mapRespawnStep()
-	local ok, r = pcall(scanScreens, respawnNames)
+-- ===== Spawn đúng map của người chơi đã chọn =====
+-- Đoán người chơi đang ở map nào theo thứ tự: (1) thuộc tính/giá trị chữ có tên map trên Player/nhân vật,
+-- (2) thư mục/model chứa nhân vật có tên map, (3) vị trí gần nơi chính mình từng spawn vào map đó (tự học),
+-- (4) gần model/thư mục map trong workspace. Chưa chắc game nào cũng nhận diện được => xem dòng trạng thái.
+local playerMapIdx = {}   -- [Player] = số thứ tự trong MAPS (lần nhận diện gần nhất)
+local mapSamples = {}     -- [idx] = { Vector3 } vị trí của chính mình ngay sau khi spawn vào map đó
+local pendingLearn = nil  -- { idx, t }: vừa bấm SPAWN vào map idx, nhân vật mới hiện ra thì ghi nhớ vị trí
+
+local function namesOf(idx)
+	local set = {}
+	for _, n in ipairs(MAPS[idx]) do set[norm(n)] = true end
+	return set
+end
+
+local function mapIndexFromText(text)
+	local t = norm(tostring(text))
+	if t == "" or #t > 40 then return nil end
+	for i = 1, #MAPS do
+		if matchesMap(t, namesOf(i)) then return i end
+	end
+	return nil
+end
+
+local function detectByValues(plr)
+	local function attrs(inst)
+		for _, v in pairs(inst:GetAttributes()) do
+			if type(v) == "string" then
+				local i = mapIndexFromText(v)
+				if i then return i end
+			end
+		end
+	end
+	local i = attrs(plr)
+	if i then return i, "thuộc tính Player" end
+	for _, d in ipairs(plr:GetDescendants()) do
+		if d:IsA("StringValue") then
+			i = mapIndexFromText(d.Value)
+			if i then return i, "giá trị " .. d.Name end
+		end
+		i = attrs(d)
+		if i then return i, "thuộc tính " .. d.Name end
+	end
+	local char = plr.Character
+	if char then
+		i = attrs(char)
+		if i then return i, "thuộc tính nhân vật" end
+		for _, d in ipairs(char:GetChildren()) do
+			if d:IsA("StringValue") then
+				i = mapIndexFromText(d.Value)
+				if i then return i, "giá trị " .. d.Name end
+			end
+		end
+		local cur = char.Parent -- thư mục/model chứa nhân vật (vd Workspace.Atlas.Players)
+		while cur and cur ~= workspace and cur ~= game do
+			i = mapIndexFromText(cur.Name)
+			if i then return i, "thư mục " .. cur.Name end
+			cur = cur.Parent
+		end
+	end
+	return nil
+end
+
+local function nearestSample(pos)
+	local best, bi = 2500, nil
+	for i, list in pairs(mapSamples) do
+		for _, sp in ipairs(list) do
+			local d = (sp - pos).Magnitude
+			if d < best then best, bi = d, i end
+		end
+	end
+	return bi
+end
+
+local anchors, anchorsT = nil, 0
+local function buildAnchors()
+	if anchors and os.clock() - anchorsT < 20 then return anchors end
+	anchors, anchorsT = {}, os.clock()
+	local function consider(inst)
+		if Players:GetPlayerFromCharacter(inst) then return end
+		local i = mapIndexFromText(inst.Name)
+		if not i then return end
+		local pos
+		if inst:IsA("Model") then
+			pos = inst:GetPivot().Position
+		elseif inst:IsA("BasePart") then
+			pos = inst.Position
+		elseif inst:IsA("Folder") then
+			local sum, n = Vector3.zero, 0
+			for _, d in ipairs(inst:GetDescendants()) do
+				if d:IsA("BasePart") then
+					sum = sum + d.Position
+					n = n + 1
+					if n >= 100 then break end
+				end
+			end
+			if n > 0 then pos = sum / n end
+		end
+		if pos then table.insert(anchors, { idx = i, pos = pos }) end
+	end
+	for _, c in ipairs(workspace:GetChildren()) do
+		pcall(consider, c)
+		if c:IsA("Folder") or c:IsA("Model") then -- thêm 1 tầng (vd Workspace.Maps.Atlas)
+			for _, cc in ipairs(c:GetChildren()) do pcall(consider, cc) end
+		end
+	end
+	return anchors
+end
+
+local function detectMapOf(plr)
+	if not plr then return nil end
+	local i, src = detectByValues(plr)
+	if i then return i, src end
+	local cf = playerCF(plr) or lastKnownCF[plr]
+	if cf then
+		i = nearestSample(cf.Position)
+		if i then return i, "vị trí đã học" end
+		local best, bi = 1200, nil
+		for _, a in ipairs(buildAnchors()) do
+			local d = (a.pos - cf.Position).Magnitude
+			if d < best then best, bi = d, a.idx end
+		end
+		if bi then return bi, "model map" end
+	end
+	return nil
+end
+
+-- Tên map + nguồn nhận diện lần gần nhất (hiện trên tiêu đề bảng để biết đang đoán đúng không)
+local lastDetectInfo = nil
+local function respawnTarget()
+	if spawnAtPlayerMap and selectedPlayer and selectedPlayer.Parent == Players then
+		local i = playerMapIdx[selectedPlayer] or detectMapOf(selectedPlayer)
+		if i then return namesOf(i), i, true end
+	end
+	return respawnNames, (mapIdx > 0) and mapIdx or nil, false
+end
+
+-- Nhận diện nền: cập nhật map của người đã chọn mỗi giây (nhớ lại để dùng lúc đang chết/chưa tải người đó)
+task.spawn(function()
+	while true do
+		task.wait(1)
+		if spawnAtPlayerMap and selectedPlayer and selectedPlayer.Parent == Players then
+			local ok, i, src = pcall(detectMapOf, selectedPlayer)
+			if ok and i then
+				playerMapIdx[selectedPlayer] = i
+				lastDetectInfo = MAPS[i][1] .. " (" .. tostring(src) .. ")"
+			end
+		end
+	end
+end)
+
+-- Tự học: spawn vào map nào xong thì nhớ vị trí của mình ở map đó
+player.CharacterAdded:Connect(function(char)
+	local pl = pendingLearn
+	if not (pl and os.clock() - pl.t < 25) then return end
+	pendingLearn = nil
+	local root = char:WaitForChild("HumanoidRootPart", 10)
+	if not root then return end
+	task.wait(2)
+	if player.Character ~= char then return end
+	local list = mapSamples[pl.idx] or {}
+	mapSamples[pl.idx] = list
+	local pos = root.Position
+	for _, sp in ipairs(list) do
+		if (sp - pos).Magnitude < 150 then return end
+	end
+	table.insert(list, pos)
+	if #list > 6 then table.remove(list, 1) end
+end)
+
+function setSpawnMapUI()
+	if not (ui and ui.spawnMapBtn) then return end
+	ui.spawnMapBtn.Text = spawnAtPlayerMap and "Spawn map người chơi: BẬT" or "Spawn map người chơi: TẮT"
+	ui.spawnMapBtn.BackgroundColor3 = spawnAtPlayerMap and ON or OFF
+end
+
+function toggleSpawnMap()
+	spawnAtPlayerMap = not spawnAtPlayerMap
+	setSpawnMapUI()
+end
+
+local function mapRespawnStep(names, idx)
+	local ok, r = pcall(scanScreens, names)
 	if not (ok and r) then return end
 	local function yn(v) return v and "Y" or "N" end
 	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(r.death) .. " play=" .. yn(r.play) .. " menu=" .. yn(r.menu)
 	if r.map and r.respawn then
-		setStatus("Chọn map: " .. flags)
+		setStatus((lastDetectInfo and spawnAtPlayerMap) and ("Map người chơi: " .. lastDetectInfo) or ("Chọn map: " .. flags))
 		press("map", r.map)
 		task.wait(0.1)
 		press("respawn", r.respawn)
+		pendingLearn = idx and { idx = idx, t = os.clock() } or nil
 		task.wait(0.9)
 	elseif r.play then
 		setStatus("Bấm Play: " .. flags)
@@ -696,10 +880,11 @@ function buildUI()
 	local rwBtn = mkBtn("Đi bộ khi hồi sinh: TẮT", 3)
 	local respawnBtn = mkBtn("Auto hồi sinh: TẮT", 4)
 	local mapBtn = mkBtn("Map hồi sinh: Mặc định", 5, PANEL)
-	local noclipBtn = mkBtn("Noclip: TẮT", 6)
+	local spawnMapBtn = mkBtn("Spawn map người chơi: TẮT", 6)
+	local noclipBtn = mkBtn("Noclip: TẮT", 7)
 
 	local speedBox = make("TextBox", {
-		LayoutOrder = 7,
+		LayoutOrder = 8,
 		BackgroundColor3 = PANEL, Text = customSpeed > 0 and tostring(customSpeed) or "",
 		PlaceholderText = "Tốc độ (trống = mặc định)",
 		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE, TextScaled = true,
@@ -719,7 +904,7 @@ function buildUI()
 	}, frame)
 
 	ui = { gui = gui, frame = frame, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
-		noclipBtn = noclipBtn, walkBtn = walkBtn, rwBtn = rwBtn, mapBtn = mapBtn,
+		noclipBtn = noclipBtn, walkBtn = walkBtn, rwBtn = rwBtn, spawnMapBtn = spawnMapBtn, mapBtn = mapBtn,
 		title = titleLbl, modal = modal, rows = {} }
 
 	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
@@ -750,6 +935,7 @@ function buildUI()
 	tap(noclipBtn, toggleNoclip)
 	tap(walkBtn, toggleWalkMode)
 	tap(rwBtn, toggleRespawnWalk)
+	tap(spawnMapBtn, toggleSpawnMap)
 	tap(mapBtn, cycleMap)
 	speedBox.FocusLost:Connect(function()
 		local n = tonumber(speedBox.Text)
@@ -775,6 +961,7 @@ function buildUI()
 	setNoclipUI()
 	setWalkUI()
 	setRespawnWalkUI()
+	setSpawnMapUI()
 	setMapUI()
 end
 
@@ -801,6 +988,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleRespawn()
 	elseif input.KeyCode == NOCLIP_KEY then
 		toggleNoclip()
+	elseif input.KeyCode == SPAWNMAP_KEY then
+		toggleSpawnMap()
 	elseif input.KeyCode == RESPAWN_WALK_KEY then
 		toggleRespawnWalk()
 	elseif input.KeyCode == WALK_KEY then
@@ -814,9 +1003,11 @@ buildUI()
 task.spawn(function()
 	while true do
 		task.wait(0.25)
+		local names, idx
+		if respawnOn then names, idx = respawnTarget() end
 		if respawnOn then
-			if respawnNames then
-				pcall(mapRespawnStep)
+			if names then
+				pcall(mapRespawnStep, names, idx)
 			else
 				local ok, btn = pcall(findRespawnButton)
 				if ok and btn then
@@ -825,7 +1016,7 @@ task.spawn(function()
 				end
 			end
 		end
-		if not (respawnOn and respawnNames) then pcall(setStatus, nil) end
+		if not (respawnOn and names) then pcall(setStatus, nil) end
 	end
 end)
 
