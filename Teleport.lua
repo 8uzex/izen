@@ -15,7 +15,6 @@ local FOLLOW_KEY = Enum.KeyCode.K                  -- phím bật/tắt bám the
 local RESPAWN_KEY = Enum.KeyCode.J                 -- phím bật/tắt auto hồi sinh (PC)
 local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (PC)
 local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
-local DEATHTP_KEY = Enum.KeyCode.L                 -- phím bật/tắt auto teleport tới người chơi sau khi chết (PC)
 local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
 local DEFAULT_SPEED = 0                            -- tốc độ chạy (WalkSpeed). 0 = giữ mặc định của game
 -- Danh sách map ở màn hình LOCATIONS / Địa điểm. Mỗi map có tên tiếng Anh + tiếng Việt (không phân biệt hoa/thường).
@@ -64,7 +63,6 @@ local respawnOn = false
 local cachedRespawn = nil
 local ui = nil
 local noclipOn = false      -- noclip bật thủ công
-local deathTpOn = false     -- sau khi chết + hồi sinh thì teleport 1 lần tới người đã chọn (không bám)
 local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
 local walking = false       -- đang đi bộ
 local walkToken = 0         -- đổi số này để dừng vòng đi bộ cũ
@@ -74,11 +72,12 @@ local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện tr�
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
 
+local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
+local savedFramePos = nil   -- nhớ vị trí bảng khi bị kéo, để UI dựng lại vẫn giữ chỗ cũ
 local rebuildList, setFollowUI, setVisible, toggleFollow, buildUI
 local setRespawnUI, toggleRespawn
 local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
 local setMapUI, cycleMap
-local setDeathTpUI, toggleDeathTp
 
 local function playerCF(plr)
 	local r = plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
@@ -175,34 +174,43 @@ function startWalk()
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if tcf and root and hum and hum.Health > 0 then
 				if (tcf.Position - root.Position).Magnitude <= WALK_STOP_DIST then break end -- tới nơi
-				-- tính lại đường đi mỗi ~1 giây vì người chơi kia có thể di chuyển
-				if os.clock() - lastCompute > 1 then
-					lastCompute = os.clock()
-					local ok = pcall(function() path:ComputeAsync(root.Position, tcf.Position) end)
-					if ok and path.Status == Enum.PathStatus.Success then
-						waypoints, wpIdx = path:GetWaypoints(), 2
-					else
-						waypoints = nil -- không tìm được đường: đi thẳng tới người chơi
+				local swimming = hum:GetState() == Enum.HumanoidStateType.Swimming
+				if swimming then
+					-- Đang ở dưới nước: Pathfinding hay lỗi nên đi thẳng tới người chơi,
+					-- nhảy liên tục để bơi lên / trèo lên bờ. Lên bờ thì tính lại đường.
+					waypoints, lastCompute, stuckT = nil, 0, 0
+					hum:MoveTo(tcf.Position)
+					hum.Jump = true
+				else
+					-- tính lại đường đi mỗi ~1 giây vì người chơi kia có thể di chuyển
+					if os.clock() - lastCompute > 1 then
+						lastCompute = os.clock()
+						local ok = pcall(function() path:ComputeAsync(root.Position, tcf.Position) end)
+						if ok and path.Status == Enum.PathStatus.Success then
+							waypoints, wpIdx = path:GetWaypoints(), 2
+						else
+							waypoints = nil -- không tìm được đường: đi thẳng tới người chơi
+						end
 					end
+					local moveTo = tcf.Position
+					if waypoints then
+						while waypoints[wpIdx] do
+							local wp = waypoints[wpIdx].Position
+							local flat = Vector3.new(wp.X - root.Position.X, 0, wp.Z - root.Position.Z)
+							if flat.Magnitude < 3 then wpIdx = wpIdx + 1 else break end
+						end
+						local wp = waypoints[wpIdx]
+						if wp then
+							moveTo = wp.Position
+							if wp.Action == Enum.PathWaypointAction.Jump then hum.Jump = true end
+						end
+					end
+					hum:MoveTo(moveTo)
+					-- kẹt (gần như không nhúc nhích) thì nhảy
+					if lastPos and (root.Position - lastPos).Magnitude < 0.3 then stuckT = stuckT + 0.15 else stuckT = 0 end
+					lastPos = root.Position
+					if stuckT > 0.6 then hum.Jump = true end
 				end
-				local moveTo = tcf.Position
-				if waypoints then
-					while waypoints[wpIdx] do
-						local wp = waypoints[wpIdx].Position
-						local flat = Vector3.new(wp.X - root.Position.X, 0, wp.Z - root.Position.Z)
-						if flat.Magnitude < 3 then wpIdx = wpIdx + 1 else break end
-					end
-					local wp = waypoints[wpIdx]
-					if wp then
-						moveTo = wp.Position
-						if wp.Action == Enum.PathWaypointAction.Jump then hum.Jump = true end
-					end
-				end
-				hum:MoveTo(moveTo)
-				-- kẹt (gần như không nhúc nhích) thì nhảy
-				if lastPos and (root.Position - lastPos).Magnitude < 0.3 then stuckT = stuckT + 0.15 else stuckT = 0 end
-				lastPos = root.Position
-				if stuckT > 0.6 then hum.Jump = true end
 			end
 			task.wait(0.15) -- đang chết/hồi sinh thì chờ rồi đi tiếp
 		end
@@ -221,33 +229,6 @@ function toggleWalkMode()
 	if not walkMode then stopWalk() end
 	setWalkUI()
 end
-
-function setDeathTpUI()
-	if not (ui and ui.deathBtn) then return end
-	ui.deathBtn.Text = deathTpOn and "TP sau khi chết: BẬT" or "TP sau khi chết: TẮT"
-	ui.deathBtn.BackgroundColor3 = deathTpOn and ON or OFF
-end
-
-function toggleDeathTp()
-	deathTpOn = not deathTpOn
-	setDeathTpUI()
-end
-
--- Hồi sinh xong -> teleport tới người chơi đã chọn (chỉ vài lần ngắn, không bám theo)
-player.CharacterAdded:Connect(function(char)
-	if not deathTpOn then return end
-	local root = char:WaitForChild("HumanoidRootPart", 10)
-	if not root then return end
-	for _ = 1, 3 do
-		task.wait(1.5) -- chờ game đặt nhân vật vào map xong
-		if not deathTpOn or followOn or player.Character ~= char then return end
-		if not (selectedPlayer and selectedPlayer.Parent == Players) then return end
-		local cf = playerCF(selectedPlayer)
-		if cf and (cf.Position - root.Position).Magnitude > 15 then
-			teleportToPlayer(selectedPlayer)
-		end
-	end
-end)
 
 function setFollowUI()
 	if not (ui and ui.autoBtn) then return end
@@ -467,17 +448,17 @@ local function mapRespawnStep()
 	if r.map and r.respawn then
 		setStatus("Chọn map: " .. flags)
 		press("map", r.map)
-		task.wait(0.8)
+		task.wait(0.25)
 		press("respawn", r.respawn)
-		task.wait(2)
+		task.wait(0.9)
 	elseif r.play then
 		setStatus("Bấm Play: " .. flags)
 		press("play", r.play)
-		task.wait(1.5)
+		task.wait(0.6)
 	elseif r.menu and (r.death or r.respawn) then
 		setStatus("Bấm MENU: " .. flags)
 		press("menu", r.menu)
-		task.wait(1.5)
+		task.wait(0.6)
 	else
 		setStatus("Đang chờ: " .. flags)
 		tries = {}
@@ -530,7 +511,7 @@ function rebuildList()
 			local label = plr.DisplayName .. " (@" .. plr.Name .. ")"
 			if q == "" or label:lower():find(q, 1, true) then
 				local btn = make("TextButton", {
-					Size = UDim2.new(1, 0, 0, 34),
+					Size = UDim2.new(1, 0, 0, 38),
 					BackgroundColor3 = (selectedPlayer == plr) and ACCENT or BG,
 					Text = label, Font = Enum.Font.Gotham, TextSize = 13,
 					TextColor3 = WHITE, TextTruncate = Enum.TextTruncate.AtEnd,
@@ -556,40 +537,55 @@ function buildUI()
 	local old = parent:FindFirstChild("TeleportExecUI")
 	if old then pcall(function() old:Destroy() end) end
 
+	-- Kích thước bảng tự co theo màn hình (điện thoại nằm ngang ~ 390px cao)
+	local cam = workspace.CurrentCamera
+	local vp = cam and cam.ViewportSize or Vector2.new(800, 400)
+	local W = math.clamp(math.floor(vp.X * 0.85), 300, 480)
+	local H = math.clamp(math.floor(vp.Y * 0.85), 220, 320)
+
 	local gui = make("ScreenGui", {
 		Name = "TeleportExecUI", ResetOnSpawn = false, DisplayOrder = 999999,
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling, IgnoreGuiInset = true,
 	}, parent)
 
 	local toggleBtn = make("TextButton", {
-		Size = UDim2.fromOffset(44, 44), Position = UDim2.new(0, 12, 0.5, -22),
+		Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 10, 0.5, -23),
 		BackgroundColor3 = ACCENT, Text = "📍", TextSize = 22,
 	}, gui)
-	round(toggleBtn, 22)
+	round(toggleBtn, 23)
 
 	local frame = make("Frame", {
-		Size = UDim2.fromOffset(260, 610), Position = UDim2.new(0, 64, 0.5, -305),
-		BackgroundColor3 = BG, Visible = uiVisible, Active = true, Draggable = true,
+		Size = UDim2.fromOffset(W, H),
+		Position = savedFramePos or UDim2.new(0, math.clamp(64, 0, math.max(0, vp.X - W)), 0.5, -math.floor(H / 2)),
+		BackgroundColor3 = BG, Visible = uiVisible, Active = true,
 	}, gui)
 	round(frame, 12)
 
+	-- Thanh tiêu đề: kéo để di chuyển bảng, nút ✕ để đóng
+	local titleBar = make("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1, Active = true }, frame)
 	local titleLbl = make("TextLabel", {
 		TextTruncate = Enum.TextTruncate.AtEnd,
-		Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 6),
+		Size = UDim2.new(1, -56, 1, 0), Position = UDim2.fromOffset(10, 0),
 		BackgroundTransparency = 1, Text = "Teleport tới người chơi", Font = Enum.Font.GothamBold,
 		TextSize = 16, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left,
-	}, frame)
+	}, titleBar)
+	local closeBtn = make("TextButton", {
+		Size = UDim2.fromOffset(34, 28), Position = UDim2.new(1, -40, 0, 5),
+		BackgroundColor3 = OFF, Text = "✕", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = WHITE,
+	}, titleBar)
+	round(closeBtn, 6)
 
+	-- Cột trái: tìm kiếm + danh sách người chơi
 	local searchBox = make("TextBox", {
-		Size = UDim2.new(1, -16, 0, 32), Position = UDim2.fromOffset(8, 40),
-		BackgroundColor3 = PANEL, Text = filterText, PlaceholderText = "Tìm tên người chơi...",
+		Size = UDim2.new(0.42, -12, 0, 34), Position = UDim2.fromOffset(8, 40),
+		BackgroundColor3 = PANEL, Text = filterText, PlaceholderText = "Tìm tên...",
 		Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = WHITE,
 		PlaceholderColor3 = Color3.fromRGB(150, 150, 160), ClearTextOnFocus = false,
 	}, frame)
 	round(searchBox, 8)
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -404), Position = UDim2.fromOffset(8, 80),
+		Size = UDim2.new(0.42, -12, 1, -86), Position = UDim2.fromOffset(8, 78),
 		BackgroundColor3 = PANEL, BorderSizePixel = 0, ScrollBarThickness = 4,
 		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, frame)
@@ -600,61 +596,51 @@ function buildUI()
 		PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4),
 	}, list)
 
-	local autoBtn = make("TextButton", {
-		Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -48),
-		BackgroundColor3 = OFF, Text = "Bám theo: TẮT",
-		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
+	-- Cột phải: các nút điều khiển (cuộn được, nút to dễ chạm)
+	local ctrl = make("ScrollingFrame", {
+		Size = UDim2.new(0.58, -10, 1, -48), Position = UDim2.new(0.42, 2, 0, 40),
+		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 4,
+		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, frame)
-	round(autoBtn, 8)
+	make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, ctrl)
+	make("UIPadding", { PaddingRight = UDim.new(0, 8) }, ctrl)
 
-	local respawnBtn = make("TextButton", {
-		Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -92),
-		BackgroundColor3 = OFF, Text = "Auto hồi sinh: TẮT",
-		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
-	}, frame)
-	round(respawnBtn, 8)
+	local function mkBtn(text, order, color)
+		local b = make("TextButton", {
+			Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = color or OFF, Text = text,
+			Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
+			TextScaled = true, LayoutOrder = order,
+		}, ctrl)
+		round(b, 8)
+		make("UITextSizeConstraint", { MaxTextSize = 14, MinTextSize = 9 }, b)
+		make("UIPadding", {
+			PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6),
+			PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4),
+		}, b)
+		return b
+	end
 
-	local noclipBtn = make("TextButton", {
-		Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -136),
-		BackgroundColor3 = OFF, Text = "Noclip: TẮT",
-		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
-	}, frame)
-	round(noclipBtn, 8)
-
-	local walkBtn = make("TextButton", {
-		Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -180),
-		BackgroundColor3 = OFF, Text = "Đi bộ tới người: TẮT",
-		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
-	}, frame)
-	round(walkBtn, 8)
+	local autoBtn = mkBtn("Bám theo: TẮT", 1)
+	local walkBtn = mkBtn("Đi bộ tới người: TẮT", 2)
+	local respawnBtn = mkBtn("Auto hồi sinh: TẮT", 4)
+	local mapBtn = mkBtn("Map hồi sinh: Mặc định", 5, PANEL)
+	local noclipBtn = mkBtn("Noclip: TẮT", 6)
 
 	local speedBox = make("TextBox", {
-		Size = UDim2.new(1, -16, 0, 36), Position = UDim2.new(0, 8, 1, -224),
-		BackgroundColor3 = PANEL, Text = customSpeed > 0 and tostring(customSpeed) or "", PlaceholderText = "trống = mặc định",
+		Size = UDim2.new(1, 0, 0, 38), LayoutOrder = 7,
+		BackgroundColor3 = PANEL, Text = customSpeed > 0 and tostring(customSpeed) or "",
+		PlaceholderText = "trống = mặc định",
 		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
 		PlaceholderColor3 = Color3.fromRGB(150, 150, 160), ClearTextOnFocus = false,
-	}, frame)
+		TextXAlignment = Enum.TextXAlignment.Right,
+	}, ctrl)
 	round(speedBox, 8)
+	make("UIPadding", { PaddingRight = UDim.new(0, 8) }, speedBox)
 	make("TextLabel", {
-		Size = UDim2.new(0, 90, 1, 0), Position = UDim2.new(0, 8, 0, 0), BackgroundTransparency = 1,
+		Size = UDim2.new(0, 70, 1, 0), Position = UDim2.new(0, 8, 0, 0), BackgroundTransparency = 1,
 		Text = "Tốc độ:", Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = Color3.fromRGB(170, 170, 180),
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, speedBox)
-	speedBox.TextXAlignment = Enum.TextXAlignment.Right
-
-	local mapBtn = make("TextButton", {
-		Size = UDim2.new(1, -16, 0, 36), Position = UDim2.new(0, 8, 1, -268),
-		BackgroundColor3 = PANEL, Text = "Map hồi sinh: Mặc định",
-		Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = WHITE, TextTruncate = Enum.TextTruncate.AtEnd,
-	}, frame)
-	round(mapBtn, 8)
-
-	local deathBtn = make("TextButton", {
-		Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -312),
-		BackgroundColor3 = OFF, Text = "TP sau khi chết: TẮT",
-		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
-	}, frame)
-	round(deathBtn, 8)
 
 	-- Nút ẩn dùng để bật Modal (mở khoá con trỏ chuột khi bảng đang hiện)
 	local modal = make("TextButton", {
@@ -663,15 +649,37 @@ function buildUI()
 	}, frame)
 
 	ui = { gui = gui, frame = frame, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
-		noclipBtn = noclipBtn, walkBtn = walkBtn, deathBtn = deathBtn, mapBtn = mapBtn, title = titleLbl, modal = modal, rows = {} }
+		noclipBtn = noclipBtn, walkBtn = walkBtn, mapBtn = mapBtn,
+		title = titleLbl, modal = modal, rows = {} }
+
+	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
+	if dragConn then dragConn:Disconnect(); dragConn = nil end
+	local dragging, dragStart, startPos = false, nil, nil
+	titleBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging, dragStart, startPos = true, input.Position, frame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	dragConn = UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+			or input.UserInputType == Enum.UserInputType.Touch) then
+			local d = input.Position - dragStart
+			local pos = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+			frame.Position = pos
+			savedFramePos = pos
+		end
+	end)
 
 	toggleBtn.Activated:Connect(function() setVisible(not uiVisible) end)
+	closeBtn.Activated:Connect(function() setVisible(false) end)
 	autoBtn.Activated:Connect(toggleFollow)
 	respawnBtn.Activated:Connect(toggleRespawn)
 	noclipBtn.Activated:Connect(toggleNoclip)
 	walkBtn.Activated:Connect(toggleWalkMode)
 	mapBtn.Activated:Connect(cycleMap)
-	deathBtn.Activated:Connect(toggleDeathTp)
 	speedBox.FocusLost:Connect(function()
 		local n = tonumber(speedBox.Text)
 		if n and n > 0 then
@@ -695,7 +703,6 @@ function buildUI()
 	setRespawnUI()
 	setNoclipUI()
 	setWalkUI()
-	setDeathTpUI()
 	setMapUI()
 end
 
@@ -721,8 +728,6 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleRespawn()
 	elseif input.KeyCode == NOCLIP_KEY then
 		toggleNoclip()
-	elseif input.KeyCode == DEATHTP_KEY then
-		toggleDeathTp()
 	elseif input.KeyCode == WALK_KEY then
 		toggleWalkMode()
 	end
@@ -733,7 +738,7 @@ buildUI()
 -- Vòng auto hồi sinh: thấy nút RESPAWN đang hiện thì tự bấm
 task.spawn(function()
 	while true do
-		task.wait(0.7)
+		task.wait(0.25)
 		if respawnOn then
 			if respawnNames then
 				pcall(mapRespawnStep)
@@ -741,7 +746,7 @@ task.spawn(function()
 				local ok, btn = pcall(findRespawnButton)
 				if ok and btn then
 					pressButton(btn)
-					task.wait(1.5) -- chờ game hồi sinh rồi mới kiểm tra tiếp
+					task.wait(0.8) -- chờ game hồi sinh rồi mới kiểm tra tiếp
 				end
 			end
 		end
