@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
+local PathfindingService = game:GetService("PathfindingService")
 local VIM = nil
 pcall(function() VIM = game:GetService("VirtualInputManager") end)
 local player = Players.LocalPlayer
@@ -13,8 +14,10 @@ local TOGGLE_UI_KEY = Enum.KeyCode.RightShift      -- phím ẩn/hiện bảng (
 local FOLLOW_KEY = Enum.KeyCode.K                  -- phím bật/tắt bám theo (PC)
 local RESPAWN_KEY = Enum.KeyCode.J                 -- phím bật/tắt auto hồi sinh (PC)
 local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (PC)
-local FLY_KEY = Enum.KeyCode.B                     -- phím bật/tắt chế độ tự bay tới người chơi (PC)
-local FLY_SPEED = 120                              -- tốc độ bay (stud/giây)
+local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
+local DEATHTP_KEY = Enum.KeyCode.L                 -- phím bật/tắt auto teleport tới người chơi sau khi chết (PC)
+local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
+local DEFAULT_SPEED = 0                            -- tốc độ chạy (WalkSpeed). 0 = giữ mặc định của game
 -- Danh sách map ở màn hình LOCATIONS / Địa điểm. Mỗi map có tên tiếng Anh + tiếng Việt (không phân biệt hoa/thường).
 -- Phần tử đầu tiên là tên hiện trên nút của bảng.
 local MAPS = {
@@ -61,10 +64,11 @@ local respawnOn = false
 local cachedRespawn = nil
 local ui = nil
 local noclipOn = false      -- noclip bật thủ công
-local flyMode = false       -- chế độ: chọn người chơi thì tự bay tới (thay vì teleport tức thì)
-local flying = false        -- đang bay (tự bật noclip trong lúc bay)
-local flyConn = nil
-local flySpeed = FLY_SPEED  -- tốc độ bay hiện tại (chỉnh được trên bảng)
+local deathTpOn = false     -- sau khi chết + hồi sinh thì teleport 1 lần tới người đã chọn (không bám)
+local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
+local walking = false       -- đang đi bộ
+local walkToken = 0         -- đổi số này để dừng vòng đi bộ cũ
+local customSpeed = DEFAULT_SPEED -- tốc độ chạy hiện tại (chỉnh được trên bảng, 0 = mặc định)
 local mapIdx = 0            -- 0 = mặc định (bấm nút RESPAWN), 1.. = chọn map trong MAPS
 local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện trên nút)
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
@@ -72,8 +76,9 @@ local noclipChanged = {}    -- các part do script này tắt va chạm (để t
 
 local rebuildList, setFollowUI, setVisible, toggleFollow, buildUI
 local setRespawnUI, toggleRespawn
-local setNoclipUI, toggleNoclip, setFlyUI, toggleFlyMode, stopFly, startFly
+local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
 local setMapUI, cycleMap
+local setDeathTpUI, toggleDeathTp
 
 local function playerCF(plr)
 	local r = plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
@@ -105,11 +110,11 @@ local function startFollow()
 	end)
 end
 
--- ===== Noclip (tắt va chạm; tự bật khi đang bay) =====
+-- ===== Noclip (tắt va chạm) =====
 RunService.Stepped:Connect(function()
 	local char = player.Character
 	if not char then return end
-	if noclipOn or flying then
+	if noclipOn then
 		for _, p in ipairs(char:GetDescendants()) do
 			if p:IsA("BasePart") and p.CanCollide then
 				p.CanCollide = false
@@ -135,49 +140,114 @@ function toggleNoclip()
 	setNoclipUI()
 end
 
--- ===== Tự bay tới người chơi (xuyên vật cản nhờ noclip) =====
-function stopFly()
-	flying = false
-	if flyConn then flyConn:Disconnect(); flyConn = nil end
+-- ===== Tốc độ chạy (WalkSpeed) =====
+RunService.Heartbeat:Connect(function()
+	if customSpeed > 0 then
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum and hum.WalkSpeed ~= customSpeed then hum.WalkSpeed = customSpeed end
+	end
+end)
+
+-- ===== Đi bộ tới người chơi (dùng Pathfinding, tự nhảy khi bị kẹt) =====
+function stopWalk()
+	walking = false
+	walkToken = walkToken + 1
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if root and hum then pcall(function() hum:MoveTo(root.Position) end) end
 end
 
-function startFly()
-	if followOn then return end -- đang bám theo thì không cần bay
-	if flyConn then flyConn:Disconnect() end
-	flying = true
-	flyConn = RunService.Heartbeat:Connect(function(dt)
-		local cf = playerCF(selectedPlayer)
-		local char = player.Character
-		local root = char and char:FindFirstChild("HumanoidRootPart")
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if not (selectedPlayer and selectedPlayer.Parent == Players) then stopFly() return end
-		if not (cf and root and hum) then return end -- đang chết/hồi sinh: chờ rồi bay tiếp
-		if hum.Health <= 0 then return end
-		local goal = (cf * FOLLOW_OFFSET).Position
-		local delta = goal - root.Position
-		local step = flySpeed * dt
-		if delta.Magnitude <= step + 0.5 then
-			root.CFrame = cf * FOLLOW_OFFSET
-			root.AssemblyLinearVelocity = Vector3.zero
-			stopFly()
-		else
-			root.CFrame = root.CFrame.Rotation + (root.Position + delta.Unit * step)
-			root.AssemblyLinearVelocity = Vector3.zero
+function startWalk()
+	if followOn then return end -- đang bám theo thì không cần đi bộ
+	walkToken = walkToken + 1
+	local token = walkToken
+	walking = true
+	task.spawn(function()
+		local path = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
+		local waypoints, wpIdx, lastCompute = nil, 2, 0
+		local lastPos, stuckT = nil, 0
+		while walking and walkToken == token do
+			if not (selectedPlayer and selectedPlayer.Parent == Players) then break end
+			local tcf = playerCF(selectedPlayer)
+			local char = player.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if tcf and root and hum and hum.Health > 0 then
+				if (tcf.Position - root.Position).Magnitude <= WALK_STOP_DIST then break end -- tới nơi
+				-- tính lại đường đi mỗi ~1 giây vì người chơi kia có thể di chuyển
+				if os.clock() - lastCompute > 1 then
+					lastCompute = os.clock()
+					local ok = pcall(function() path:ComputeAsync(root.Position, tcf.Position) end)
+					if ok and path.Status == Enum.PathStatus.Success then
+						waypoints, wpIdx = path:GetWaypoints(), 2
+					else
+						waypoints = nil -- không tìm được đường: đi thẳng tới người chơi
+					end
+				end
+				local moveTo = tcf.Position
+				if waypoints then
+					while waypoints[wpIdx] do
+						local wp = waypoints[wpIdx].Position
+						local flat = Vector3.new(wp.X - root.Position.X, 0, wp.Z - root.Position.Z)
+						if flat.Magnitude < 3 then wpIdx = wpIdx + 1 else break end
+					end
+					local wp = waypoints[wpIdx]
+					if wp then
+						moveTo = wp.Position
+						if wp.Action == Enum.PathWaypointAction.Jump then hum.Jump = true end
+					end
+				end
+				hum:MoveTo(moveTo)
+				-- kẹt (gần như không nhúc nhích) thì nhảy
+				if lastPos and (root.Position - lastPos).Magnitude < 0.3 then stuckT = stuckT + 0.15 else stuckT = 0 end
+				lastPos = root.Position
+				if stuckT > 0.6 then hum.Jump = true end
+			end
+			task.wait(0.15) -- đang chết/hồi sinh thì chờ rồi đi tiếp
 		end
+		if walkToken == token then stopWalk() end
 	end)
 end
 
-function setFlyUI()
-	if not (ui and ui.flyBtn) then return end
-	ui.flyBtn.Text = flyMode and "Tự bay tới người: BẬT" or "Tự bay tới người: TẮT"
-	ui.flyBtn.BackgroundColor3 = flyMode and ON or OFF
+function setWalkUI()
+	if not (ui and ui.walkBtn) then return end
+	ui.walkBtn.Text = walkMode and "Đi bộ tới người: BẬT" or "Đi bộ tới người: TẮT"
+	ui.walkBtn.BackgroundColor3 = walkMode and ON or OFF
 end
 
-function toggleFlyMode()
-	flyMode = not flyMode
-	if not flyMode then stopFly() end
-	setFlyUI()
+function toggleWalkMode()
+	walkMode = not walkMode
+	if not walkMode then stopWalk() end
+	setWalkUI()
 end
+
+function setDeathTpUI()
+	if not (ui and ui.deathBtn) then return end
+	ui.deathBtn.Text = deathTpOn and "TP sau khi chết: BẬT" or "TP sau khi chết: TẮT"
+	ui.deathBtn.BackgroundColor3 = deathTpOn and ON or OFF
+end
+
+function toggleDeathTp()
+	deathTpOn = not deathTpOn
+	setDeathTpUI()
+end
+
+-- Hồi sinh xong -> teleport tới người chơi đã chọn (chỉ vài lần ngắn, không bám theo)
+player.CharacterAdded:Connect(function(char)
+	if not deathTpOn then return end
+	local root = char:WaitForChild("HumanoidRootPart", 10)
+	if not root then return end
+	for _ = 1, 3 do
+		task.wait(1.5) -- chờ game đặt nhân vật vào map xong
+		if not deathTpOn or followOn or player.Character ~= char then return end
+		if not (selectedPlayer and selectedPlayer.Parent == Players) then return end
+		local cf = playerCF(selectedPlayer)
+		if cf and (cf.Position - root.Position).Magnitude > 15 then
+			teleportToPlayer(selectedPlayer)
+		end
+	end
+end)
 
 function setFollowUI()
 	if not (ui and ui.autoBtn) then return end
@@ -189,7 +259,7 @@ function toggleFollow()
 	if followOn then
 		stopFollow()
 	elseif selectedPlayer then
-		stopFly()
+		stopWalk()
 		followOn = true
 		startFollow()
 	end
@@ -197,7 +267,20 @@ function toggleFollow()
 end
 
 -- ===== Auto hồi sinh: tự tìm & bấm nút RESPAWN của game =====
+local function onScreen(o)
+	if not o:IsA("GuiObject") then return true end
+	if o.AbsoluteSize.X <= 0 or o.AbsoluteSize.Y <= 0 then return false end
+	local cam = workspace.CurrentCamera
+	if not cam then return true end
+	local vp = cam.ViewportSize
+	local sg = o:FindFirstAncestorOfClass("ScreenGui")
+	local inset = (sg and sg.IgnoreGuiInset) and Vector2.zero or GuiService:GetGuiInset()
+	local c = o.AbsolutePosition + o.AbsoluteSize / 2 + inset
+	return c.X >= 0 and c.Y >= 0 and c.X <= vp.X and c.Y <= vp.Y
+end
+
 local function isShown(obj)
+	if not onScreen(obj) then return false end
 	local cur = obj
 	while cur and cur ~= game do
 		if cur:IsA("GuiObject") and not cur.Visible then return false end
@@ -268,8 +351,9 @@ local function pressButton(btn)
 	vimClick(btn)
 end
 
--- ===== Hồi sinh theo map: MENU -> Chơi -> chọn map -> Hồi sinh =====
-local function norm(t) return (string.lower(t):gsub("%s", "")) end
+-- ===== Hồi sinh theo map: MENU -> Chơi/Play -> chọn map -> Hồi sinh/SPAWN =====
+-- Chuẩn hoá chữ: bỏ thẻ RichText, bỏ khoảng trắng, hạ chữ thường
+local function norm(t) return (string.lower(t):gsub("<[^>]*>", ""):gsub("%s", "")) end
 
 local function clickableOf(o, pg)
 	local cur = o
@@ -285,35 +369,91 @@ local function isPlayText(t)
 	return #t >= 5 and #t <= 7 and t:sub(1, 2) == "ch" and t:sub(-1) == "i"
 end
 
--- Quét các màn hình của game, trả về nút đang hiện: map / play / menu / respawn
+local function matchesMap(t, names)
+	if names[t] then return true end
+	if #t > 30 then return false end
+	for n in pairs(names) do
+		if #n >= 4 and t:find(n, 1, true) then return true end
+	end
+	return false
+end
+
+local function consider(r, o, pg, names, key)
+	if matchesMap(key, names) then
+		local c = clickableOf(o, pg)
+		local isBtn = c:IsA("GuiButton")
+		local area = o.AbsoluteSize.X * o.AbsoluteSize.Y
+		-- ưu tiên nút bấm được; nếu cùng loại thì lấy chữ nhỏ hơn (dòng trong danh sách, không phải tiêu đề to bên phải)
+		if not r.map or (isBtn and not r.mapBtn) or (isBtn == (r.mapBtn or false) and area < (r.mapArea or math.huge)) then
+			r.map, r.mapBtn, r.mapArea = c, isBtn, area
+		end
+	elseif key == "menu" then
+		r.menu = r.menu or clickableOf(o, pg)
+	elseif isPlayText(key) then
+		r.play = r.play or clickableOf(o, pg)
+	elseif isRespawnText(key) then
+		if key == "respawn" then
+			r.death = r.death or clickableOf(o, pg)     -- nút RESPAWN ở màn hình DEFEATED
+		else
+			r.respawn = r.respawn or clickableOf(o, pg) -- nút SPAWN ở màn hình Locations
+		end
+	end
+end
+
+-- Quét các màn hình của game (theo chữ hiển thị VÀ theo tên đối tượng), trả về nút: map / play / menu / respawn
 local function scanScreens(names)
 	local pg = player:FindFirstChildOfClass("PlayerGui")
 	if not pg then return nil end
 	local r = {}
 	for _, o in ipairs(pg:GetDescendants()) do
-		if (o:IsA("TextButton") or o:IsA("TextLabel")) and o.Text ~= ""
-			and not (ui and ui.gui and o:IsDescendantOf(ui.gui)) and isShown(o) then
-			local t = norm(o.Text)
-			if names[t] then
-				if not r.map or (o:IsA("GuiButton") and not r.map:IsA("GuiButton")) then r.map = clickableOf(o, pg) end
-			elseif t == "menu" then
-				r.menu = r.menu or clickableOf(o, pg)
-			elseif isPlayText(t) then
-				r.play = r.play or clickableOf(o, pg)
-			elseif isRespawnText(o.Text) then
-				r.respawn = r.respawn or clickableOf(o, pg)
+		if o:IsA("GuiObject") and not (ui and ui.gui and o:IsDescendantOf(ui.gui)) then
+			if (o:IsA("TextButton") or o:IsA("TextLabel")) and o.Text ~= "" and isShown(o) then
+				consider(r, o, pg, names, norm(o.Text))
+			end
+			local nk = norm(o.Name)
+			if o:IsA("GuiButton") then
+				if (matchesMap(nk, names) or nk == "menu" or nk == "play" or nk == "spawn" or nk == "respawn") and isShown(o) then
+					consider(r, o, pg, names, nk)
+				end
+			elseif names[nk] and o.AbsoluteSize.X > 0 and isShown(o) then
+				r.map = r.map or o
 			end
 		end
 	end
 	return r
 end
 
+local function setStatus(txt)
+	if not (ui and ui.title and ui.title.Parent) then return end
+	ui.title.Text = txt or "Teleport tới người chơi"
+	ui.title.TextSize = txt and 11 or 16
+end
+
+local function centerOf(obj)
+	local sg = obj:FindFirstAncestorOfClass("ScreenGui")
+	local inset = (sg and sg.IgnoreGuiInset) and Vector2.zero or GuiService:GetGuiInset()
+	return obj.AbsolutePosition + obj.AbsoluteSize / 2 + inset
+end
+
+local function vimTap(obj)
+	if not VIM then return end
+	local pos = centerOf(obj)
+	pcall(function()
+		VIM:SendTouchEvent(1, 0, pos.X, pos.Y)
+		task.wait(0.05)
+		VIM:SendTouchEvent(1, 2, pos.X, pos.Y)
+	end)
+end
+
 local tries = {}
 local function press(name, btn)
 	tries[name] = (tries[name] or 0) + 1
-	-- lần lẻ: bắn signal (nếu executor hỗ trợ); lần chẵn: click chuột ảo
-	if tries[name] % 2 == 1 and btn:IsA("GuiButton") and (firesignal or getconnections) then
+	local m = tries[name] % 3
+	-- lần 1: bắn signal (nếu có) • lần 2: click chuột ảo • lần 3: chạm màn hình ảo (rồi lặp lại)
+	if m == 1 and btn:IsA("GuiButton") and (firesignal or getconnections) then
 		fireSignals(btn)
+	elseif m == 0 then
+		vimTap(btn)
 	else
 		vimClick(btn)
 	end
@@ -322,19 +462,24 @@ end
 local function mapRespawnStep()
 	local ok, r = pcall(scanScreens, respawnNames)
 	if not (ok and r) then return end
+	local function yn(v) return v and "Y" or "N" end
+	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(r.death) .. " play=" .. yn(r.play) .. " menu=" .. yn(r.menu)
 	if r.map and r.respawn then
-		-- màn hình "Địa điểm": chọn map rồi bấm Hồi sinh
+		setStatus("Chọn map: " .. flags)
 		press("map", r.map)
-		task.wait(0.6)
+		task.wait(0.8)
 		press("respawn", r.respawn)
 		task.wait(2)
 	elseif r.play then
-		press("play", r.play) -- màn hình chính: bấm Chơi
+		setStatus("Bấm Play: " .. flags)
+		press("play", r.play)
 		task.wait(1.5)
-	elseif r.menu and r.respawn then
-		press("menu", r.menu) -- màn hình DEFEATED: bấm MENU
+	elseif r.menu and (r.death or r.respawn) then
+		setStatus("Bấm MENU: " .. flags)
+		press("menu", r.menu)
 		task.wait(1.5)
 	else
+		setStatus("Đang chờ: " .. flags)
 		tries = {}
 	end
 end
@@ -393,8 +538,8 @@ function rebuildList()
 				round(btn, 6)
 				btn.Activated:Connect(function()
 					selectedPlayer = plr
-					if flyMode and not followOn then
-						startFly()
+					if walkMode and not followOn then
+						startWalk()
 					else
 						teleportToPlayer(plr)
 					end
@@ -423,12 +568,13 @@ function buildUI()
 	round(toggleBtn, 22)
 
 	local frame = make("Frame", {
-		Size = UDim2.fromOffset(260, 566), Position = UDim2.new(0, 64, 0.5, -283),
+		Size = UDim2.fromOffset(260, 610), Position = UDim2.new(0, 64, 0.5, -305),
 		BackgroundColor3 = BG, Visible = uiVisible, Active = true, Draggable = true,
 	}, gui)
 	round(frame, 12)
 
-	make("TextLabel", {
+	local titleLbl = make("TextLabel", {
+		TextTruncate = Enum.TextTruncate.AtEnd,
 		Size = UDim2.new(1, -16, 0, 30), Position = UDim2.fromOffset(8, 6),
 		BackgroundTransparency = 1, Text = "Teleport tới người chơi", Font = Enum.Font.GothamBold,
 		TextSize = 16, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left,
@@ -443,7 +589,7 @@ function buildUI()
 	round(searchBox, 8)
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(1, -16, 1, -360), Position = UDim2.fromOffset(8, 80),
+		Size = UDim2.new(1, -16, 1, -404), Position = UDim2.fromOffset(8, 80),
 		BackgroundColor3 = PANEL, BorderSizePixel = 0, ScrollBarThickness = 4,
 		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, frame)
@@ -475,16 +621,16 @@ function buildUI()
 	}, frame)
 	round(noclipBtn, 8)
 
-	local flyBtn = make("TextButton", {
+	local walkBtn = make("TextButton", {
 		Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -180),
-		BackgroundColor3 = OFF, Text = "Tự bay tới người: TẮT",
+		BackgroundColor3 = OFF, Text = "Đi bộ tới người: TẮT",
 		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
 	}, frame)
-	round(flyBtn, 8)
+	round(walkBtn, 8)
 
 	local speedBox = make("TextBox", {
 		Size = UDim2.new(1, -16, 0, 36), Position = UDim2.new(0, 8, 1, -224),
-		BackgroundColor3 = PANEL, Text = tostring(flySpeed), PlaceholderText = "Tốc độ bay (1-1000)",
+		BackgroundColor3 = PANEL, Text = customSpeed > 0 and tostring(customSpeed) or "", PlaceholderText = "trống = mặc định",
 		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
 		PlaceholderColor3 = Color3.fromRGB(150, 150, 160), ClearTextOnFocus = false,
 	}, frame)
@@ -503,6 +649,13 @@ function buildUI()
 	}, frame)
 	round(mapBtn, 8)
 
+	local deathBtn = make("TextButton", {
+		Size = UDim2.new(1, -16, 0, 40), Position = UDim2.new(0, 8, 1, -312),
+		BackgroundColor3 = OFF, Text = "TP sau khi chết: TẮT",
+		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
+	}, frame)
+	round(deathBtn, 8)
+
 	-- Nút ẩn dùng để bật Modal (mở khoá con trỏ chuột khi bảng đang hiện)
 	local modal = make("TextButton", {
 		Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "",
@@ -510,18 +663,27 @@ function buildUI()
 	}, frame)
 
 	ui = { gui = gui, frame = frame, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
-		noclipBtn = noclipBtn, flyBtn = flyBtn, mapBtn = mapBtn, modal = modal, rows = {} }
+		noclipBtn = noclipBtn, walkBtn = walkBtn, deathBtn = deathBtn, mapBtn = mapBtn, title = titleLbl, modal = modal, rows = {} }
 
 	toggleBtn.Activated:Connect(function() setVisible(not uiVisible) end)
 	autoBtn.Activated:Connect(toggleFollow)
 	respawnBtn.Activated:Connect(toggleRespawn)
 	noclipBtn.Activated:Connect(toggleNoclip)
-	flyBtn.Activated:Connect(toggleFlyMode)
+	walkBtn.Activated:Connect(toggleWalkMode)
 	mapBtn.Activated:Connect(cycleMap)
+	deathBtn.Activated:Connect(toggleDeathTp)
 	speedBox.FocusLost:Connect(function()
 		local n = tonumber(speedBox.Text)
-		if n then flySpeed = math.clamp(n, 1, 1000) end
-		speedBox.Text = tostring(flySpeed)
+		if n and n > 0 then
+			customSpeed = math.clamp(n, 1, 500)
+		elseif speedBox.Text == "" or n == 0 then
+			if customSpeed > 0 then -- tắt speed: trả về tốc độ mặc định
+				local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+				if hum then hum.WalkSpeed = 16 end
+			end
+			customSpeed = 0
+		end
+		speedBox.Text = customSpeed > 0 and tostring(customSpeed) or ""
 	end)
 	searchBox:GetPropertyChangedSignal("Text"):Connect(function()
 		filterText = searchBox.Text
@@ -532,7 +694,8 @@ function buildUI()
 	setFollowUI()
 	setRespawnUI()
 	setNoclipUI()
-	setFlyUI()
+	setWalkUI()
+	setDeathTpUI()
 	setMapUI()
 end
 
@@ -541,7 +704,7 @@ Players.PlayerAdded:Connect(function() rebuildList() end)
 Players.PlayerRemoving:Connect(function(plr)
 	if selectedPlayer == plr then
 		selectedPlayer = nil
-		stopFly()
+		stopWalk()
 		stopFollow()
 		setFollowUI()
 	end
@@ -558,8 +721,10 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleRespawn()
 	elseif input.KeyCode == NOCLIP_KEY then
 		toggleNoclip()
-	elseif input.KeyCode == FLY_KEY then
-		toggleFlyMode()
+	elseif input.KeyCode == DEATHTP_KEY then
+		toggleDeathTp()
+	elseif input.KeyCode == WALK_KEY then
+		toggleWalkMode()
 	end
 end)
 
@@ -571,7 +736,7 @@ task.spawn(function()
 		task.wait(0.7)
 		if respawnOn then
 			if respawnNames then
-				mapRespawnStep()
+				pcall(mapRespawnStep)
 			else
 				local ok, btn = pcall(findRespawnButton)
 				if ok and btn then
@@ -580,6 +745,7 @@ task.spawn(function()
 				end
 			end
 		end
+		if not (respawnOn and respawnNames) then pcall(setStatus, nil) end
 	end
 end)
 
