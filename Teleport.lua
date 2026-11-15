@@ -14,6 +14,8 @@ local FOLLOW_KEY = Enum.KeyCode.K                  -- phím bật/tắt bám the
 local RESPAWN_KEY = Enum.KeyCode.J                 -- phím bật/tắt auto hồi sinh (PC)
 local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (PC)
 local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
+local FLY_UP_SPEED = 30                            -- tốc độ bay (chậm) khi người chơi ở trên cao (stud/giây)
+local FLY_START_HEIGHT = 6                         -- người chơi cao hơn mình chừng này stud thì bật bay
 local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
 local DEFAULT_SPEED = 0                            -- tốc độ chạy (WalkSpeed). 0 = giữ mặc định của game
 -- Danh sách map ở màn hình LOCATIONS / Địa điểm. Mỗi map có tên tiếng Anh + tiếng Việt (không phân biệt hoa/thường).
@@ -88,6 +90,7 @@ local ui = nil
 local noclipOn = false      -- noclip bật thủ công
 local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
 local walking = false       -- đang đi bộ
+local flyConn = nil           -- vòng bay lên (chỉ chạy khi đang đi bộ tới người ở trên cao)
 local walkToken = 0         -- đổi số này để dừng vòng đi bộ cũ
 local customSpeed = DEFAULT_SPEED -- tốc độ chạy hiện tại (chỉnh được trên bảng, 0 = mặc định)
 local mapIdx = 0            -- 0 = mặc định (bấm nút RESPAWN), 1.. = chọn map trong MAPS
@@ -174,6 +177,7 @@ end)
 function stopWalk()
 	walking = false
 	walkToken = walkToken + 1
+	if flyConn then flyConn:Disconnect(); flyConn = nil end
 	local char = player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -185,6 +189,23 @@ function startWalk()
 	walkToken = walkToken + 1
 	local token = walkToken
 	walking = true -- walking = true => tự bật noclip nên đi thẳng, không bị vật cản làm khựng
+	local hovering = false -- đang bay lên để theo độ cao của người chơi
+	if flyConn then flyConn:Disconnect() end
+	flyConn = RunService.Heartbeat:Connect(function()
+		if not (walking and walkToken == token) then return end
+		local cf = playerCF(selectedPlayer)
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if not (cf and root and hum and hum.Health > 0) then return end
+		local dy = cf.Position.Y - root.Position.Y
+		if dy > FLY_START_HEIGHT then hovering = true end
+		if hovering then
+			-- bay chậm lên (và giữ độ cao bằng người chơi) trong lúc đi bộ tới
+			local v = root.AssemblyLinearVelocity
+			root.AssemblyLinearVelocity = Vector3.new(v.X, math.clamp(dy * 2, -FLY_UP_SPEED, FLY_UP_SPEED), v.Z)
+		end
+	end)
 	task.spawn(function()
 		local lastPos, stuckT = nil, 0
 		while walking and walkToken == token do
@@ -198,11 +219,11 @@ function startWalk()
 				if flat.Magnitude <= WALK_STOP_DIST then break end -- tới nơi
 				hum:MoveTo(tcf.Position)
 				-- dưới nước thì nhảy liên tục để bơi lên / trèo lên bờ
-				if hum:GetState() == Enum.HumanoidStateType.Swimming then hum.Jump = true end
+				if not hovering and hum:GetState() == Enum.HumanoidStateType.Swimming then hum.Jump = true end
 				-- kẹt (gần như không nhúc nhích) thì nhảy
 				if lastPos and (root.Position - lastPos).Magnitude < 0.2 then stuckT = stuckT + 0.1 else stuckT = 0 end
 				lastPos = root.Position
-				if stuckT > 0.5 then hum.Jump = true end
+				if stuckT > 0.5 and not hovering then hum.Jump = true end
 			end
 			task.wait(0.1) -- đang chết/hồi sinh thì chờ rồi đi tiếp
 		end
@@ -218,7 +239,11 @@ end
 
 function toggleWalkMode()
 	walkMode = not walkMode
-	if not walkMode then stopWalk() end
+	if not walkMode then
+		stopWalk()
+	elseif selectedPlayer and not followOn then
+		startWalk() -- đã chọn người từ trước thì đi luôn
+	end
 	setWalkUI()
 end
 
@@ -231,7 +256,7 @@ end
 function toggleFollow()
 	if followOn then
 		stopFollow()
-	elseif selectedPlayer then
+	else
 		stopWalk()
 		followOn = true
 		startFollow()
