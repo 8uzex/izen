@@ -108,13 +108,38 @@ local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
 local setMapUI, cycleMap
 local setRespawnWalkUI, toggleRespawnWalk
 
+-- Người chơi ở xa có thể bị game "unload" (StreamingEnabled) nên không thấy nhân vật của họ.
+-- Script nhớ vị trí cuối cùng thấy được, đi/teleport tới đó và xin game tải khu vực đó; thấy người rồi thì dùng vị trí thật.
+local lastKnownCF = {}
+local lastStream = 0
+local function requestStream(pos)
+	if os.clock() - lastStream < 1.5 then return end
+	lastStream = os.clock()
+	task.spawn(function() pcall(function() workspace:RequestStreamAroundAsync(pos, 1) end) end)
+end
+
 local function playerCF(plr)
-	local r = plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
-	return r and r.CFrame or nil
+	if not plr then return nil end
+	local char = plr.Character
+	local r = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+	if r then
+		lastKnownCF[plr] = r.CFrame
+		return r.CFrame
+	end
+	return nil
+end
+
+-- trả về (CFrame, đang_thấy_thật)
+local function targetCF(plr)
+	local cf = playerCF(plr)
+	if cf then return cf, true end
+	local last = plr and lastKnownCF[plr]
+	if last then requestStream(last.Position) end
+	return last, false
 end
 
 local function teleportToPlayer(plr)
-	local cf = playerCF(plr)
+	local cf = targetCF(plr)
 	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 	if cf and root then root.CFrame = cf + Vector3.new(0, 3, 0) end
 end
@@ -127,7 +152,7 @@ end
 local function startFollow()
 	if followConn then followConn:Disconnect() end
 	followConn = RunService.Heartbeat:Connect(function()
-		local cf = playerCF(selectedPlayer)
+		local cf = targetCF(selectedPlayer)
 		local char = player.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -196,7 +221,7 @@ function startWalk()
 	if flyConn then flyConn:Disconnect() end
 	flyConn = RunService.Heartbeat:Connect(function()
 		if not (walking and walkToken == token) then return end
-		local cf = playerCF(selectedPlayer)
+		local cf = targetCF(selectedPlayer)
 		local char = player.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -213,13 +238,16 @@ function startWalk()
 		local lastPos, stuckT = nil, 0
 		while walking and walkToken == token do
 			if not (selectedPlayer and selectedPlayer.Parent == Players) then break end
-			local tcf = playerCF(selectedPlayer)
+			local tcf, live = targetCF(selectedPlayer)
 			local char = player.Character
 			local root = char and char:FindFirstChild("HumanoidRootPart")
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if tcf and root and hum and hum.Health > 0 then
 				local flat = Vector3.new(tcf.Position.X - root.Position.X, 0, tcf.Position.Z - root.Position.Z)
-				if flat.Magnitude <= WALK_STOP_DIST then break end -- tới nơi
+				if flat.Magnitude <= WALK_STOP_DIST and live then break end -- tới nơi (chỉ khi thấy người chơi thật)
+				if flat.Magnitude <= WALK_STOP_DIST then
+					lastPos, stuckT = nil, 0 -- tới chỗ cuối cùng thấy họ mà họ chưa tải: đứng chờ game tải
+				else
 				hum:MoveTo(tcf.Position)
 				-- dưới nước thì nhảy liên tục để bơi lên / trèo lên bờ
 				if not hovering and hum:GetState() == Enum.HumanoidStateType.Swimming then hum.Jump = true end
@@ -227,6 +255,7 @@ function startWalk()
 				if lastPos and (root.Position - lastPos).Magnitude < 0.2 then stuckT = stuckT + 0.1 else stuckT = 0 end
 				lastPos = root.Position
 				if stuckT > 0.5 and not hovering then hum.Jump = true end
+				end
 			end
 			task.wait(0.1) -- đang chết/hồi sinh thì chờ rồi đi tiếp
 		end
@@ -752,6 +781,7 @@ end
 -- ===== Sự kiện =====
 Players.PlayerAdded:Connect(function() rebuildList() end)
 Players.PlayerRemoving:Connect(function(plr)
+	lastKnownCF[plr] = nil
 	if selectedPlayer == plr then
 		selectedPlayer = nil
 		stopWalk()
@@ -796,6 +826,16 @@ task.spawn(function()
 			end
 		end
 		if not (respawnOn and respawnNames) then pcall(setStatus, nil) end
+	end
+end)
+
+-- Ghi nhớ vị trí mọi người chơi đang thấy được (để còn biết đường tới khi họ ở xa bị game unload)
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player then pcall(playerCF, plr) end
+		end
 	end
 end)
 
