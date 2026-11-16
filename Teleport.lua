@@ -16,6 +16,7 @@ local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (
 local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
 local RESPAWN_WALK_KEY = Enum.KeyCode.L            -- phím bật/tắt "đi bộ tới người chơi sau khi hồi sinh" (PC)
 local SPAWNMAP_KEY = Enum.KeyCode.M                -- phím bật/tắt "spawn đúng map của người chơi đã chọn" (PC)
+local WALKFOLLOW_KEY = Enum.KeyCode.H              -- phím bật/tắt "đi bộ bám theo người chơi" (PC)
 local FLY_UP_SPEED = 30                            -- tốc độ bay (chậm) khi người chơi ở trên cao (stud/giây)
 local FLY_START_HEIGHT = 6                         -- người chơi cao hơn mình chừng này stud thì bật bay
 local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
@@ -92,10 +93,12 @@ local ui = nil
 local noclipOn = false      -- noclip bật thủ công
 local spawnAtPlayerMap = false -- hồi sinh thì tự chọn map mà người chơi đã chọn đang ở
 local playerMapIdx = {}      -- [Player] = số thứ tự map (MAPS) nhận diện lần gần nhất
+local playerMapExplicit = {} -- [Player] = true nếu map nhận diện từ thuộc tính/giá trị/thư mục (chắc chắn), false nếu đoán theo vị trí
 local playerMapStable = {}   -- [Player] = số lần nhận diện liên tiếp ra cùng 1 map
 local myMapIdx = nil         -- map mình đang ở (đọc từ chữ tên map trên HUD)
 local lastSwitchT = -1000    -- lần cuối tự thoát/đổi map (chống đổi qua đổi lại)
 local exitPending = -1000    -- lần cuối script bấm nút thoát (chờ hộp thoại "Return to main menu?")
+local walkFollowOn = false   -- đi bộ bám theo liên tục: người chơi đi đâu thì đi bộ theo tới đó (không dừng hẳn khi tới nơi)
 local respawnWalkOn = false  -- riêng: hồi sinh xong tự đi bộ tới người đã chọn (không phụ thuộc nút "Đi bộ tới người")
 local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
 local walking = false       -- đang đi bộ
@@ -115,10 +118,12 @@ local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
 local setMapUI, cycleMap
 local setRespawnWalkUI, toggleRespawnWalk
 local setSpawnMapUI, toggleSpawnMap
+local setWalkFollowUI, toggleWalkFollow
 
 -- Người chơi ở xa có thể bị game "unload" (StreamingEnabled) nên không thấy nhân vật của họ.
 -- Script nhớ vị trí cuối cùng thấy được, đi/teleport tới đó và xin game tải khu vực đó; thấy người rồi thì dùng vị trí thật.
 local lastKnownCF = {}
+local lastKnownMap = {}      -- [Player] = map mình đang ở lúc thấy họ lần cuối (vị trí cuối còn hợp lệ nếu mình chưa đổi map)
 local lastStream = 0
 local function requestStream(pos)
 	if os.clock() - lastStream < 1.5 then return end
@@ -132,6 +137,7 @@ local function playerCF(plr)
 	local r = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
 	if r then
 		lastKnownCF[plr] = r.CFrame
+		lastKnownMap[plr] = myMapIdx
 		return r.CFrame
 	end
 	return nil
@@ -141,7 +147,11 @@ end
 local function otherMap(plr)
 	if not spawnAtPlayerMap then return false end
 	local t = playerMapIdx[plr]
-	return t ~= nil and myMapIdx ~= nil and t ~= myMapIdx and (playerMapStable[plr] or 0) >= 3
+	if not (t ~= nil and myMapIdx ~= nil and t ~= myMapIdx and (playerMapStable[plr] or 0) >= 3) then return false end
+	-- chỉ đoán theo vị trí mà mình từng thấy họ ngay trong map hiện tại của mình => vị trí cuối vẫn đúng, cứ đi tới
+	-- (người chơi ở xa + đứng im vẫn đi bộ tới được). Nhận diện chắc chắn (thuộc tính/thư mục) mới chặn.
+	if not playerMapExplicit[plr] and lastKnownCF[plr] and lastKnownMap[plr] == myMapIdx then return false end
+	return true
 end
 
 -- trả về (CFrame, đang_thấy_thật)
@@ -228,7 +238,7 @@ function stopWalk()
 	if root and hum then pcall(function() hum:MoveTo(root.Position) end) end
 end
 
-function startWalk()
+function startWalk(continuous)
 	if followOn then return end -- đang bám theo thì không cần đi bộ
 	walkToken = walkToken + 1
 	local token = walkToken
@@ -244,6 +254,7 @@ function startWalk()
 		if not (cf and root and hum and hum.Health > 0) then return end
 		local dy = cf.Position.Y - root.Position.Y
 		if dy > FLY_START_HEIGHT then hovering = true end
+		if hovering and dy < -3 then hovering = false end -- người chơi xuống thấp hơn hẳn: thả xuống đi bộ bình thường
 		if hovering then
 			-- bay chậm lên (và giữ độ cao bằng người chơi) trong lúc đi bộ tới
 			local v = root.AssemblyLinearVelocity
@@ -252,6 +263,7 @@ function startWalk()
 	end)
 	task.spawn(function()
 		local lastPos, stuckT = nil, 0
+		local arrived = false -- (đi bộ bám theo) đã tới gần: đứng chờ, người chơi đi xa thì đi tiếp
 		while walking and walkToken == token do
 			if not (selectedPlayer and selectedPlayer.Parent == Players) then break end
 			local tcf, live = targetCF(selectedPlayer)
@@ -260,9 +272,16 @@ function startWalk()
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if tcf and root and hum and hum.Health > 0 then
 				local flat = Vector3.new(tcf.Position.X - root.Position.X, 0, tcf.Position.Z - root.Position.Z)
-				if flat.Magnitude <= WALK_STOP_DIST and live then break end -- tới nơi (chỉ khi thấy người chơi thật)
-				if flat.Magnitude <= WALK_STOP_DIST then
-					lastPos, stuckT = nil, 0 -- tới chỗ cuối cùng thấy họ mà họ chưa tải: đứng chờ game tải
+				local dist = flat.Magnitude
+				if live and dist <= WALK_STOP_DIST then
+					if not continuous then break end -- tới nơi (chỉ khi thấy người chơi thật)
+					arrived = true
+				elseif arrived and dist > WALK_STOP_DIST + 3 then
+					arrived = false -- người chơi đi xa rồi: đi bộ theo tiếp
+				end
+				if arrived or dist <= WALK_STOP_DIST then
+					lastPos, stuckT = nil, 0 -- đã tới (hoặc tới chỗ cuối cùng thấy họ mà họ chưa tải): đứng chờ
+					if arrived then hum:MoveTo(root.Position) end
 				else
 				hum:MoveTo(tcf.Position)
 				-- dưới nước thì nhảy liên tục để bơi lên / trèo lên bờ
@@ -288,11 +307,29 @@ end
 function toggleWalkMode()
 	walkMode = not walkMode
 	if not walkMode then
-		stopWalk()
-	elseif selectedPlayer and not followOn then
+		if not walkFollowOn then stopWalk() end
+	elseif selectedPlayer and not followOn and not walkFollowOn then
 		startWalk() -- đã chọn người từ trước thì đi luôn
 	end
 	setWalkUI()
+end
+
+-- ===== Đi bộ bám theo liên tục (khác "Bám theo" là teleport, khác "Đi bộ tới người" là đi 1 lần rồi dừng) =====
+function setWalkFollowUI()
+	if not (ui and ui.walkFollowBtn) then return end
+	ui.walkFollowBtn.Text = walkFollowOn and "Đi bộ bám theo: BẬT" or "Đi bộ bám theo: TẮT"
+	ui.walkFollowBtn.BackgroundColor3 = walkFollowOn and ON or OFF
+end
+
+function toggleWalkFollow()
+	walkFollowOn = not walkFollowOn
+	if walkFollowOn then
+		if followOn then stopFollow(); setFollowUI() end -- 2 kiểu bám không chạy cùng lúc
+		if selectedPlayer and selectedPlayer.Parent == Players then startWalk(true) end -- chưa chọn người thì chọn xong sẽ tự đi
+	else
+		stopWalk()
+	end
+	setWalkFollowUI()
 end
 
 -- ===== Đi bộ sau khi hồi sinh (tách riêng, có nút bật/tắt riêng) =====
@@ -311,7 +348,7 @@ player.CharacterAdded:Connect(function(char)
 	if not respawnWalkOn then return end
 	if not char:WaitForChild("HumanoidRootPart", 10) then return end
 	task.wait(1) -- chờ game đặt nhân vật vào map xong
-	if not respawnWalkOn or followOn or player.Character ~= char then return end
+	if not respawnWalkOn or followOn or walkFollowOn or player.Character ~= char then return end
 	if selectedPlayer and selectedPlayer.Parent == Players then startWalk() end
 end)
 
@@ -326,6 +363,8 @@ function toggleFollow()
 		stopFollow()
 	else
 		stopWalk()
+		walkFollowOn = false
+		setWalkFollowUI()
 		followOn = true
 		startFollow()
 	end
@@ -762,6 +801,8 @@ task.spawn(function()
 						playerMapStable[sel] = 1
 					end
 					playerMapIdx[sel] = i
+					local ssrc = tostring(src)
+					playerMapExplicit[sel] = (ssrc:find("thuộc tính", 1, true) or ssrc:find("giá trị", 1, true) or ssrc:find("thư mục", 1, true)) ~= nil
 					lastDetectInfo = MAPS[i][1] .. " (" .. tostring(src) .. ")"
 				end
 			end
@@ -898,7 +939,7 @@ function rebuildList()
 			local label = plr.DisplayName .. " (@" .. plr.Name .. ")"
 			if q == "" or label:lower():find(q, 1, true) then
 				local btn = make("TextButton", {
-					Size = UDim2.new(1, 0, 0, 38),
+					Size = UDim2.new(1, 0, 0, 44),
 					BackgroundColor3 = (selectedPlayer == plr) and ACCENT or BG,
 					Text = label, Font = Enum.Font.Gotham, TextSize = 13,
 					TextColor3 = WHITE, TextTruncate = Enum.TextTruncate.AtEnd,
@@ -906,7 +947,9 @@ function rebuildList()
 				round(btn, 6)
 				tap(btn, function()
 					selectedPlayer = plr
-					if walkMode and not followOn then
+					if walkFollowOn and not followOn then
+						startWalk(true)
+					elseif walkMode and not followOn then
 						startWalk()
 					else
 						teleportToPlayer(plr)
@@ -927,8 +970,8 @@ function buildUI()
 	-- Kích thước bảng tự co theo màn hình (điện thoại nằm ngang ~ 390px cao)
 	local cam = workspace.CurrentCamera
 	local vp = cam and cam.ViewportSize or Vector2.new(800, 400)
-	local W = math.clamp(math.floor(vp.X * 0.85), 300, 480)
-	local H = math.clamp(math.floor(vp.Y * 0.85), 220, 320)
+	local W = math.clamp(math.floor(vp.X * 0.9), 300, 540)
+	local H = math.clamp(math.floor(vp.Y * 0.9), 220, 340)
 
 	local gui = make("ScreenGui", {
 		Name = "TeleportExecUI", ResetOnSpawn = false, DisplayOrder = 999999,
@@ -936,10 +979,10 @@ function buildUI()
 	}, parent)
 
 	local toggleBtn = make("TextButton", {
-		Size = UDim2.fromOffset(46, 46), Position = UDim2.new(0, 10, 0.5, -23),
+		Size = UDim2.fromOffset(56, 56), Position = UDim2.new(0, 10, 0.5, -28),
 		BackgroundColor3 = ACCENT, Text = "📍", TextSize = 22,
 	}, gui)
-	round(toggleBtn, 23)
+	round(toggleBtn, 28)
 
 	local frame = make("Frame", {
 		Size = UDim2.fromOffset(W, H),
@@ -957,14 +1000,14 @@ function buildUI()
 		TextSize = 16, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left,
 	}, titleBar)
 	local closeBtn = make("TextButton", {
-		Size = UDim2.fromOffset(34, 28), Position = UDim2.new(1, -40, 0, 5),
+		Size = UDim2.fromOffset(42, 32), Position = UDim2.new(1, -48, 0, 4),
 		BackgroundColor3 = OFF, Text = "✕", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = WHITE,
 	}, titleBar)
 	round(closeBtn, 6)
 
 	-- Cột trái: tìm kiếm + danh sách người chơi
 	local searchBox = make("TextBox", {
-		Size = UDim2.new(0.42, -12, 0, 34), Position = UDim2.fromOffset(8, 40),
+		Size = UDim2.new(0.38, -12, 0, 36), Position = UDim2.fromOffset(8, 40),
 		BackgroundColor3 = PANEL, Text = filterText, PlaceholderText = "Tìm tên...",
 		Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = WHITE,
 		PlaceholderColor3 = Color3.fromRGB(150, 150, 160), ClearTextOnFocus = false,
@@ -972,7 +1015,7 @@ function buildUI()
 	round(searchBox, 8)
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(0.42, -12, 1, -86), Position = UDim2.fromOffset(8, 78),
+		Size = UDim2.new(0.38, -12, 1, -88), Position = UDim2.fromOffset(8, 80),
 		BackgroundColor3 = PANEL, BorderSizePixel = 0, ScrollBarThickness = 4,
 		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, frame)
@@ -984,23 +1027,25 @@ function buildUI()
 	}, list)
 
 	-- Cột phải: các nút điều khiển (cuộn được, nút to dễ chạm)
-	local ctrl = make("Frame", {
-		Size = UDim2.new(0.58, -10, 1, -48), Position = UDim2.new(0.42, 2, 0, 40),
-		BackgroundTransparency = 1, BorderSizePixel = 0,
+	local ctrl = make("ScrollingFrame", {
+		Size = UDim2.new(0.62, -10, 1, -48), Position = UDim2.new(0.38, 2, 0, 40),
+		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, frame)
+	make("UIPadding", { PaddingRight = UDim.new(0, 6) }, ctrl)
 	make("UIGridLayout", {
-		CellSize = UDim2.new(0.5, -3, 0, 38), CellPadding = UDim2.fromOffset(6, 6),
+		CellSize = UDim2.new(0.5, -3, 0, 46), CellPadding = UDim2.fromOffset(6, 6),
 		SortOrder = Enum.SortOrder.LayoutOrder,
 	}, ctrl)
 
 	local function mkBtn(text, order, color)
 		local b = make("TextButton", {
-			Size = UDim2.new(1, 0, 0, 38), BackgroundColor3 = color or OFF, Text = text,
+			Size = UDim2.new(1, 0, 0, 46), BackgroundColor3 = color or OFF, Text = text,
 			Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
 			TextScaled = true, LayoutOrder = order,
 		}, ctrl)
 		round(b, 8)
-		make("UITextSizeConstraint", { MaxTextSize = 14, MinTextSize = 9 }, b)
+		make("UITextSizeConstraint", { MaxTextSize = 16, MinTextSize = 10 }, b)
 		make("UIPadding", {
 			PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6),
 			PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4),
@@ -1009,22 +1054,23 @@ function buildUI()
 	end
 
 	local autoBtn = mkBtn("Bám theo: TẮT", 1)
-	local walkBtn = mkBtn("Đi bộ tới người: TẮT", 2)
-	local rwBtn = mkBtn("Đi bộ khi hồi sinh: TẮT", 3)
-	local respawnBtn = mkBtn("Auto hồi sinh: TẮT", 4)
-	local mapBtn = mkBtn("Map hồi sinh: Mặc định", 5, PANEL)
-	local spawnMapBtn = mkBtn("Spawn map người chơi: TẮT", 6)
-	local noclipBtn = mkBtn("Noclip: TẮT", 7)
+	local walkFollowBtn = mkBtn("Đi bộ bám theo: TẮT", 2)
+	local walkBtn = mkBtn("Đi bộ tới người: TẮT", 3)
+	local rwBtn = mkBtn("Đi bộ khi hồi sinh: TẮT", 4)
+	local respawnBtn = mkBtn("Auto hồi sinh: TẮT", 5)
+	local mapBtn = mkBtn("Map hồi sinh: Mặc định", 6, PANEL)
+	local spawnMapBtn = mkBtn("Spawn map người chơi: TẮT", 7)
+	local noclipBtn = mkBtn("Noclip: TẮT", 8)
 
 	local speedBox = make("TextBox", {
-		LayoutOrder = 8,
+		LayoutOrder = 9,
 		BackgroundColor3 = PANEL, Text = customSpeed > 0 and tostring(customSpeed) or "",
 		PlaceholderText = "Tốc độ (trống = mặc định)",
 		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE, TextScaled = true,
 		PlaceholderColor3 = Color3.fromRGB(150, 150, 160), ClearTextOnFocus = false,
 	}, ctrl)
 	round(speedBox, 8)
-	make("UITextSizeConstraint", { MaxTextSize = 14, MinTextSize = 9 }, speedBox)
+	make("UITextSizeConstraint", { MaxTextSize = 16, MinTextSize = 10 }, speedBox)
 	make("UIPadding", {
 		PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6),
 		PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4),
@@ -1037,7 +1083,7 @@ function buildUI()
 	}, frame)
 
 	ui = { gui = gui, frame = frame, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
-		noclipBtn = noclipBtn, walkBtn = walkBtn, rwBtn = rwBtn, spawnMapBtn = spawnMapBtn, mapBtn = mapBtn,
+		noclipBtn = noclipBtn, walkBtn = walkBtn, walkFollowBtn = walkFollowBtn, rwBtn = rwBtn, spawnMapBtn = spawnMapBtn, mapBtn = mapBtn,
 		title = titleLbl, modal = modal, rows = {} }
 
 	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
@@ -1067,6 +1113,7 @@ function buildUI()
 	tap(respawnBtn, toggleRespawn)
 	tap(noclipBtn, toggleNoclip)
 	tap(walkBtn, toggleWalkMode)
+	tap(walkFollowBtn, toggleWalkFollow)
 	tap(rwBtn, toggleRespawnWalk)
 	tap(spawnMapBtn, toggleSpawnMap)
 	tap(mapBtn, cycleMap)
@@ -1093,6 +1140,7 @@ function buildUI()
 	setRespawnUI()
 	setNoclipUI()
 	setWalkUI()
+	setWalkFollowUI()
 	setRespawnWalkUI()
 	setSpawnMapUI()
 	setMapUI()
@@ -1102,6 +1150,7 @@ end
 Players.PlayerAdded:Connect(function() rebuildList() end)
 Players.PlayerRemoving:Connect(function(plr)
 	lastKnownCF[plr] = nil
+	lastKnownMap[plr] = nil
 	if selectedPlayer == plr then
 		selectedPlayer = nil
 		stopWalk()
@@ -1125,6 +1174,8 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleSpawnMap()
 	elseif input.KeyCode == RESPAWN_WALK_KEY then
 		toggleRespawnWalk()
+	elseif input.KeyCode == WALKFOLLOW_KEY then
+		toggleWalkFollow()
 	elseif input.KeyCode == WALK_KEY then
 		toggleWalkMode()
 	end
