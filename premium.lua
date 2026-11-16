@@ -42,7 +42,7 @@ local function parentGui()
 	return game:GetService("CoreGui")
 end
 local function lbl(p, t, w)
-	return mk("TextLabel", { BackgroundTransparency = 1, Text = tostring(t or ""), Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = C.txt,
+	return mk("TextLabel", { BackgroundTransparency = 1, Text = tostring(t or ""), Font = Enum.Font.BuilderSans, TextSize = 13, TextColor3 = C.txt,
 		TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
 		Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -(w or 60), 1, 0) }, p)
 end
@@ -90,7 +90,7 @@ function E.Button(self, a, b)
 	local o = cfg(a, b)
 	local r = row(self)
 	r.BackgroundColor3 = C.acc
-	local bt = mk("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = tostring(o.Title or "Button"), Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = Color3.new(1, 1, 1) }, r)
+	local bt = mk("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = tostring(o.Title or "Button"), Font = Enum.Font.BuilderSansMedium, TextSize = 13, TextColor3 = Color3.new(1, 1, 1) }, r)
 	local obj, dis = setmetatable({}, Stub), false
 	bt.Activated:Connect(function()
 		if dis then return end
@@ -116,7 +116,7 @@ function E.Slider(self, a, b)
 	local step = tonumber(o.Step) or (o.Rounding and 10 ^ -o.Rounding) or 1
 	local r = row(self, 46)
 	local t = lbl(r, o.Title, 90) t.Size = UDim2.new(1, -90, 0, 24) t.Position = UDim2.fromOffset(12, 3)
-	local vl = mk("TextLabel", { BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Right, Position = UDim2.new(1, -78, 0, 3), Size = UDim2.new(0, 66, 0, 24) }, r)
+	local vl = mk("TextLabel", { BackgroundTransparency = 1, Font = Enum.Font.BuilderSans, TextSize = 13, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Right, Position = UDim2.new(1, -78, 0, 3), Size = UDim2.new(0, 66, 0, 24) }, r)
 	local bar = mk("Frame", { Position = UDim2.new(0, 12, 0, 32), Size = UDim2.new(1, -24, 0, 5), BackgroundColor3 = C.line, BorderSizePixel = 0 }, r)
 	corner(bar, 3)
 	local fill = mk("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = C.acc, BorderSizePixel = 0 }, bar)
@@ -153,7 +153,7 @@ function E.Input(self, a, b)
 	local r = row(self)
 	lbl(r, o.Title, 170)
 	local tb = mk("TextBox", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(150, 24), BackgroundColor3 = C.bg, BorderSizePixel = 0,
-		Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.txt, PlaceholderColor3 = C.sub, PlaceholderText = tostring(o.Placeholder or ""),
+		Font = Enum.Font.BuilderSans, TextSize = 12, TextColor3 = C.txt, PlaceholderColor3 = C.sub, PlaceholderText = tostring(o.Placeholder or ""),
 		Text = tostring(o.Value ~= nil and o.Value or (o.Default ~= nil and o.Default or "")), ClearTextOnFocus = false, TextTruncate = Enum.TextTruncate.AtEnd }, r)
 	corner(tb, 6)
 	local obj = setmetatable({ Value = tb.Text }, Stub)
@@ -186,7 +186,7 @@ function E.Dropdown(self, a, b)
 	corner(r)
 	local head = mk("TextButton", { Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1, Text = "" }, r)
 	lbl(head, o.Title, 170)
-	local vl = mk("TextLabel", { BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, Position = UDim2.new(1, -152, 0, 0), Size = UDim2.new(0, 140, 1, 0) }, head)
+	local vl = mk("TextLabel", { BackgroundTransparency = 1, Font = Enum.Font.BuilderSans, TextSize = 12, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd, Position = UDim2.new(1, -152, 0, 0), Size = UDim2.new(0, 140, 1, 0) }, head)
 	local list = mk("ScrollingFrame", { Position = UDim2.fromOffset(0, 36), Size = UDim2.new(1, 0, 0, 0), BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 2, AutomaticCanvasSize = Enum.AutomaticSize.Y, CanvasSize = UDim2.new() }, r)
 	mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder }, list)
 	local isOpen = false
@@ -213,7 +213,7 @@ function E.Dropdown(self, a, b)
 		for _, c in ipairs(list:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
 		btns = {}
 		for _, v in ipairs(vals) do
-			local bt = mk("TextButton", { Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 13, Text = v, TextColor3 = C.sub }, list)
+			local bt = mk("TextButton", { Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, Font = Enum.Font.BuilderSans, TextSize = 13, Text = v, TextColor3 = C.sub }, list)
 			btns[v] = bt
 			bt.Activated:Connect(function()
 				if multi then sel[v] = (not sel[v]) or nil else sel = v isOpen = false resize() end
@@ -263,7 +263,7 @@ function E.Paragraph(self, a, b)
 	local function tl(font, size, col, order)
 		return mk("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Font = font, TextSize = size, TextColor3 = col, TextWrapped = true, RichText = true, TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, LayoutOrder = order, Text = "" }, r)
 	end
-	local t, d = tl(Enum.Font.GothamMedium, 13, C.txt, 1), tl(Enum.Font.Gotham, 12, C.sub, 2)
+	local t, d = tl(Enum.Font.BuilderSansMedium, 13, C.txt, 1), tl(Enum.Font.BuilderSans, 12, C.sub, 2)
 	t.Text = tostring(o.Title or "")
 	local desc = o.Desc or o.Content or o.Text
 	d.Text = desc ~= nil and tostring(desc) or ""
@@ -285,7 +285,7 @@ function E.Section(self, a, b)
 	local o = cfg(a, b)
 	local f = mk("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1 }, self._c)
 	mk("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0, 6) }, f)
-	mk("TextLabel", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.sub,
+	mk("TextLabel", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Font = Enum.Font.BuilderSansBold, TextSize = 11, TextColor3 = C.sub,
 		Text = string.upper(tostring(o.Title or "")), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd }, f)
 	return container(f)
 end
@@ -319,9 +319,9 @@ function Lib:Notify(o)
 		local function tl(txt, font, size, col, ord)
 			return mk("TextLabel", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, Font = font, TextSize = size, TextColor3 = col, TextWrapped = true, RichText = true, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = ord, Text = txt }, t)
 		end
-		if o.Title then tl(tostring(o.Title), Enum.Font.GothamMedium, 13, C.txt, 1) end
+		if o.Title then tl(tostring(o.Title), Enum.Font.BuilderSansMedium, 13, C.txt, 1) end
 		local body = o.Content or o.Desc
-		if body then tl(tostring(body), Enum.Font.Gotham, 12, C.sub, 2) end
+		if body then tl(tostring(body), Enum.Font.BuilderSans, 12, C.sub, 2) end
 		tw(t, { GroupTransparency = 0 })
 		task.delay(tonumber(o.Duration) or 3, function()
 			tw(t, { GroupTransparency = 1 })
@@ -359,12 +359,12 @@ function Lib:CreateWindow(o)
 	if icon:find("rbxassetid") then
 		mk("ImageLabel", { Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(22, 22), BackgroundTransparency = 1, Image = icon }, top)
 	else
-		local lg = mk("TextLabel", { Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = C.acc, Text = "U", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Color3.new(1, 1, 1) }, top)
+		local lg = mk("TextLabel", { Position = UDim2.fromOffset(12, 10), Size = UDim2.fromOffset(22, 22), BackgroundColor3 = C.acc, Text = "U", Font = Enum.Font.BuilderSansBold, TextSize = 12, TextColor3 = Color3.new(1, 1, 1) }, top)
 		corner(lg, 7)
 	end
-	mk("TextLabel", { Position = UDim2.fromOffset(42, 0), Size = UDim2.new(0, 120, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.txt, TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(o.Title or "UZEX Hub"), TextTruncate = Enum.TextTruncate.AtEnd }, top)
-	mk("TextLabel", { Position = UDim2.fromOffset(150, 0), Size = UDim2.new(1, -200, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(o.Author or ""), TextTruncate = Enum.TextTruncate.AtEnd }, top)
-	local xb = mk("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(28, 28), BackgroundTransparency = 1, Text = "✕", Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = C.sub }, top)
+	mk("TextLabel", { Position = UDim2.fromOffset(42, 0), Size = UDim2.new(0, 120, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.BuilderSansBold, TextSize = 13, TextColor3 = C.txt, TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(o.Title or "UZEX Hub"), TextTruncate = Enum.TextTruncate.AtEnd }, top)
+	mk("TextLabel", { Position = UDim2.fromOffset(150, 0), Size = UDim2.new(1, -200, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.BuilderSans, TextSize = 11, TextColor3 = C.sub, TextXAlignment = Enum.TextXAlignment.Left, Text = tostring(o.Author or ""), TextTruncate = Enum.TextTruncate.AtEnd }, top)
+	local xb = mk("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(28, 28), BackgroundTransparency = 1, Text = "✕", Font = Enum.Font.BuilderSansBold, TextSize = 14, TextColor3 = C.sub }, top)
 	corner(xb, 8)
 	mk("Frame", { Position = UDim2.new(0, 0, 1, -1), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.line, BorderSizePixel = 0 }, top)
 
@@ -403,7 +403,7 @@ function Lib:CreateWindow(o)
 	function win:Tab(a, b)
 		local o2 = cfg(a, b)
 		local idx = #tabs + 1
-		local btn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.card, BackgroundTransparency = 1, BorderSizePixel = 0, Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = C.sub, Text = tostring(o2.Title or ("Tab " .. idx)), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = tonumber(o2.Order) or idx }, side)
+		local btn = mk("TextButton", { Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = C.card, BackgroundTransparency = 1, BorderSizePixel = 0, Font = Enum.Font.BuilderSans, TextSize = 13, TextColor3 = C.sub, Text = tostring(o2.Title or ("Tab " .. idx)), TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = tonumber(o2.Order) or idx }, side)
 		corner(btn, 8)
 		mk("UIPadding", { PaddingLeft = UDim.new(0, 12) }, btn)
 		local bar = mk("Frame", { Position = UDim2.new(0, -12, 0.5, -8), Size = UDim2.fromOffset(3, 16), BackgroundColor3 = C.acc, BorderSizePixel = 0, Visible = false }, btn)
@@ -442,7 +442,7 @@ function Lib:CreateWindow(o)
 	xb.Activated:Connect(function() win:Toggle(false) end)
 
 	-- nút mở
-	local fab = mk("TextButton", { Name = "OpenButton", Position = UDim2.new(0, 14, 0.5, -23), Size = UDim2.fromOffset(46, 46), BackgroundColor3 = C.acc, Text = icon:find("rbxassetid") and "" or "U", Font = Enum.Font.GothamBold, TextSize = 17, TextColor3 = Color3.new(1, 1, 1), AutoButtonColor = false }, gui)
+	local fab = mk("TextButton", { Name = "OpenButton", Position = UDim2.new(0, 14, 0.5, -23), Size = UDim2.fromOffset(46, 46), BackgroundColor3 = C.acc, Text = icon:find("rbxassetid") and "" or "U", Font = Enum.Font.BuilderSansBold, TextSize = 17, TextColor3 = Color3.new(1, 1, 1), AutoButtonColor = false }, gui)
 	corner(fab, 14) mk("UIStroke", { Color = C.line }, fab)
 	if icon:find("rbxassetid") then mk("ImageLabel", { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(30, 30), BackgroundTransparency = 1, Image = icon }, fab) end
 	do
@@ -635,7 +635,7 @@ local function updateSkillEspBillboard(player)
         textLabel.Name = "SkillLabel"
         textLabel.BackgroundTransparency = 1
         textLabel.Size = UDim2.new(1, 0, 1, 0)
-        textLabel.Font = Enum.Font.GothamBold
+        textLabel.Font = Enum.Font.BuilderSansBold
         textLabel.TextSize = 14
         textLabel.TextColor3 = Color3.fromRGB(0, 255, 180)
         textLabel.TextStrokeTransparency = 0.4
@@ -2281,6 +2281,21 @@ end
 
 function ApplyUILanguage()
     if (getgenv().NNVN_Language or "English") == "English" then
+        pcall(function()
+            local roots = { CoreGui, LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") }
+            for _, root in ipairs(roots) do
+                for _, gui in ipairs(root and root:GetChildren() or {}) do
+                    if gui:IsA("ScreenGui") and string.find(string.lower(gui.Name), "uzx", 1, true) then
+                        for _, d in ipairs(gui:GetDescendants()) do
+                            if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                                local eng = d:GetAttribute("NNVN_EnglishText")
+                                if eng and d.Text ~= eng then d.Text = eng end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
         return
     end
     local lookupMap = {}
@@ -2294,7 +2309,7 @@ function ApplyUILanguage()
             return false
         end
         local formattedText = string.lower(tostring(instance.Name or ""))
-        if formattedText:find("wind", 1, true) or formattedText:find("nnvn", 1, true) or formattedText:find("hub", 1, true) then
+        if formattedText:find("wind", 1, true) or formattedText:find("nnvn", 1, true) or formattedText:find("hub", 1, true) or formattedText:find("uzx", 1, true) then
             return true
         end
         return false
@@ -3512,7 +3527,7 @@ function isHoldingFishingRod()
         return true
     end
     for _, item in ipairs(character:GetChildren()) do
-        if item:IsA("Tool") and (item.Name:find("Rod") or item.Name:find("Fishing")) then
+        if item:IsA("Tool") and (string.find(string.lower(item.Name), "rod", 1, true) or string.find(string.lower(item.Name), "fishing", 1, true)) then
             return true
         end
     end
@@ -4860,7 +4875,7 @@ local Window = item2:CreateWindow({
     DisableCompactingSnap = false,
     MobileOptimized = true,
     CornerRadius = 12,
-    Font = Enum.Font.Gotham,
+    Font = Enum.Font.BuilderSans,
     User = { Enabled = true, Anonymous = false }
 })
 if not Window then
@@ -5029,7 +5044,7 @@ do
                 return false
             end
             local formattedText = string.lower(instance.Name or "")
-            return formattedText:find("wind") or formattedText:find("nnvn") or formattedText:find("hub")
+            return formattedText:find("wind") or formattedText:find("nnvn") or formattedText:find("hub") or formattedText:find("uzx")
         end
         shouldSoften = function(instance)
             if not instance:IsA("GuiObject") then
@@ -8268,25 +8283,55 @@ do
         end
     end
     applyHidePlayerName = function()
-        local localPlayer = Workspace:FindFirstChild("LocalPlayer") or LocalPlayer.Character
-        local rootPart = localPlayer and localPlayer:FindFirstChild("HumanoidRootPart")
-        local equippedTitle = rootPart and rootPart:FindFirstChild("EquippedTitle")
-        local playerName = equippedTitle and equippedTitle:FindFirstChild("PlayerName")
-        if not playerName or not playerName:IsA("TextLabel") then
-            return
-        end
-        if getgenv().NNVN_HidePlayerName then
-            if getgenv().NNVN_HidePlayerNameText == nil then
-                getgenv().NNVN_HidePlayerNameText = playerName.Text
+        local function findLabels()
+            local found = {}
+            for _, root in ipairs({ Workspace:FindFirstChild("LocalPlayer"), LocalPlayer.Character }) do
+                if root then
+                    local hrp = root:FindFirstChild("HumanoidRootPart")
+                    local direct = hrp and hrp:FindFirstChild("EquippedTitle") and hrp.EquippedTitle:FindFirstChild("PlayerName")
+                    if direct and direct:IsA("TextLabel") then
+                        table.insert(found, direct)
+                    else
+                        for _, d in ipairs(root:GetDescendants()) do
+                            if d:IsA("TextLabel") and d.Name == "PlayerName" then
+                                table.insert(found, d)
+                            end
+                        end
+                    end
+                end
             end
-            playerName.Text = ""
-            playerName.Visible = false
-        else
-            playerName.Visible = true
-            if getgenv().NNVN_HidePlayerNameText ~= nil then
-                playerName.Text = getgenv().NNVN_HidePlayerNameText
+            return found
+        end
+        local hide = getgenv().NNVN_HidePlayerName
+        for _, label in ipairs(findLabels()) do
+            if hide then
+                if getgenv().NNVN_HidePlayerNameText == nil and label.Text ~= "" then
+                    getgenv().NNVN_HidePlayerNameText = label.Text
+                end
+                if label.Text ~= "" then label.Text = "" end
+                if label.Visible then label.Visible = false end
+            else
+                label.Visible = true
+                if getgenv().NNVN_HidePlayerNameText ~= nil then
+                    label.Text = getgenv().NNVN_HidePlayerNameText
+                end
             end
         end
+        local character = LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.DisplayDistanceType = hide and Enum.HumanoidDisplayDistanceType.None or Enum.HumanoidDisplayDistanceType.Viewer
+        end
+    end
+    if not getgenv()._UZX_HideNameLoop then
+        getgenv()._UZX_HideNameLoop = true
+        task.spawn(function()
+            while task.wait(0.5) do
+                if getgenv().NNVN_HidePlayerName then
+                    pcall(applyHidePlayerName)
+                end
+            end
+        end)
     end
     gameUiHideState = gameUiHideState or { items = {} }
     rememberGameUiState = function(instance)
@@ -10677,7 +10722,7 @@ do
         textLabel.BackgroundTransparency = 1
         textLabel.Position = UDim2.new(0, 16, 0, 12)
         textLabel.Size = UDim2.new(1, -96, 0, 28)
-        textLabel.Font = Enum.Font.GothamBold
+        textLabel.Font = Enum.Font.BuilderSansBold
         textLabel.TextSize = 18
         textLabel.TextXAlignment = Enum.TextXAlignment.Left
         textLabel.TextColor3 = Color3.fromRGB(32, 38, 46)
@@ -10690,7 +10735,7 @@ do
         textButton.BackgroundColor3 = Color3.fromRGB(214, 219, 226)
         textButton.TextColor3 = Color3.fromRGB(51, 65, 85)
         textButton.Text = "X"
-        textButton.Font = Enum.Font.GothamBold
+        textButton.Font = Enum.Font.BuilderSansBold
         textButton.TextSize = 14
         textButton.Parent = frame
         Instance.new("UICorner", textButton).CornerRadius = UDim.new(0, 10)
@@ -10703,7 +10748,7 @@ do
         textLabel2.BackgroundTransparency = 1
         textLabel2.Position = UDim2.new(0, 16, 0, 42)
         textLabel2.Size = UDim2.new(1, -32, 0, 18)
-        textLabel2.Font = Enum.Font.Gotham
+        textLabel2.Font = Enum.Font.BuilderSans
         textLabel2.TextSize = 12
         textLabel2.TextXAlignment = Enum.TextXAlignment.Left
         textLabel2.TextColor3 = Color3.fromRGB(100, 116, 139)
@@ -10744,7 +10789,7 @@ do
             textLabel3.BackgroundTransparency = 1
             textLabel3.Position = UDim2.new(0, 12, 0, 8)
             textLabel3.Size = UDim2.new(1, -108, 0, 18)
-            textLabel3.Font = Enum.Font.GothamBold
+            textLabel3.Font = Enum.Font.BuilderSansBold
             textLabel3.TextSize = 14
             textLabel3.TextXAlignment = Enum.TextXAlignment.Left
             textLabel3.TextColor3 = Color3.fromRGB(30, 41, 59)
@@ -10754,7 +10799,7 @@ do
             textLabel4.BackgroundTransparency = 1
             textLabel4.Position = UDim2.new(0, 12, 0, 28)
             textLabel4.Size = UDim2.new(1, -108, 0, 28)
-            textLabel4.Font = Enum.Font.Gotham
+            textLabel4.Font = Enum.Font.BuilderSans
             textLabel4.TextSize = 11
             textLabel4.TextWrapped = true
             textLabel4.TextYAlignment = Enum.TextYAlignment.Top
@@ -10768,7 +10813,7 @@ do
             textButton2.BackgroundColor3 = themeColor
             textButton2.TextColor3 = Color3.fromRGB(35, 41, 49)
             textButton2.Text = "Join"
-            textButton2.Font = Enum.Font.GothamBold
+            textButton2.Font = Enum.Font.BuilderSansBold
             textButton2.TextSize = 12
             textButton2.Parent = frame2
             Instance.new("UICorner", textButton2).CornerRadius = UDim.new(0, 10)
@@ -13699,7 +13744,7 @@ do
         textLabel.TextColor3 = thirdValue or Color3.new(1, 1, 1)
         textLabel.TextStrokeTransparency = 0.75
         textLabel.Text = type(secondValue) == "table" and tostring(secondValue.title or "") or tostring(secondValue)
-        textLabel.Font = Enum.Font.GothamBold
+        textLabel.Font = Enum.Font.BuilderSansBold
         textLabel.TextSize = 13
         local textLabel2 = Instance.new("TextLabel", billboardGui)
         textLabel2.Position = UDim2.new(0, 0, 0, 22)
@@ -13707,7 +13752,7 @@ do
         textLabel2.BackgroundTransparency = 1
         textLabel2.TextColor3 = Color3.fromRGB(220, 225, 235)
         textLabel2.TextStrokeTransparency = 0.85
-        textLabel2.Font = Enum.Font.Gotham
+        textLabel2.Font = Enum.Font.BuilderSans
         textLabel2.TextSize = 11
         local subtitle = type(secondValue) == "table" and secondValue.subtitle or nil
         if not subtitle then
@@ -14475,7 +14520,7 @@ do
             textLabel.BackgroundTransparency = 1
             textLabel.Position = UDim2.fromOffset(14, 10)
             textLabel.Size = UDim2.new(1, -28, 0, 45)
-            textLabel.Font = Enum.Font.GothamMedium
+            textLabel.Font = Enum.Font.BuilderSansMedium
             textLabel.TextColor3 = Color3.fromRGB(235, 242, 255)
             textLabel.TextSize = 14
             textLabel.TextWrapped = true
@@ -14484,7 +14529,7 @@ do
             local textButton = Instance.new("TextButton")
             textButton.Name = "Yes"
             textButton.Text = "Yes"
-            textButton.Font = Enum.Font.GothamBold
+            textButton.Font = Enum.Font.BuilderSansBold
             textButton.TextSize = 13
             textButton.TextColor3 = Color3.new(1, 1, 1)
             textButton.BackgroundColor3 = Color3.fromRGB(26, 87, 153)
@@ -14502,7 +14547,7 @@ do
             local textButton2 = Instance.new("TextButton")
             textButton2.Name = "No"
             textButton2.Text = "No"
-            textButton2.Font = Enum.Font.GothamBold
+            textButton2.Font = Enum.Font.BuilderSansBold
             textButton2.TextSize = 13
             textButton2.TextColor3 = Color3.fromRGB(220, 228, 245)
             textButton2.BackgroundColor3 = Color3.fromRGB(24, 31, 50)
@@ -14515,7 +14560,7 @@ do
             local textButton3 = Instance.new("TextButton")
             textButton3.Name = "Never"
             textButton3.Text = "Do not show again"
-            textButton3.Font = Enum.Font.GothamMedium
+            textButton3.Font = Enum.Font.BuilderSansMedium
             textButton3.TextSize = 12
             textButton3.TextColor3 = Color3.fromRGB(175, 190, 220)
             textButton3.BackgroundTransparency = 1
@@ -16550,13 +16595,34 @@ do
         end
     end)
     task.spawn(function()
+        local lastCast = 0
         while true do
-            task.wait(math.max(0.5, tonumber(getgenv().NNVN_AutoCastDelay) or 3))
-            if not getgenv().NNVN_AutoCast then
-            else
+            task.wait(0.25)
+            if getgenv().NNVN_AutoCast then
                 pcall(function()
+                    local delay = math.max(0.5, tonumber(getgenv().NNVN_AutoCastDelay) or 3)
                     local character = LocalPlayer.Character
-                    if character and not character:GetAttribute("Fishing") and not item3.Fishing.Visible and NNVN_RemoteAllowed("AutoCast", getgenv().NNVN_AutoCastDelay) then
+                    if not character or os.clock() - lastCast < delay then
+                        return
+                    end
+                    if character:GetAttribute("Fishing") or item3.Fishing.Visible then
+                        return
+                    end
+                    if not isHoldingFishingRod() then
+                        pcall(EquipSlot1)
+                        task.wait(0.4)
+                        if not isHoldingFishingRod() then
+                            return
+                        end
+                    end
+                    if not NNVN_RemoteAllowed("AutoCast", delay) then
+                        return
+                    end
+                    lastCast = os.clock()
+                    local rootPart = character:FindFirstChild("HumanoidRootPart")
+                    if rootPart then
+                        ReplicatedStorage.Events.Fishing:FireServer(rootPart.CFrame)
+                    else
                         ReplicatedStorage.Events.Fishing:FireServer()
                     end
                 end)
@@ -16567,39 +16633,45 @@ end
 
 do
     task.spawn(function()
-        local toggleHotbar = ReplicatedStorage:FindFirstChild("Events") and ReplicatedStorage.Events:FindFirstChild("ToggleHotbar")
-        if not toggleHotbar then
-            return
-        end
-        while task.wait(1) do
-            local autoCast = getgenv().NNVN_AutoCast or getgenv().NNVN_AutoBossFishing or getgenv().NNVN_AutoFarmSecretBoss or getgenv().NNVN_AutoTicket or getgenv().NNVN_AutoFarm2MFish or getgenv().NNVN_MaterialFarming or getgenv().NNVN_MaterialRodFarming or getgenv().NNVN_AutoFarmWeatherEvent
-            if autoCast and not getgenv().NNVN_AutoEquipRod then
-                activateAutoEquipRodForFarm()
-            end
-            if getgenv().NNVN_AutoEquipRod or autoCast then
-                pcall(function()
-                    if not isHoldingFishingRod() then
-                        toggleHotbar:InvokeServer("1", nil)
-                    end
-                end)
-            end
+        local lastToggle = 0
+        while task.wait(0.75) do
+            pcall(function()
+                local autoCast = getgenv().NNVN_AutoCast or getgenv().NNVN_AutoBossFishing or getgenv().NNVN_AutoFarmSecretBoss or getgenv().NNVN_AutoTicket or getgenv().NNVN_AutoFarm2MFish or getgenv().NNVN_MaterialFarming or getgenv().NNVN_MaterialRodFarming or getgenv().NNVN_AutoFarmWeatherEvent
+                if autoCast and not getgenv().NNVN_AutoEquipRod and type(activateAutoEquipRodForFarm) == "function" then
+                    activateAutoEquipRodForFarm()
+                end
+                if not (getgenv().NNVN_AutoEquipRod or autoCast) then
+                    return
+                end
+                local character = LocalPlayer.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                if not humanoid or humanoid.Health <= 0 then
+                    return
+                end
+                if isHoldingFishingRod() or os.clock() - lastToggle < 2 then
+                    return
+                end
+                lastToggle = os.clock()
+                local events = ReplicatedStorage:FindFirstChild("Events")
+                local toggleHotbar = events and events:FindFirstChild("ToggleHotbar")
+                if toggleHotbar then
+                    toggleHotbar:InvokeServer("1", nil)
+                end
+            end)
         end
     end)
     BossFarmState = getgenv().NNVN_BossFarmState
     BossKeywords = {
         "boss",
-        "raid",
-        "giant",
-        "king",
-        "lord"
+        "raid"
     }
     SecretBossKeywords = {
-        "secret",
-        "hidden",
-        "mythic",
-        "event",
-        "rare"
+        "secret"
     }
+    isUnknownBossTarget = function(target)
+        local n = target and target.Name
+        return n == nil or n == "" or n == "???"
+    end
     local bossNameSetMap = { BossNameSet = {}, SecretBossNameSet = {} }
     loadBossNameSets = function()
         table.clear(bossNameSetMap.BossNameSet)
@@ -16893,12 +16965,13 @@ do
             local currentRunId = BossFarmState.CurrentRunId
             local currentHookTarget = getCurrentHookTarget()
             local shouldFarmBossTarget2 = shouldFarmBossTarget(currentHookTarget)
-            if bossFarmEnabled() and not shouldFarmBossTarget2 then
+            local unknownTarget = isUnknownBossTarget(currentHookTarget)
+            if bossFarmEnabled() and not shouldFarmBossTarget2 and not unknownTarget then
                 BossFarmState.PendingCancel = true
                 task.delay(0.15, cancelOrReleaseNormalFish)
                 return
             end
-            if getgenv().NNVN_AutoCast or bossFarmEnabled() and shouldFarmBossTarget2 then
+            if getgenv().NNVN_AutoCast or bossFarmEnabled() and (shouldFarmBossTarget2 or unknownTarget) then
                 task.spawn(function()
                     local isEnabled = true
                     local item
@@ -16913,6 +16986,7 @@ do
                             end
                         end)
                     end
+                    local startedAt = os.clock()
                     while isEnabled do
                         if bossFarmEnabled() then
                             if currentRunId ~= BossFarmState.CurrentRunId then
@@ -16920,6 +16994,10 @@ do
                             end
                             currentHookTarget = getCurrentHookTarget()
                             shouldFarmBossTarget2 = shouldFarmBossTarget(currentHookTarget)
+                            if not shouldFarmBossTarget2 and isUnknownBossTarget(currentHookTarget) and os.clock() - startedAt < 4 then
+                                task.wait(0.1)
+                                continue
+                            end
                             if not shouldFarmBossTarget2 then
                                 BossFarmState.PendingCancel = true
                                 cancelOrReleaseNormalFish()
@@ -17033,6 +17111,9 @@ do
                 if parsedNum2 <= 500 then
                     counter = counter + 5000
                 end
+                if parsedNum2 == 1000 or parsedNum2 == 2000 then
+                    counter = counter + 6000
+                end
                 if objectListCount > 0 then
                     counter = counter + math.max(0, 2500 - math.abs(parsedNum - objectListCount) * 250)
                 end
@@ -17141,10 +17222,15 @@ do
     end
     local function resolveMax()
         local primaryValue, secondaryValue = checkAttribute5()
+        if primaryValue and not secondaryValue then
+            return primaryValue >= 998
+        end
         if not primaryValue or not secondaryValue then
             return false
         end
-        return math.max(1, math.floor(secondaryValue)) <= primaryValue
+        local cap = math.floor(secondaryValue)
+        local threshold = cap >= 1000 and (cap - 2) or math.max(1, cap)
+        return primaryValue >= threshold
     end
     local function resolveSellActionMethod()
         local sellActionMethodText = tostring(getgenv().NNVN_SellActionMethod or "Tween [Safe]")
@@ -18122,6 +18208,16 @@ do
     if (getgenv().NNVN_Language or "English") ~= "English" then
         task.delay(2, function()
             pcall(ApplyUILanguage)
+        end)
+    end
+    if not getgenv()._UZX_LangLoop then
+        getgenv()._UZX_LangLoop = true
+        task.spawn(function()
+            while task.wait(3) do
+                if (getgenv().NNVN_Language or "English") ~= "English" then
+                    pcall(ApplyUILanguage)
+                end
+            end
         end)
     end
 end
