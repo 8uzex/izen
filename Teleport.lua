@@ -600,8 +600,12 @@ local function consider(r, o, pg, names, key)
 		if not r.map or (isBtn and not r.mapBtn) or (isBtn == (r.mapBtn or false) and area < (r.mapArea or math.huge)) then
 			r.map, r.mapBtn, r.mapArea = c, isBtn, area
 		end
-	elseif key == "menu" then
+	elseif key == "defeated" or key:find("eliminatedby", 1, true) then
+		r.defeated = true
+	elseif key == "menu" or (#key <= 10 and key:sub(1, 4) == "menu") then
 		r.menu = r.menu or clickableOf(o, pg)
+	elseif #key <= 20 and key:sub(1, 7) == "respawn" then
+		r.death = r.death or clickableOf(o, pg)
 	elseif isPlayText(key) then
 		r.play = r.play or clickableOf(o, pg)
 	elseif isRespawnText(key) then
@@ -625,7 +629,7 @@ local function scanScreens(names)
 			end
 			local nk = norm(o.Name)
 			if o:IsA("GuiButton") then
-				if (matchesMap(nk, names) or nk == "menu" or nk == "play" or nk == "spawn" or nk == "respawn") and isShown(o) then
+				if (matchesMap(nk, names) or nk == "menu" or nk == "menubutton" or nk == "menubtn" or nk == "play" or nk == "spawn" or nk == "respawn") and isShown(o) then
 					consider(r, o, pg, names, nk)
 				end
 			elseif names[nk] and o.AbsoluteSize.X > 0 and isShown(o) then
@@ -727,7 +731,7 @@ local function mapRespawnStep(names)
 	local ok, r = pcall(scanScreens, names)
 	if not (ok and r) then return end
 	local function yn(v) return v and "Y" or "N" end
-	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(r.death) .. " play=" .. yn(r.play) .. " menu=" .. yn(r.menu)
+	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(r.death) .. " play=" .. yn(r.play) .. " menu=" .. yn(r.menu) .. " defeated=" .. yn(r.defeated)
 	if r.map then
 		-- Thấy map là chọn luôn (không cần chờ nút SPAWN). Có SPAWN thì bấm tiếp sau khi chọn map.
 		if os.clock() - mapClickedAt > 4 then
@@ -748,7 +752,10 @@ local function mapRespawnStep(names)
 		setStatus("Bấm Play: " .. flags)
 		press("play", r.play)
 		task.wait(0.5)
-	elseif r.menu and (r.death or r.respawn) then
+	elseif r.menu and (r.death or r.respawn or r.defeated or (function()
+			local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			return h and h.Health <= 0
+		end)()) then
 		mapClickedAt = 0
 		setStatus("Bấm MENU: " .. flags)
 		press("menu", r.menu)
