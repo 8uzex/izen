@@ -44,12 +44,21 @@ local MAPS = {
 }
 -- ====================
 
-local BG = Color3.fromRGB(25, 27, 34)
-local PANEL = Color3.fromRGB(38, 41, 52)
-local ACCENT = Color3.fromRGB(88, 130, 255)
-local ON = Color3.fromRGB(60, 190, 110)
-local OFF = Color3.fromRGB(200, 70, 70)
-local WHITE = Color3.new(1, 1, 1)
+local C = {
+	bg = Color3.fromRGB(16, 18, 25),
+	panel = Color3.fromRGB(24, 27, 37),
+	row = Color3.fromRGB(30, 34, 46),
+	rowHover = Color3.fromRGB(39, 44, 60),
+	sel = Color3.fromRGB(44, 40, 84),
+	stroke = Color3.fromRGB(48, 54, 72),
+	accent = Color3.fromRGB(124, 92, 255),
+	accent2 = Color3.fromRGB(56, 189, 248),
+	off = Color3.fromRGB(62, 68, 90),
+	danger = Color3.fromRGB(239, 84, 100),
+	white = Color3.new(1, 1, 1),
+	text = Color3.fromRGB(236, 239, 247),
+	muted = Color3.fromRGB(139, 148, 170),
+}
 
 local function getParent()
 	local ok, h = pcall(function() return gethui and gethui() end)
@@ -90,6 +99,58 @@ local function tap(btn, fn)
 	end)
 	btn.Activated:Connect(fire)
 end
+
+-- ===== Giao diện: bảng màu, hiệu ứng, logo =====
+local function tw(o, t, props, style, dir)
+	local ok, tween = pcall(function()
+		return TweenService:Create(o, TweenInfo.new(t, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out), props)
+	end)
+	if ok and tween then tween:Play() end
+	return tween
+end
+
+-- Logo vẽ bằng code (không cần upload ảnh / asset id): ghim vị trí + vòng sóng dịch chuyển trên nền gradient tím-xanh
+local function makeLogo(parent, s, props)
+	local root = make("Frame", { Size = UDim2.fromOffset(s, s), BackgroundColor3 = C.accent, BorderSizePixel = 0 }, nil)
+	for k, v in pairs(props or {}) do root[k] = v end
+	root.Parent = parent
+	round(root, s * 0.3)
+	make("UIGradient", { Color = ColorSequence.new(C.accent, C.accent2), Rotation = 45 }, root)
+
+	local function ring(wf, tr)
+		local w = s * wf
+		local f = make("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(s * 0.5, s * 0.74),
+			Size = UDim2.fromOffset(w, w * 0.36), BackgroundTransparency = 1, ZIndex = 1,
+		}, root)
+		make("UICorner", { CornerRadius = UDim.new(0.5, 0) }, f)
+		make("UIStroke", { Color = C.white, Thickness = math.max(1, s * 0.035), Transparency = tr }, f)
+	end
+	ring(0.66, 0.55)
+	ring(0.40, 0.2)
+
+	local r, cy = s * 0.19, s * 0.37
+	local h = r * 0.65
+	local side = h * math.sqrt(2)
+	local tail = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(s * 0.5, cy + r * 1.414 - h),
+		Size = UDim2.fromOffset(side, side), Rotation = 45, BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 2,
+	}, root)
+	round(tail, math.max(1, s * 0.015))
+	local head = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(s * 0.5, cy),
+		Size = UDim2.fromOffset(r * 2, r * 2), BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 3,
+	}, root)
+	round(head, r)
+	local hole = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(s * 0.5, cy),
+		Size = UDim2.fromOffset(r * 0.84, r * 0.84), BackgroundColor3 = Color3.fromRGB(90, 140, 251), BorderSizePixel = 0, ZIndex = 4,
+	}, root)
+	round(hole, r)
+	return root
+end
+
+local UI = { visToken = 0 }
 
 -- ===== Trạng thái (giữ nguyên kể cả khi UI bị dựng lại) =====
 local selectedPlayer = nil
@@ -258,8 +319,7 @@ end)
 
 function setNoclipUI()
 	if not (ui and ui.noclipBtn) then return end
-	ui.noclipBtn.Text = noclipOn and "Noclip: BẬT" or "Noclip: TẮT"
-	ui.noclipBtn.BackgroundColor3 = noclipOn and ON or OFF
+	ui.noclipBtn.set(noclipOn)
 end
 
 function toggleNoclip()
@@ -415,8 +475,7 @@ end
 
 function setTweenUI()
 	if not (ui and ui.tweenBtn) then return end
-	ui.tweenBtn.Text = tweenMode and "Tween tới người: BẬT" or "Tween tới người: TẮT"
-	ui.tweenBtn.BackgroundColor3 = tweenMode and ON or OFF
+	ui.tweenBtn.set(tweenMode)
 end
 
 function toggleTweenMode()
@@ -432,8 +491,7 @@ end
 
 function setWalkUI()
 	if not (ui and ui.walkBtn) then return end
-	ui.walkBtn.Text = walkMode and "Đi bộ tới người: BẬT" or "Đi bộ tới người: TẮT"
-	ui.walkBtn.BackgroundColor3 = walkMode and ON or OFF
+	ui.walkBtn.set(walkMode)
 end
 
 function toggleWalkMode()
@@ -472,8 +530,7 @@ end)
 
 function setAntiAfkUI()
 	if not (ui and ui.afkBtn) then return end
-	ui.afkBtn.Text = antiAfkOn and "Anti AFK: BẬT" or "Anti AFK: TẮT"
-	ui.afkBtn.BackgroundColor3 = antiAfkOn and ON or OFF
+	ui.afkBtn.set(antiAfkOn)
 end
 
 function toggleAntiAfk()
@@ -483,8 +540,7 @@ end
 
 function setFollowUI()
 	if not (ui and ui.autoBtn) then return end
-	ui.autoBtn.Text = followOn and "Bám theo: BẬT" or "Bám theo: TẮT"
-	ui.autoBtn.BackgroundColor3 = followOn and ON or OFF
+	ui.autoBtn.set(followOn)
 end
 
 function toggleFollow()
@@ -661,9 +717,14 @@ local function scanScreens(names)
 end
 
 function setStatus(txt)
-	if not (ui and ui.title and ui.title.Parent) then return end
-	ui.title.Text = txt or "Teleport tới người chơi"
-	ui.title.TextSize = txt and 11 or 16
+	if not (ui and ui.sub and ui.sub.Parent) then return end
+	local s = txt
+	if not s then
+		s = (selectedPlayer and selectedPlayer.Parent == Players) and ("Đang chọn: " .. selectedPlayer.DisplayName)
+			or "Chọn một người chơi để dịch chuyển"
+	end
+	if ui.sub.Text ~= s then ui.sub.Text = s end
+	ui.sub.TextColor3 = txt and C.accent2 or C.muted
 end
 
 local function centerOf(obj)
@@ -1036,8 +1097,7 @@ end)
 
 function setSpawnMapUI()
 	if not (ui and ui.spawnMapBtn) then return end
-	ui.spawnMapBtn.Text = spawnAtPlayerMap and "Spawn map người chơi: BẬT" or "Spawn map người chơi: TẮT"
-	ui.spawnMapBtn.BackgroundColor3 = spawnAtPlayerMap and ON or OFF
+	ui.spawnMapBtn.set(spawnAtPlayerMap)
 end
 
 function toggleSpawnMap()
@@ -1106,8 +1166,7 @@ end
 
 function setRespawnUI()
 	if not (ui and ui.respawnBtn) then return end
-	ui.respawnBtn.Text = respawnOn and "Auto hồi sinh: BẬT" or "Auto hồi sinh: TẮT"
-	ui.respawnBtn.BackgroundColor3 = respawnOn and ON or OFF
+	ui.respawnBtn.set(respawnOn)
 end
 
 function toggleRespawn()
@@ -1117,8 +1176,7 @@ end
 
 function setMapUI()
 	if not (ui and ui.mapBtn) then return end
-	ui.mapBtn.Text = respawnMap and ("Map hồi sinh: " .. respawnMap) or "Map hồi sinh: Mặc định"
-	ui.mapBtn.BackgroundColor3 = respawnMap and ACCENT or PANEL
+	ui.mapBtn.set(respawnMap)
 end
 
 function cycleMap()
@@ -1136,27 +1194,73 @@ end
 function setVisible(v)
 	uiVisible = v
 	if not ui then return end
-	ui.frame.Visible = v
 	ui.modal.Modal = v -- Modal = true giúp con trỏ không bị game khoá, luôn bấm được nút
+	UI.visToken = UI.visToken + 1
+	local token, frame, scale = UI.visToken, ui.frame, ui.scale
+	if v then
+		frame.Visible = true
+		tw(scale, 0.3, { Scale = 1 }, Enum.EasingStyle.Back)
+		tw(frame, 0.2, { GroupTransparency = 0 })
+	else
+		tw(scale, 0.18, { Scale = 0.92 })
+		tw(frame, 0.18, { GroupTransparency = 1 })
+		task.delay(0.2, function()
+			if UI.visToken == token and ui and ui.frame == frame then frame.Visible = false end
+		end)
+	end
+end
+
+-- Cập nhật màu dòng đang chọn (có hiệu ứng, không dựng lại danh sách nên không bị giật/mất vị trí cuộn)
+function UI.refresh()
+	if not (ui and ui.rowMap) then return end
+	for plr, e in pairs(ui.rowMap) do
+		local sel = plr == selectedPlayer
+		tw(e.row, 0.18, { BackgroundColor3 = sel and C.sel or C.row })
+		tw(e.stroke, 0.18, { Transparency = sel and 0 or 1 })
+	end
+	setStatus(nil)
 end
 
 function rebuildList()
 	if not (ui and ui.list and ui.list.Parent) then return end
 	for _, r in ipairs(ui.rows) do r:Destroy() end
-	ui.rows = {}
+	ui.rows, ui.rowMap = {}, {}
 	local q = filterText:lower()
+	local n = 0
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= player then
 			local label = plr.DisplayName .. " (@" .. plr.Name .. ")"
 			if q == "" or label:lower():find(q, 1, true) then
-				local btn = make("TextButton", {
-					Size = UDim2.new(1, 0, 0, 44),
-					BackgroundColor3 = (selectedPlayer == plr) and ACCENT or BG,
-					Text = label, Font = Enum.Font.Gotham, TextSize = 13,
-					TextColor3 = WHITE, TextTruncate = Enum.TextTruncate.AtEnd,
+				n = n + 1
+				local sel = selectedPlayer == plr
+				local row = make("TextButton", {
+					Size = UDim2.new(1, 0, 0, 44), BackgroundColor3 = sel and C.sel or C.row,
+					Text = "", AutoButtonColor = false, LayoutOrder = n,
 				}, ui.list)
-				round(btn, 6)
-				tap(btn, function()
+				round(row, 10)
+				local stroke = make("UIStroke", { Color = C.accent, Thickness = 1.5, Transparency = sel and 0 or 1 }, row)
+				local av = make("ImageLabel", {
+					Position = UDim2.fromOffset(7, 7), Size = UDim2.fromOffset(30, 30), BackgroundColor3 = C.panel,
+					Image = "rbxthumb://type=AvatarHeadShot&id=" .. plr.UserId .. "&w=60&h=60", BorderSizePixel = 0,
+				}, row)
+				round(av, 15)
+				make("TextLabel", {
+					Position = UDim2.fromOffset(44, 6), Size = UDim2.new(1, -50, 0, 17), BackgroundTransparency = 1,
+					Text = plr.DisplayName, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.text,
+					TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+				}, row)
+				make("TextLabel", {
+					Position = UDim2.fromOffset(44, 23), Size = UDim2.new(1, -50, 0, 14), BackgroundTransparency = 1,
+					Text = "@" .. plr.Name, Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted,
+					TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+				}, row)
+				row.MouseEnter:Connect(function()
+					if selectedPlayer ~= plr then tw(row, 0.12, { BackgroundColor3 = C.rowHover }) end
+				end)
+				row.MouseLeave:Connect(function()
+					tw(row, 0.15, { BackgroundColor3 = selectedPlayer == plr and C.sel or C.row })
+				end)
+				tap(row, function()
 					selectedPlayer = plr
 					selectT = os.clock()
 					if tweenMode and not followOn then
@@ -1166,11 +1270,19 @@ function rebuildList()
 					else
 						teleportToPlayer(plr)
 					end
-					rebuildList()
+					UI.refresh()
 				end)
-				table.insert(ui.rows, btn)
+				table.insert(ui.rows, row)
+				ui.rowMap[plr] = { row = row, stroke = stroke }
 			end
 		end
+	end
+	if n == 0 then
+		local e = make("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, Text = "Không có người chơi nào",
+			Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = C.muted,
+		}, ui.list)
+		table.insert(ui.rows, e)
 	end
 end
 
@@ -1182,126 +1294,210 @@ function buildUI()
 	-- Kích thước bảng tự co theo màn hình (điện thoại nằm ngang ~ 390px cao)
 	local cam = workspace.CurrentCamera
 	local vp = cam and cam.ViewportSize or Vector2.new(800, 400)
-	local W = math.clamp(math.floor(vp.X * 0.9), 300, 540)
-	local H = math.clamp(math.floor(vp.Y * 0.9), 220, 340)
+	local W = math.clamp(math.floor(vp.X * 0.9), 320, 520)
+	local H = math.clamp(math.floor(vp.Y * 0.88), 240, 330)
+	local hasKeys = UserInputService.KeyboardEnabled
+	local LW = 0.4 -- độ rộng cột trái (danh sách người chơi)
 
 	local gui = make("ScreenGui", {
 		Name = "TeleportExecUI", ResetOnSpawn = false, DisplayOrder = 999999,
 		ZIndexBehavior = Enum.ZIndexBehavior.Sibling, IgnoreGuiInset = true,
 	}, parent)
 
-	local toggleBtn = make("TextButton", {
-		Size = UDim2.fromOffset(56, 56), Position = UDim2.new(0, 10, 0.5, -28),
-		BackgroundColor3 = ACCENT, Text = "📍", TextSize = 22,
-	}, gui)
-	round(toggleBtn, 28)
+	-- Nút logo mở/đóng bảng
+	local launcher = makeLogo(gui, 52, { Position = UDim2.new(0, 12, 0.5, -26) })
+	make("UIStroke", { Color = C.white, Thickness = 1.5, Transparency = 0.7 }, launcher)
+	local lscale = make("UIScale", {}, launcher)
+	local hit = make("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 10 }, launcher)
+	hit.MouseEnter:Connect(function() tw(lscale, 0.15, { Scale = 1.08 }) end)
+	hit.MouseLeave:Connect(function() tw(lscale, 0.15, { Scale = 1 }) end)
+	hit.InputBegan:Connect(function(i) if isPointer(i) then tw(lscale, 0.1, { Scale = 0.92 }) end end)
+	hit.InputEnded:Connect(function(i) if isPointer(i) then tw(lscale, 0.2, { Scale = 1 }, Enum.EasingStyle.Back) end end)
 
-	local frame = make("Frame", {
-		Size = UDim2.fromOffset(W, H),
-		Position = savedFramePos or UDim2.new(0, math.clamp(64, 0, math.max(0, vp.X - W)), 0.5, -math.floor(H / 2)),
-		BackgroundColor3 = BG, Visible = uiVisible, Active = true,
+	-- Bảng chính
+	local frame = make("CanvasGroup", {
+		AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(W, H),
+		Position = savedFramePos or UDim2.new(0, math.clamp(76 + W / 2, W / 2, math.max(W / 2, vp.X - W / 2)), 0.5, 0),
+		BackgroundColor3 = C.bg, BorderSizePixel = 0, Active = true,
+		Visible = uiVisible, GroupTransparency = uiVisible and 0 or 1,
 	}, gui)
-	round(frame, 12)
+	round(frame, 14)
+	local scale = make("UIScale", { Scale = uiVisible and 1 or 0.92 }, frame)
+	local border = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, ZIndex = 50 }, frame)
+	round(border, 14)
+	make("UIStroke", { Color = C.stroke, Thickness = 1 }, border)
 
-	-- Thanh tiêu đề: kéo để di chuyển bảng, nút ✕ để đóng
-	local titleBar = make("Frame", { Size = UDim2.new(1, 0, 0, 38), BackgroundTransparency = 1, Active = true }, frame)
-	local titleLbl = make("TextLabel", {
-		TextTruncate = Enum.TextTruncate.AtEnd,
-		Size = UDim2.new(1, -56, 1, 0), Position = UDim2.fromOffset(10, 0),
-		BackgroundTransparency = 1, Text = "Teleport tới người chơi", Font = Enum.Font.GothamBold,
-		TextSize = 16, TextColor3 = WHITE, TextXAlignment = Enum.TextXAlignment.Left,
-	}, titleBar)
+	-- Thanh tiêu đề: kéo để di chuyển bảng
+	local header = make("Frame", { Size = UDim2.new(1, 0, 0, 52), BackgroundColor3 = C.panel, BorderSizePixel = 0, Active = true }, frame)
+	makeLogo(header, 32, { Position = UDim2.fromOffset(12, 10) })
+	make("TextLabel", {
+		Position = UDim2.fromOffset(54, 8), Size = UDim2.new(1, -110, 0, 19), BackgroundTransparency = 1,
+		Text = "Teleport", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.text,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, header)
+	local sub = make("TextLabel", {
+		Position = UDim2.fromOffset(54, 27), Size = UDim2.new(1, -110, 0, 15), BackgroundTransparency = 1,
+		Text = "Chọn một người chơi để dịch chuyển", Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted,
+		TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
+	}, header)
 	local closeBtn = make("TextButton", {
-		Size = UDim2.fromOffset(42, 32), Position = UDim2.new(1, -48, 0, 4),
-		BackgroundColor3 = OFF, Text = "✕", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = WHITE,
-	}, titleBar)
-	round(closeBtn, 6)
+		Size = UDim2.fromOffset(30, 30), Position = UDim2.new(1, -42, 0, 11), BackgroundColor3 = C.row,
+		Text = "✕", Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.muted, AutoButtonColor = false,
+	}, header)
+	round(closeBtn, 15)
+	closeBtn.MouseEnter:Connect(function() tw(closeBtn, 0.12, { BackgroundColor3 = C.danger, TextColor3 = C.white }) end)
+	closeBtn.MouseLeave:Connect(function() tw(closeBtn, 0.15, { BackgroundColor3 = C.row, TextColor3 = C.muted }) end)
+	make("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = C.stroke, BorderSizePixel = 0 }, header)
 
 	-- Cột trái: tìm kiếm + danh sách người chơi
 	local searchBox = make("TextBox", {
-		Size = UDim2.new(0.38, -12, 0, 36), Position = UDim2.fromOffset(8, 40),
-		BackgroundColor3 = PANEL, Text = filterText, PlaceholderText = "Tìm tên...",
-		Font = Enum.Font.Gotham, TextSize = 14, TextColor3 = WHITE,
-		PlaceholderColor3 = Color3.fromRGB(150, 150, 160), ClearTextOnFocus = false,
+		Size = UDim2.new(LW, -14, 0, 32), Position = UDim2.fromOffset(10, 62), BackgroundColor3 = C.row,
+		Text = filterText, PlaceholderText = "Tìm người chơi...", Font = Enum.Font.Gotham, TextSize = 13,
+		TextColor3 = C.text, PlaceholderColor3 = C.muted, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
 	}, frame)
-	round(searchBox, 8)
+	round(searchBox, 9)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 8) }, searchBox)
+	local searchStroke = make("UIStroke", { Color = C.stroke, Thickness = 1 }, searchBox)
+	searchBox.Focused:Connect(function() tw(searchStroke, 0.15, { Color = C.accent }) end)
+	searchBox.FocusLost:Connect(function() tw(searchStroke, 0.2, { Color = C.stroke }) end)
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(0.38, -12, 1, -88), Position = UDim2.fromOffset(8, 80),
-		BackgroundColor3 = PANEL, BorderSizePixel = 0, ScrollBarThickness = 4,
+		Size = UDim2.new(LW, -14, 1, -104), Position = UDim2.fromOffset(10, 100), BackgroundTransparency = 1,
+		BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.stroke,
 		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, frame)
-	round(list, 8)
-	make("UIListLayout", { Padding = UDim.new(0, 4) }, list)
-	make("UIPadding", {
-		PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4),
-		PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4),
-	}, list)
+	make("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+	make("UIPadding", { PaddingRight = UDim.new(0, 5) }, list)
 
-	-- Cột phải: các nút điều khiển (cuộn được, nút to dễ chạm)
+	-- Cột phải: công tắc điều khiển
 	local ctrl = make("ScrollingFrame", {
-		Size = UDim2.new(0.62, -10, 1, -48), Position = UDim2.new(0.38, 2, 0, 40),
-		BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+		Size = UDim2.new(1 - LW, -14, 1, -62), Position = UDim2.new(LW, 4, 0, 62), BackgroundTransparency = 1,
+		BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.stroke,
 		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	}, frame)
-	make("UIPadding", { PaddingRight = UDim.new(0, 6) }, ctrl)
-	make("UIGridLayout", {
-		CellSize = UDim2.new(0.5, -3, 0, 46), CellPadding = UDim2.fromOffset(6, 6),
-		SortOrder = Enum.SortOrder.LayoutOrder,
-	}, ctrl)
+	make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, ctrl)
+	make("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 10) }, ctrl)
 
-	local function mkBtn(text, order, color)
-		local b = make("TextButton", {
-			Size = UDim2.new(1, 0, 0, 46), BackgroundColor3 = color or OFF, Text = text,
-			Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE,
-			TextScaled = true, LayoutOrder = order,
+	local function mkSection(order, text)
+		make("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 18), BackgroundTransparency = 1, Text = text, Font = Enum.Font.GothamBold,
+			TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = order,
 		}, ctrl)
-		round(b, 8)
-		make("UITextSizeConstraint", { MaxTextSize = 16, MinTextSize = 10 }, b)
-		make("UIPadding", {
-			PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6),
-			PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4),
-		}, b)
-		return b
 	end
 
-	local autoBtn = mkBtn("Bám theo: TẮT", 1)
-	local walkBtn = mkBtn("Đi bộ tới người: TẮT", 2)
-	local tweenBtn = mkBtn("Tween tới người: TẮT", 3)
-	local respawnBtn = mkBtn("Auto hồi sinh: TẮT", 4)
-	local mapBtn = mkBtn("Map hồi sinh: Mặc định", 5, PANEL)
-	local spawnMapBtn = mkBtn("Spawn map người chơi: TẮT", 6)
-	local noclipBtn = mkBtn("Noclip: TẮT", 7)
-	local afkBtn = mkBtn("Anti AFK: BẬT", 8)
+	local function mkRow(order, text, rightPad)
+		local row = make("TextButton", {
+			Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.row, Text = "", AutoButtonColor = false, LayoutOrder = order,
+		}, ctrl)
+		round(row, 10)
+		local lbl = make("TextLabel", {
+			Size = UDim2.new(1, -rightPad, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
+			Text = text, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.text, TextScaled = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, row)
+		make("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 8 }, lbl)
+		row.MouseEnter:Connect(function() tw(row, 0.12, { BackgroundColor3 = C.rowHover }) end)
+		row.MouseLeave:Connect(function() tw(row, 0.15, { BackgroundColor3 = C.row }) end)
+		return row
+	end
 
+	-- Dòng công tắc: chữ + (phím tắt trên PC) + switch trượt mượt. Trả về nút bấm + đối tượng có :set(bật/tắt)
+	local function mkToggle(order, text, key)
+		local row = mkRow(order, text, hasKeys and 98 or 70)
+		if hasKeys and key then
+			local tag = make("TextLabel", {
+				AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -60, 0.5, 0), Size = UDim2.fromOffset(22, 20),
+				BackgroundColor3 = C.panel, Text = key, Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.muted,
+			}, row)
+			round(tag, 6)
+		end
+		local track = make("Frame", {
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(40, 22),
+			BackgroundColor3 = C.off, BorderSizePixel = 0,
+		}, row)
+		round(track, 11)
+		local knob = make("Frame", {
+			AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 3, 0.5, 0), Size = UDim2.fromOffset(16, 16),
+			BackgroundColor3 = C.white, BorderSizePixel = 0,
+		}, track)
+		round(knob, 8)
+		local obj = { state = nil }
+		function obj.set(on)
+			on = on and true or false
+			if obj.state == on then return end
+			local first = obj.state == nil
+			obj.state = on
+			local col = on and C.accent or C.off
+			local pos = on and UDim2.new(0, 21, 0.5, 0) or UDim2.new(0, 3, 0.5, 0)
+			if first then
+				track.BackgroundColor3, knob.Position = col, pos
+			else
+				tw(track, 0.18, { BackgroundColor3 = col })
+				tw(knob, 0.22, { Position = pos }, Enum.EasingStyle.Back)
+			end
+		end
+		return row, obj
+	end
+
+	mkSection(1, "DỊCH CHUYỂN")
+	local autoRow, autoBtn = mkToggle(2, "Bám theo", "K")
+	local walkRow, walkBtn = mkToggle(3, "Đi bộ tới người", "B")
+	local tweenRow, tweenBtn = mkToggle(4, "Bay (tween) tới người", "T")
+	mkSection(5, "HỒI SINH")
+	local respawnRow, respawnBtn = mkToggle(6, "Auto hồi sinh", "J")
+	local mapRow = mkRow(7, "Map hồi sinh", 110)
+	local mapPill = make("TextLabel", {
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(96, 24),
+		BackgroundColor3 = C.panel, Text = "Mặc định", Font = Enum.Font.GothamBold, TextSize = 12,
+		TextColor3 = C.muted, TextScaled = true,
+	}, mapRow)
+	round(mapPill, 8)
+	make("UITextSizeConstraint", { MaxTextSize = 12, MinTextSize = 8 }, mapPill)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, mapPill)
+	local mapBtn = { set = function(name)
+		mapPill.Text = name or "Mặc định"
+		tw(mapPill, 0.2, { TextColor3 = name and C.accent2 or C.muted })
+	end }
+	local spawnMapRow, spawnMapBtn = mkToggle(8, "Spawn map người chơi", "M")
+	mkSection(9, "KHÁC")
+	local noclipRow, noclipBtn = mkToggle(10, "Noclip", "N")
+	local afkRow, afkBtn = mkToggle(11, "Anti AFK", "U")
+
+	local speedRow = make("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.row, LayoutOrder = 12 }, ctrl)
+	round(speedRow, 10)
+	local speedLbl = make("TextLabel", {
+		Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
+		Text = "Tốc độ chạy", Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.text, TextScaled = true,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, speedRow)
+	make("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 8 }, speedLbl)
 	local speedBox = make("TextBox", {
-		LayoutOrder = 9,
-		BackgroundColor3 = PANEL, Text = customSpeed > 0 and tostring(customSpeed) or "",
-		PlaceholderText = "Tốc độ (trống = mặc định)",
-		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE, TextScaled = true,
-		PlaceholderColor3 = Color3.fromRGB(150, 150, 160), ClearTextOnFocus = false,
-	}, ctrl)
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(96, 26),
+		BackgroundColor3 = C.panel, Text = customSpeed > 0 and tostring(customSpeed) or "", PlaceholderText = "mặc định",
+		Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, PlaceholderColor3 = C.muted, ClearTextOnFocus = false,
+	}, speedRow)
 	round(speedBox, 8)
-	make("UITextSizeConstraint", { MaxTextSize = 16, MinTextSize = 10 }, speedBox)
-	make("UIPadding", {
-		PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6),
-		PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 4),
-	}, speedBox)
+	local speedStroke = make("UIStroke", { Color = C.panel, Thickness = 1 }, speedBox)
+	speedBox.Focused:Connect(function() tw(speedStroke, 0.15, { Color = C.accent }) end)
+
+	if hasKeys then
+		make("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Text = "RightShift: ẩn / hiện bảng",
+			Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, LayoutOrder = 13,
+		}, ctrl)
+	end
 
 	-- Nút ẩn dùng để bật Modal (mở khoá con trỏ chuột khi bảng đang hiện)
-	local modal = make("TextButton", {
-		Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "",
-		Modal = uiVisible,
-	}, frame)
+	local modal = make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = uiVisible }, frame)
 
-	ui = { gui = gui, frame = frame, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
+	ui = { gui = gui, frame = frame, scale = scale, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
 		noclipBtn = noclipBtn, walkBtn = walkBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, spawnMapBtn = spawnMapBtn, mapBtn = mapBtn,
-		title = titleLbl, modal = modal, rows = {} }
+		sub = sub, modal = modal, rows = {}, rowMap = {} }
 
 	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
 	if dragConn then dragConn:Disconnect(); dragConn = nil end
 	local dragging, dragStart, startPos = false, nil, nil
-	titleBar.InputBegan:Connect(function(input)
+	header.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging, dragStart, startPos = true, input.Position, frame.Position
 			input.Changed:Connect(function()
@@ -1319,17 +1515,18 @@ function buildUI()
 		end
 	end)
 
-	tap(toggleBtn, function() setVisible(not uiVisible) end)
+	tap(hit, function() setVisible(not uiVisible) end)
 	tap(closeBtn, function() setVisible(false) end)
-	tap(autoBtn, toggleFollow)
-	tap(respawnBtn, toggleRespawn)
-	tap(noclipBtn, toggleNoclip)
-	tap(walkBtn, toggleWalkMode)
-	tap(tweenBtn, toggleTweenMode)
-	tap(afkBtn, toggleAntiAfk)
-	tap(spawnMapBtn, toggleSpawnMap)
-	tap(mapBtn, cycleMap)
+	tap(autoRow, toggleFollow)
+	tap(respawnRow, toggleRespawn)
+	tap(noclipRow, toggleNoclip)
+	tap(walkRow, toggleWalkMode)
+	tap(tweenRow, toggleTweenMode)
+	tap(afkRow, toggleAntiAfk)
+	tap(spawnMapRow, toggleSpawnMap)
+	tap(mapRow, cycleMap)
 	speedBox.FocusLost:Connect(function()
+		tw(speedStroke, 0.2, { Color = C.panel })
 		local n = tonumber(speedBox.Text)
 		if n and n > 0 then
 			customSpeed = math.clamp(n, 1, 500)
@@ -1356,6 +1553,7 @@ function buildUI()
 	setAntiAfkUI()
 	setSpawnMapUI()
 	setMapUI()
+	setStatus(nil)
 end
 
 -- ===== Sự kiện =====
