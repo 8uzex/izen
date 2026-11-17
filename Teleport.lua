@@ -684,30 +684,77 @@ end
 
 -- ===== Hồi sinh theo map đã chọn: MENU -> Play -> chọn map -> SPAWN =====
 -- (mapIdx == 0: không chọn map => chỉ bấm RESPAWN, không đụng tới MENU)
+
+-- Danh sách map thường nằm trong ScrollingFrame: map ở dưới bị che nhưng vẫn "nằm trong màn hình",
+-- bấm vào sẽ trúng chỗ khác. Cuộn danh sách để nút map hiện ra trước khi bấm.
+local function scrollIntoView(obj)
+	local cur = obj.Parent
+	while cur and cur ~= game do
+		if cur:IsA("ScrollingFrame") then
+			pcall(function()
+				local sp, ss = cur.AbsolutePosition, cur.AbsoluteSize
+				local c = obj.AbsolutePosition + obj.AbsoluteSize / 2
+				local pad = 6
+				if c.Y < sp.Y + pad or c.Y > sp.Y + ss.Y - pad or c.X < sp.X + pad or c.X > sp.X + ss.X - pad then
+					local want = cur.CanvasPosition + (c - (sp + ss / 2))
+					local maxp = cur.AbsoluteCanvasSize - cur.AbsoluteWindowSize
+					cur.CanvasPosition = Vector2.new(
+						math.clamp(want.X, 0, math.max(0, maxp.X)),
+						math.clamp(want.Y, 0, math.max(0, maxp.Y)))
+					task.wait(0.15)
+				end
+			end)
+		end
+		cur = cur.Parent
+	end
+end
+
+-- Bấm ĐÚNG 1 lần (không lặp nhiều kiểu như press) để nút chọn map không bị bật/tắt lại
+local function clickOnce(obj)
+	scrollIntoView(obj)
+	if obj:IsA("GuiButton") and (firesignal or getconnections) then
+		pcall(fireSignals, obj)
+	end
+	if UserInputService.TouchEnabled and not UserInputService.MouseEnabled then
+		vimTap(obj)
+	else
+		vimClick(obj)
+	end
+end
+
+local mapClickedAt = 0
 local function mapRespawnStep(names)
 	local ok, r = pcall(scanScreens, names)
 	if not (ok and r) then return end
 	local function yn(v) return v and "Y" or "N" end
 	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(r.death) .. " play=" .. yn(r.play) .. " menu=" .. yn(r.menu)
-	if r.map and r.respawn then
-		setStatus("Chọn map: " .. flags)
-		press("map", r.map)
-		task.wait(0.5) -- chờ game nhận map đã chọn (nếu bấm SPAWN quá sớm game dùng map mặc định)
-		local ok3, r3 = pcall(scanScreens, names)
-		if ok3 and r3 and r3.map and r3.map.Parent then press("map", r3.map); task.wait(0.3) end
-		press("respawn", (ok3 and r3 and r3.respawn) or r.respawn)
-		task.wait(0.9)
+	if r.map then
+		-- Thấy map là chọn luôn (không cần chờ nút SPAWN). Có SPAWN thì bấm tiếp sau khi chọn map.
+		if os.clock() - mapClickedAt > 4 then
+			setStatus("Chọn map " .. tostring(respawnMap) .. ": " .. flags)
+			clickOnce(r.map)
+			mapClickedAt = os.clock()
+			task.wait(0.7)
+		elseif r.respawn then
+			setStatus("SPAWN " .. tostring(respawnMap) .. ": " .. flags)
+			local ok3, r3 = pcall(scanScreens, names)
+			clickOnce((ok3 and r3 and r3.respawn) or r.respawn)
+			task.wait(1)
+		else
+			task.wait(0.3)
+		end
 	elseif r.play then
+		mapClickedAt = 0
 		setStatus("Bấm Play: " .. flags)
 		press("play", r.play)
-		task.wait(0.4)
+		task.wait(0.5)
 	elseif r.menu and (r.death or r.respawn) then
+		mapClickedAt = 0
 		setStatus("Bấm MENU: " .. flags)
 		press("menu", r.menu)
-		task.wait(0.4)
+		task.wait(0.6)
 	else
 		setStatus("Đang chờ: " .. flags)
-		tries = {}
 	end
 end
 
