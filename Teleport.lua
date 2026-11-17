@@ -15,7 +15,6 @@ local FOLLOW_KEY = Enum.KeyCode.K                  -- phím bật/tắt bám the
 local RESPAWN_KEY = Enum.KeyCode.J                 -- phím bật/tắt auto hồi sinh (PC)
 local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (PC)
 local TWEEN_KEY = Enum.KeyCode.T                  -- phím bật/tắt chế độ tween tới người chơi (PC)
-local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
 local ANTIAFK_KEY = Enum.KeyCode.U                -- phím bật/tắt anti AFK (PC)
 local FLY_UP_SPEED = 30                            -- tốc độ bay (chậm) khi người chơi ở trên cao (stud/giây)
 local FLY_START_HEIGHT = 6                         -- người chơi cao hơn mình chừng này stud thì bật bay
@@ -28,7 +27,6 @@ local TWEEN_MAX_SPEED = 2000                       -- tốc độ bay tối đa 
 local HOLD_RADIUS = 6                              -- người chơi bị unload (không thấy): tới gần chỗ đoán này thì đứng chờ game tải, không giật qua lại
 local STALE_EXTRAPOLATE = 2                        -- khi mất dấu người chơi, đoán tiếp vị trí theo vận tốc cũ tối đa chừng này giây
 local STALE_MAX_VEL = 120                          -- giới hạn vận tốc dùng để đoán (stud/giây)
-local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
 local DEFAULT_SPEED = 0                            -- tốc độ chạy (WalkSpeed). 0 = giữ mặc định của game
 -- Danh sách map ở màn hình LOCATIONS / Địa điểm. Mỗi map có tên tiếng Anh + tiếng Việt (không phân biệt hoa/thường).
 -- Phần tử đầu tiên là tên hiện trên nút của bảng.
@@ -166,10 +164,6 @@ local tweenMode = false     -- chế độ: chọn người chơi thì tween (ba
 local tweening = false
 local tweenToken = 0
 local tweenConn = nil
-local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
-local walking = false       -- đang đi bộ
-local flyConn = nil           -- vòng bay lên (chỉ chạy khi đang đi bộ tới người ở trên cao)
-local walkToken = 0         -- đổi số này để dừng vòng đi bộ cũ
 local customSpeed = DEFAULT_SPEED -- tốc độ chạy hiện tại (chỉnh được trên bảng, 0 = mặc định)
 local mapIdx = 0            -- 0 = mặc định (bấm nút RESPAWN), 1.. = chọn map trong MAPS
 local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện trên nút)
@@ -180,9 +174,10 @@ local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại 
 local savedFramePos = nil   -- nhớ vị trí bảng khi bị kéo, để UI dựng lại vẫn giữ chỗ cũ
 local rebuildList, setFollowUI, setVisible, toggleFollow, buildUI
 local setRespawnUI, toggleRespawn
-local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
+local setNoclipUI, toggleNoclip
 local setTweenUI, toggleTweenMode, stopTween, startTween
 local setStatus
+local diagMsg = nil -- lý do chức năng dịch chuyển chưa chạy (hiện ở dòng trạng thái)
 local setMapUI, cycleMap
 local setAntiAfkUI, toggleAntiAfk
 
@@ -198,10 +193,48 @@ local function requestStream(pos)
 	task.spawn(function() pcall(function() workspace:RequestStreamAroundAsync(pos, 1) end) end)
 end
 
+local function rootOf(char)
+	if not char then return nil end
+	return char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart or char:FindFirstChildWhichIsA("BasePart", true)
+end
+local function myRoot()
+	return rootOf(player.Character)
+end
+
+-- Một số game (kaiju...) để nhân vật thật ở thư mục khác, plr.Character có thể trống hoặc là nhân vật sảnh:
+-- nếu không thấy thì tìm model mang tên người chơi trong workspace (có cache, quét tối đa mỗi 1.5 giây)
+local modelCache, modelScanT = {}, {}
+local function findModelByName(plr)
+	local m = modelCache[plr]
+	if m and m.Parent and rootOf(m) then return m end
+	modelCache[plr] = nil
+	if os.clock() - (modelScanT[plr] or 0) < 1.5 then return nil end
+	modelScanT[plr] = os.clock()
+	local n1, n2 = string.lower(plr.Name), string.lower(plr.DisplayName)
+	local found
+	pcall(function()
+		for _, d in ipairs(workspace:GetDescendants()) do
+			if d:IsA("Model") and d ~= player.Character then
+				local ln = string.lower(d.Name)
+				local own = d:GetAttribute("Owner") or d:GetAttribute("Player") or d:GetAttribute("UserId")
+				if ln == n1 or ln == n2 or own == plr.Name or own == plr.UserId or own == plr.DisplayName then
+					if rootOf(d) then found = d break end
+				end
+			end
+		end
+	end)
+	modelCache[plr] = found
+	return found
+end
+
 local function playerCF(plr)
 	if not plr then return nil end
 	local char = plr.Character
-	local r = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
+	local r = rootOf(char)
+	if not r then
+		local m = findModelByName(plr)
+		r = m and rootOf(m)
+	end
 	if r then
 		lastKnownCF[plr] = r.CFrame
 		local v = r.AssemblyLinearVelocity
@@ -230,7 +263,7 @@ end
 
 local function teleportToPlayer(plr)
 	local cf = targetCF(plr)
-	local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+	local root = myRoot()
 	if cf and root then root.CFrame = cf + Vector3.new(0, 3, 0) end
 end
 
@@ -260,9 +293,9 @@ local function startFollow()
 	followConn = RunService.Heartbeat:Connect(function()
 		local cf, live = targetCF(selectedPlayer)
 		local char = player.Character
-		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local root = rootOf(char)
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if cf and root and hum and hum.Health > 0 then
+		if cf and root and (not hum or hum.Health > 0) then
 			setHold(true)
 			local goal = cf * FOLLOW_OFFSET
 			-- thấy người chơi thật: bám sát. Mất dấu (ở rất xa): bay tới chỗ đoán, tới gần rồi thì đứng chờ game tải (không giật)
@@ -279,7 +312,7 @@ end
 RunService.Stepped:Connect(function()
 	local char = player.Character
 	if not char then return end
-	if noclipOn or walking or tweening then
+	if noclipOn or tweening then
 		for _, p in ipairs(char:GetDescendants()) do
 			if p:IsA("BasePart") and p.CanCollide then
 				p.CanCollide = false
@@ -312,77 +345,6 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
--- ===== Đi bộ tới người chơi (dùng Pathfinding, tự nhảy khi bị kẹt) =====
-function stopWalk()
-	walking = false
-	walkToken = walkToken + 1
-	if flyConn then flyConn:Disconnect(); flyConn = nil end
-	local char = player.Character
-	local root = char and char:FindFirstChild("HumanoidRootPart")
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if root and hum then pcall(function() hum:MoveTo(root.Position) end) end
-end
-
-function startWalk(continuous)
-	if followOn then return end -- đang bám theo thì không cần đi bộ
-	walkToken = walkToken + 1
-	local token = walkToken
-	walking = true -- walking = true => tự bật noclip nên đi thẳng, không bị vật cản làm khựng
-	local hovering = false -- đang bay lên để theo độ cao của người chơi
-	if flyConn then flyConn:Disconnect() end
-	flyConn = RunService.Heartbeat:Connect(function()
-		if not (walking and walkToken == token) then return end
-		local cf = targetCF(selectedPlayer)
-		local char = player.Character
-		local root = char and char:FindFirstChild("HumanoidRootPart")
-		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if not (cf and root and hum and hum.Health > 0) then return end
-		local dy = cf.Position.Y - root.Position.Y
-		if dy > FLY_START_HEIGHT then hovering = true end
-		if hovering and dy < -3 then hovering = false end -- người chơi xuống thấp hơn hẳn: thả xuống đi bộ bình thường
-		if hovering then
-			-- bay chậm lên (và giữ độ cao bằng người chơi) trong lúc đi bộ tới
-			local v = root.AssemblyLinearVelocity
-			root.AssemblyLinearVelocity = Vector3.new(v.X, math.clamp(dy * 2, -FLY_UP_SPEED, FLY_UP_SPEED), v.Z)
-		end
-	end)
-	task.spawn(function()
-		local lastPos, stuckT = nil, 0
-		local arrived = false -- (đi bộ bám theo) đã tới gần: đứng chờ, người chơi đi xa thì đi tiếp
-		while walking and walkToken == token do
-			if not (selectedPlayer and selectedPlayer.Parent == Players) then break end
-			local tcf, live = targetCF(selectedPlayer)
-			local char = player.Character
-			local root = char and char:FindFirstChild("HumanoidRootPart")
-			local hum = char and char:FindFirstChildOfClass("Humanoid")
-			if tcf and root and hum and hum.Health > 0 then
-				local flat = Vector3.new(tcf.Position.X - root.Position.X, 0, tcf.Position.Z - root.Position.Z)
-				local dist = flat.Magnitude
-				if live and dist <= WALK_STOP_DIST then
-					if not continuous then break end -- tới nơi (chỉ khi thấy người chơi thật)
-					arrived = true
-				elseif arrived and dist > WALK_STOP_DIST + 3 then
-					arrived = false -- người chơi đi xa rồi: đi bộ theo tiếp
-				end
-				if arrived or dist <= WALK_STOP_DIST then
-					lastPos, stuckT = nil, 0 -- đã tới (hoặc tới chỗ cuối cùng thấy họ mà họ chưa tải): đứng chờ
-					if arrived then hum:MoveTo(root.Position) end
-				else
-				hum:MoveTo(tcf.Position)
-				-- dưới nước thì nhảy liên tục để bơi lên / trèo lên bờ
-				if not hovering and hum:GetState() == Enum.HumanoidStateType.Swimming then hum.Jump = true end
-				-- kẹt (gần như không nhúc nhích) thì nhảy
-				if lastPos and (root.Position - lastPos).Magnitude < 0.2 then stuckT = stuckT + 0.1 else stuckT = 0 end
-				lastPos = root.Position
-				if stuckT > 0.5 and not hovering then hum.Jump = true end
-				end
-			end
-			task.wait(0.1) -- đang chết/hồi sinh thì chờ rồi đi tiếp
-		end
-		if walkToken == token then stopWalk() end
-	end)
-end
-
 -- ===== Tween tới người chơi: tự di chuyển MỖI FRAME (không dùng TweenService nữa nên không bị hủy/tạo lại gây giật về chỗ cũ) =====
 -- Tính lại điểm tới mỗi frame => đuổi kịp cả khi người chơi đứng yên hoặc đang chạy; càng xa càng bay nhanh nên tới được rất xa.
 function stopTween()
@@ -394,7 +356,6 @@ end
 
 function startTween()
 	if followOn then return end
-	stopWalk()
 	stopTween()
 	local token = tweenToken
 	tweening = true
@@ -409,9 +370,9 @@ function startTween()
 		end
 		local tcf, live = targetCF(selectedPlayer)
 		local char = player.Character
-		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local root = rootOf(char)
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
-		if not (tcf and root and hum and hum.Health > 0) then return end -- đang chết/hồi sinh: chờ
+		if not (tcf and root and (not hum or hum.Health > 0)) then return end -- đang chết/hồi sinh: chờ
 		dt = math.min(dt, 0.1)
 		setHold(true)
 		local tpos = tcf.Position
@@ -458,28 +419,11 @@ end
 function toggleTweenMode()
 	tweenMode = not tweenMode
 	if tweenMode then
-		if walkMode then walkMode = false; stopWalk(); setWalkUI() end
 		if selectedPlayer and not followOn then startTween() end
 	else
 		stopTween()
 	end
 	setTweenUI()
-end
-
-function setWalkUI()
-	if not (ui and ui.walkBtn) then return end
-	ui.walkBtn.set(walkMode)
-end
-
-function toggleWalkMode()
-	walkMode = not walkMode
-	if walkMode and tweenMode then tweenMode = false; stopTween(); setTweenUI() end
-	if not walkMode then
-		stopWalk()
-	elseif selectedPlayer and not followOn then
-		startWalk() -- đã chọn người từ trước thì đi luôn
-	end
-	setWalkUI()
 end
 
 -- ===== Anti AFK: Roblox kick người chơi đứng im ~20 phút; giả lập thao tác nhẹ mỗi khi bị báo "Idled" =====
@@ -524,7 +468,6 @@ function toggleFollow()
 	if followOn then
 		stopFollow()
 	else
-		stopWalk()
 		stopTween()
 		followOn = true
 		startFollow()
@@ -695,13 +638,13 @@ end
 
 function setStatus(txt)
 	if not (ui and ui.sub and ui.sub.Parent) then return end
-	local s = txt
+	local s = txt or diagMsg
 	if not s then
 		s = (selectedPlayer and selectedPlayer.Parent == Players) and ("Đang chọn: " .. selectedPlayer.DisplayName)
 			or "Chọn một người chơi để dịch chuyển"
 	end
 	if ui.sub.Text ~= s then ui.sub.Text = s end
-	ui.sub.TextColor3 = txt and C.accent2 or C.muted
+	ui.sub.TextColor3 = (txt or diagMsg) and C.accent2 or C.muted
 end
 
 local function centerOf(obj)
@@ -869,8 +812,6 @@ function rebuildList()
 					selectedPlayer = plr
 					if tweenMode and not followOn then
 						startTween()
-					elseif walkMode and not followOn then
-						startWalk()
 					else
 						teleportToPlayer(plr)
 					end
@@ -1045,7 +986,6 @@ function buildUI()
 
 	mkSection(1, "DỊCH CHUYỂN")
 	local autoRow, autoBtn = mkToggle(2, "Bám theo", "K")
-	local walkRow, walkBtn = mkToggle(3, "Đi bộ tới người", "B")
 	local tweenRow, tweenBtn = mkToggle(4, "Bay (tween) tới người", "T")
 	mkSection(5, "HỒI SINH")
 	local respawnRow, respawnBtn = mkToggle(6, "Auto hồi sinh", "J")
@@ -1094,7 +1034,7 @@ function buildUI()
 	local modal = make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = uiVisible }, frame)
 
 	ui = { gui = gui, frame = frame, scale = scale, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
-		noclipBtn = noclipBtn, walkBtn = walkBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, mapBtn = mapBtn,
+		noclipBtn = noclipBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, mapBtn = mapBtn,
 		sub = sub, modal = modal, rows = {}, rowMap = {} }
 
 	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
@@ -1123,7 +1063,6 @@ function buildUI()
 	tap(autoRow, toggleFollow)
 	tap(respawnRow, toggleRespawn)
 	tap(noclipRow, toggleNoclip)
-	tap(walkRow, toggleWalkMode)
 	tap(tweenRow, toggleTweenMode)
 	tap(afkRow, toggleAntiAfk)
 	tap(mapRow, cycleMap)
@@ -1150,7 +1089,6 @@ function buildUI()
 	setFollowUI()
 	setRespawnUI()
 	setNoclipUI()
-	setWalkUI()
 	setTweenUI()
 	setAntiAfkUI()
 	setMapUI()
@@ -1165,8 +1103,7 @@ Players.PlayerRemoving:Connect(function(plr)
 	lastKnownT[plr] = nil
 	if selectedPlayer == plr then
 		selectedPlayer = nil
-		stopWalk()
-		stopTween()
+			stopTween()
 		stopFollow()
 		setFollowUI()
 	end
@@ -1187,8 +1124,6 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleAntiAfk()
 	elseif input.KeyCode == TWEEN_KEY then
 		toggleTweenMode()
-	elseif input.KeyCode == WALK_KEY then
-		toggleWalkMode()
 	end
 end)
 
@@ -1214,6 +1149,32 @@ task.spawn(function()
 		else
 			pcall(setStatus, nil)
 		end
+	end
+end)
+
+-- Chẩn đoán: khi bật Bám theo / Đi bộ / Bay mà chưa chạy được thì ghi rõ lý do lên bảng
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		local msg = nil
+		if (followOn or tweenMode) and selectedPlayer and selectedPlayer.Parent == Players then
+			local char = player.Character
+			local root = rootOf(char)
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if not root then
+				msg = "Không thấy nhân vật của mình"
+			elseif hum and hum.Health <= 0 then
+				msg = "Đang chết, chờ hồi sinh"
+			elseif not playerCF(selectedPlayer) then
+				if lastKnownCF[selectedPlayer] then
+					msg = selectedPlayer.DisplayName .. " ở xa/chưa tải: đang bay tới vị trí cuối"
+				else
+					msg = "Chưa thấy nhân vật của " .. selectedPlayer.DisplayName .. " (khác map / chưa tải)"
+				end
+			end
+		end
+		diagMsg = msg
+		pcall(setStatus, nil)
 	end
 end)
 
