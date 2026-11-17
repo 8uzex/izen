@@ -16,7 +16,6 @@ local RESPAWN_KEY = Enum.KeyCode.J                 -- phím bật/tắt auto h�
 local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (PC)
 local TWEEN_KEY = Enum.KeyCode.T                  -- phím bật/tắt chế độ tween tới người chơi (PC)
 local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
-local SPAWNMAP_KEY = Enum.KeyCode.M                -- phím bật/tắt "spawn đúng map của người chơi đã chọn" (PC)
 local ANTIAFK_KEY = Enum.KeyCode.U                -- phím bật/tắt anti AFK (PC)
 local FLY_UP_SPEED = 30                            -- tốc độ bay (chậm) khi người chơi ở trên cao (stud/giây)
 local FLY_START_HEIGHT = 6                         -- người chơi cao hơn mình chừng này stud thì bật bay
@@ -162,16 +161,6 @@ local respawnOn = false
 local cachedRespawn = nil
 local ui = nil
 local noclipOn = false      -- noclip bật thủ công
-local spawnAtPlayerMap = false -- hồi sinh thì tự chọn map mà người chơi đã chọn đang ở
-local playerMapIdx = {}      -- [Player] = số thứ tự map (MAPS) nhận diện lần gần nhất
-local playerMapExplicit = {} -- [Player] = true nếu map nhận diện từ thuộc tính/giá trị/thư mục (chắc chắn), false nếu đoán theo vị trí
-local playerMapStable = {}   -- [Player] = số lần nhận diện liên tiếp ra cùng 1 map
-local myMapIdx = nil         -- map mình đang ở (đọc từ chữ tên map trên HUD)
-local lastSwitchT = -1000    -- lần cuối tự thoát/đổi map (chống đổi qua đổi lại)
-local selectT = 0              -- lúc chọn người chơi gần nhất
-local probeDone = {}           -- [Player] = true: đã vào màn Locations 1 lần để đọc map của người này
-local probeActive, probeIdx, probeT = false, nil, 0 -- đang đi vòng qua Locations để đọc map (probeIdx = map mình vừa rời)
-local exitPending = -1000    -- lần cuối script bấm nút thoát (chờ hộp thoại "Return to main menu?")
 local antiAfkOn = true        -- chống bị kick vì đứng im (AFK) lâu
 local tweenMode = false     -- chế độ: chọn người chơi thì tween (bay mượt) tới
 local tweening = false
@@ -195,7 +184,6 @@ local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
 local setTweenUI, toggleTweenMode, stopTween, startTween
 local setStatus
 local setMapUI, cycleMap
-local setSpawnMapUI, toggleSpawnMap
 local setAntiAfkUI, toggleAntiAfk
 
 -- Người chơi ở xa có thể bị game "unload" (StreamingEnabled) nên không thấy nhân vật của họ.
@@ -203,7 +191,6 @@ local setAntiAfkUI, toggleAntiAfk
 local lastKnownCF = {}
 local lastKnownVel = {}      -- [Player] = vận tốc lần cuối thấy (để đoán vị trí khi người chơi bị unload)
 local lastKnownT = {}        -- [Player] = os.clock() lần cuối thấy thật
-local lastKnownMap = {}      -- [Player] = map mình đang ở lúc thấy họ lần cuối (vị trí cuối còn hợp lệ nếu mình chưa đổi map)
 local lastStream = 0
 local function requestStream(pos)
 	if os.clock() - lastStream < 0.6 then return end
@@ -221,26 +208,16 @@ local function playerCF(plr)
 		if v.Magnitude > STALE_MAX_VEL then v = v.Unit * STALE_MAX_VEL end
 		lastKnownVel[plr] = v
 		lastKnownT[plr] = os.clock()
-		lastKnownMap[plr] = myMapIdx
 		return r.CFrame
 	end
 	return nil
 end
 
--- người chơi đã chọn đang ở map khác với map của mình (nhận diện ổn định) -> không đi/tele/bám theo vị trí cũ
-local function otherMap(plr)
-	if not spawnAtPlayerMap then return false end
-	local t = playerMapIdx[plr]
-	if not (t ~= nil and myMapIdx ~= nil and t ~= myMapIdx and (playerMapStable[plr] or 0) >= 3) then return false end
-	if not playerMapExplicit[plr] and lastKnownCF[plr] and lastKnownMap[plr] == myMapIdx then return false end
-	return true
-end
 
 -- trả về (CFrame, đang_thấy_thật)
 -- Khi người chơi ở quá xa bị game unload: KHÔNG quay về vị trí cũ nữa mà đoán tiếp vị trí theo vận tốc lần cuối thấy,
 -- đồng thời xin game tải khu vực đó; thấy lại người rồi thì dùng vị trí thật.
 local function targetCF(plr)
-	if otherMap(plr) then return nil, false end
 	local cf = playerCF(plr)
 	if cf then return cf, true end
 	local last = plr and lastKnownCF[plr]
@@ -758,384 +735,24 @@ local function press(name, btn)
 	end
 end
 
--- ===== Spawn đúng map của người chơi đã chọn =====
--- Đoán người chơi đang ở map nào theo thứ tự: (1) thuộc tính/giá trị chữ có tên map trên Player/nhân vật,
--- (2) thư mục/model chứa nhân vật có tên map, (3) vị trí gần nơi chính mình từng spawn vào map đó (tự học),
--- (4) gần model/thư mục map trong workspace. Chưa chắc game nào cũng nhận diện được => xem dòng trạng thái.
-local mapSamples = {}     -- [idx] = { Vector3 } vị trí của chính mình ngay sau khi spawn vào map đó
-local pendingLearn = nil  -- { idx, t }: vừa bấm SPAWN vào map idx, nhân vật mới hiện ra thì ghi nhớ vị trí
 
-local namesCache = {}
-local function namesOf(idx)
-	local set = namesCache[idx]
-	if not set then
-		set = {}
-		for _, n in ipairs(MAPS[idx]) do set[norm(n)] = true end
-		namesCache[idx] = set
-	end
-	return set
-end
 
-local function mapIndexFromText(text)
-	local t = norm(tostring(text))
-	if t == "" or #t > 40 then return nil end
-	for i = 1, #MAPS do
-		if matchesMap(t, namesOf(i)) then return i end
-	end
-	return nil
-end
 
-local function detectByValues(plr)
-	local function attrs(inst)
-		for _, v in pairs(inst:GetAttributes()) do
-			if type(v) == "string" then
-				local i = mapIndexFromText(v)
-				if i then return i end
-			end
-		end
-	end
-	local i = attrs(plr)
-	if i then return i, "thuộc tính Player" end
-	for _, d in ipairs(plr:GetDescendants()) do
-		if d:IsA("StringValue") then
-			i = mapIndexFromText(d.Value)
-			if i then return i, "giá trị " .. d.Name end
-		end
-		i = attrs(d)
-		if i then return i, "thuộc tính " .. d.Name end
-	end
-	local char = plr.Character
-	if char then
-		i = attrs(char)
-		if i then return i, "thuộc tính nhân vật" end
-		for _, d in ipairs(char:GetChildren()) do
-			if d:IsA("StringValue") then
-				i = mapIndexFromText(d.Value)
-				if i then return i, "giá trị " .. d.Name end
-			end
-		end
-		local cur = char.Parent -- thư mục/model chứa nhân vật (vd Workspace.Atlas.Players)
-		while cur and cur ~= workspace and cur ~= game do
-			i = mapIndexFromText(cur.Name)
-			if i then return i, "thư mục " .. cur.Name end
-			cur = cur.Parent
-		end
-	end
-	return nil
-end
 
--- Màn Locations hiện hình đại diện (avatar) của người chơi ở ngay dòng map họ đang ở (vd bạn bè):
--- tìm ảnh có UserId của người đã chọn, leo lên dòng chứa nó, dòng đó chứa đúng 1 tên map => map của họ.
-local function idInImage(img, id)
-	local a, b = img:find(id, 1, true)
-	while a do
-		local before, after = img:sub(a - 1, a - 1), img:sub(b + 1, b + 1)
-		if not before:match("%d") and not after:match("%d") then return true end
-		a, b = img:find(id, b + 1, true)
-	end
-	return false
-end
-
-local function locationsMapOf(plr)
-	local pg = player:FindFirstChildOfClass("PlayerGui")
-	if not (pg and plr) then return nil end
-	local id = tostring(plr.UserId)
-	for _, o in ipairs(pg:GetDescendants()) do
-		if (o:IsA("ImageLabel") or o:IsA("ImageButton")) and o.Image ~= "" and idInImage(o.Image, id)
-			and not (ui and ui.gui and o:IsDescendantOf(ui.gui)) and isShown(o) then
-			local cur = o.Parent
-			for _ = 1, 6 do
-				if not cur or cur == pg then break end
-				local found, cnt, seen = nil, 0, {}
-				for _, d in ipairs(cur:GetDescendants()) do
-					if d:IsA("TextLabel") and d.Text ~= "" then
-						local t = norm(d.Text)
-						for i = 1, #MAPS do
-							if namesOf(i)[t] and not seen[i] then
-								seen[i] = true
-								found, cnt = i, cnt + 1
-							end
-						end
-					end
-				end
-				if cnt == 1 then return found end
-				if cnt > 1 then break end -- đã leo quá cao (chứa nhiều dòng map)
-				cur = cur.Parent
-			end
-		end
-	end
-	return nil
-end
-
--- Đọc HUD khi đang trong game: trả về (map mình đang ở, nút "thoát" – hình cánh cửa mũi tên dưới bảng map)
-local function scanHud()
-	local pg = player:FindFirstChildOfClass("PlayerGui")
-	if not pg then return nil, nil end
-	local myIdx, hudLbl, count = nil, nil, 0
-	local hints, btns, imgs = {}, {}, {}
-	for _, o in ipairs(pg:GetDescendants()) do
-		if o:IsA("GuiObject") and not (ui and ui.gui and o:IsDescendantOf(ui.gui)) then
-			if o:IsA("TextLabel") and o.Text ~= "" then
-				local t = norm(o.Text)
-				for i = 1, #MAPS do
-					if namesOf(i)[t] and isShown(o) then
-						count = count + 1
-						myIdx, hudLbl = i, o
-					end
-				end
-			end
-			if o:IsA("GuiButton") and isShown(o) then
-				local nk = norm(o.Name)
-				if nk:find("exit", 1, true) or nk:find("leave", 1, true) or nk:find("logout", 1, true) or nk:find("quit", 1, true) then
-					table.insert(hints, o)
-				end
-				table.insert(btns, o)
-			elseif (o:IsA("ImageLabel") or o:IsA("ImageButton")) and o.Image ~= "" and isShown(o) then
-				table.insert(imgs, o) -- icon không phải nút (nút thật có thể là lớp trong suốt phủ lên) -> bấm theo toạ độ
-			end
-		end
-	end
-	if count ~= 1 then return nil, nil end -- chỉ 1 nhãn tên map = đang trong game (màn Locations có nhiều tên map)
-	local lp = hudLbl.AbsolutePosition + hudLbl.AbsoluteSize / 2
-	local sg = hudLbl:FindFirstAncestorOfClass("ScreenGui")
-	local exitBtn, bestD = nil, math.huge
-	for _, b in ipairs(hints) do
-		local d = (b.AbsolutePosition - hudLbl.AbsolutePosition).Magnitude
-		if b:FindFirstAncestorOfClass("ScreenGui") == sg and d < bestD then exitBtn, bestD = b, d end
-	end
-	local function pick(list)
-		local bestX = -math.huge
-		local found = nil
-		for _, b in ipairs(list) do
-			if b:FindFirstAncestorOfClass("ScreenGui") == sg and b.AbsoluteSize.X <= 120 and b.AbsoluteSize.Y <= 120 then
-				local c = b.AbsolutePosition + b.AbsoluteSize / 2
-				local dy = c.Y - (hudLbl.AbsolutePosition.Y + hudLbl.AbsoluteSize.Y)
-				if dy > 0 and dy < 260 and math.abs(c.X - lp.X) < 220 and c.X > bestX then
-					found, bestX = b, c.X
-				end
-			end
-		end
-		return found
-	end
-	if not exitBtn then
-		-- không có tên gợi ý: lấy icon nhỏ nằm ngay dưới bảng map, ở phía phải nhất (hàng icon: kaiju / shop / thoát)
-		exitBtn = pick(btns) or pick(imgs)
-	end
-	return myIdx, exitBtn
-end
-
-local function nearestSample(pos)
-	local best, bi = 2500, nil
-	for i, list in pairs(mapSamples) do
-		for _, sp in ipairs(list) do
-			local d = (sp - pos).Magnitude
-			if d < best then best, bi = d, i end
-		end
-	end
-	return bi
-end
-
-local anchors, anchorsT = nil, 0
-local function buildAnchors()
-	if anchors and os.clock() - anchorsT < 20 then return anchors end
-	anchors, anchorsT = {}, os.clock()
-	local function consider(inst)
-		if Players:GetPlayerFromCharacter(inst) then return end
-		local i = mapIndexFromText(inst.Name)
-		if not i then return end
-		local pos
-		if inst:IsA("Model") then
-			pos = inst:GetPivot().Position
-		elseif inst:IsA("BasePart") then
-			pos = inst.Position
-		elseif inst:IsA("Folder") then
-			local sum, n = Vector3.zero, 0
-			for _, d in ipairs(inst:GetDescendants()) do
-				if d:IsA("BasePart") then
-					sum = sum + d.Position
-					n = n + 1
-					if n >= 100 then break end
-				end
-			end
-			if n > 0 then pos = sum / n end
-		end
-		if pos then table.insert(anchors, { idx = i, pos = pos }) end
-	end
-	for _, c in ipairs(workspace:GetChildren()) do
-		pcall(consider, c)
-		if c:IsA("Folder") or c:IsA("Model") then -- thêm 1 tầng (vd Workspace.Maps.Atlas)
-			for _, cc in ipairs(c:GetChildren()) do pcall(consider, cc) end
-		end
-	end
-	return anchors
-end
-
-local function detectMapOf(plr)
-	if not plr then return nil end
-	local i, src = detectByValues(plr)
-	if i then return i, src end
-	local live = playerCF(plr)
-	local me = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-	if live and me and myMapIdx and (live.Position - me.Position).Magnitude < 1500 then
-		return myMapIdx, "cùng khu vực với mình"
-	end
-	local cf = live or lastKnownCF[plr]
-	if cf then
-		i = nearestSample(cf.Position)
-		if i then return i, "vị trí đã học" end
-		local best, bi = 1200, nil
-		for _, a in ipairs(buildAnchors()) do
-			local d = (a.pos - cf.Position).Magnitude
-			if d < best then best, bi = d, a.idx end
-		end
-		if bi then return bi, "model map" end
-	end
-	return nil
-end
-
--- Tên map + nguồn nhận diện lần gần nhất (hiện trên tiêu đề bảng để biết đang đoán đúng không)
-local lastDetectInfo = nil
-local function respawnTarget()
-	if mapIdx > 0 and respawnNames then
-		return respawnNames, mapIdx, false -- đã chọn map thủ công => ưu tiên tuyệt đối, không đoán theo người chơi
-	end
-	if spawnAtPlayerMap and selectedPlayer and selectedPlayer.Parent == Players then
-		local i = playerMapIdx[selectedPlayer] or detectMapOf(selectedPlayer)
-		if i then return namesOf(i), i, true end
-	end
-	if not respawnNames and probeActive and probeIdx and os.clock() - probeT < 90 then
-		return namesOf(probeIdx), probeIdx, true -- chưa biết map người chơi: nếu không đọc được thì quay lại map vừa rời
-	end
-	return respawnNames, (mapIdx > 0) and mapIdx or nil, false
-end
-
--- Nhận diện nền mỗi giây: map mình đang ở (HUD), học vị trí của mình ở map đó, và map của người chơi đã chọn
-task.spawn(function()
-	while true do
-		task.wait(1)
-		if spawnAtPlayerMap then
-			local ok0, cur = pcall(scanHud)
-			myMapIdx = ok0 and cur or nil
-			local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-			if myMapIdx and root then
-				local list = mapSamples[myMapIdx] or {}
-				mapSamples[myMapIdx] = list
-				local near = false
-				for _, sp in ipairs(list) do
-					if (sp - root.Position).Magnitude < 150 then near = true break end
-				end
-				if not near then
-					table.insert(list, root.Position)
-					if #list > 10 then table.remove(list, 1) end
-				end
-			end
-			local sel = selectedPlayer
-			if sel and sel.Parent == Players then
-				local ok, i, src = pcall(detectMapOf, sel)
-				if ok and i then
-					if playerMapIdx[sel] == i then
-						playerMapStable[sel] = (playerMapStable[sel] or 0) + 1
-					else
-						playerMapStable[sel] = 1
-					end
-					playerMapIdx[sel] = i
-					local ssrc = tostring(src)
-					playerMapExplicit[sel] = (ssrc:find("thuộc tính", 1, true) or ssrc:find("giá trị", 1, true) or ssrc:find("thư mục", 1, true)) ~= nil
-					lastDetectInfo = MAPS[i][1] .. " (" .. tostring(src) .. ")"
-				end
-			end
-		end
-	end
-end)
-
--- Có cần rời map hiện tại không: người chơi đã chọn đang ở map khác (nhận diện ổn định) và không vừa mới đổi map
--- Chỉ bạn bè mới hiện hình đại diện ở màn Locations => chỉ bạn bè mới đáng vào Locations để đọc map
-local friendCache = {}
-local function isFriend(plr)
-	local v = friendCache[plr]
-	if v ~= nil then return v end
-	friendCache[plr] = false -- tạm false trong lúc chờ kết quả
-	task.spawn(function()
-		local ok, res = pcall(function() return player:IsFriendsWith(plr.UserId) end)
-		friendCache[plr] = (ok and res == true) or false
-	end)
-	return false
-end
-
-local function wantExit()
-	if not spawnAtPlayerMap then return false end
-	if os.clock() - lastSwitchT < 60 then return false end
-	local sel = selectedPlayer
-	if not (sel and sel.Parent == Players and myMapIdx) then return false end
-	-- chưa biết chắc map của họ và không thấy họ quanh mình: vào màn Locations 1 lần để đọc (rồi quay lại map nếu không thấy)
-	if not playerMapExplicit[sel] and not probeDone[sel] and os.clock() - selectT > 8 and not playerCF(sel) and isFriend(sel) then
-		return true
-	end
-	local t = playerMapIdx[sel]
-	if not (t and (playerMapStable[sel] or 0) >= 3) then return false end
-	return t ~= myMapIdx
-end
-
--- Tự học: spawn vào map nào xong thì nhớ vị trí của mình ở map đó
-player.CharacterAdded:Connect(function(char)
-	local pl = pendingLearn
-	if not (pl and os.clock() - pl.t < 25) then return end
-	pendingLearn = nil
-	local root = char:WaitForChild("HumanoidRootPart", 10)
-	if not root then return end
-	task.wait(2)
-	if player.Character ~= char then return end
-	local list = mapSamples[pl.idx] or {}
-	mapSamples[pl.idx] = list
-	local pos = root.Position
-	for _, sp in ipairs(list) do
-		if (sp - pos).Magnitude < 150 then return end
-	end
-	table.insert(list, pos)
-	if #list > 6 then table.remove(list, 1) end
-end)
-
-function setSpawnMapUI()
-	if not (ui and ui.spawnMapBtn) then return end
-	ui.spawnMapBtn.set(spawnAtPlayerMap)
-end
-
-function toggleSpawnMap()
-	spawnAtPlayerMap = not spawnAtPlayerMap
-	setSpawnMapUI()
-end
-
-local function mapRespawnStep(names, idx, leaveMap)
+-- ===== Hồi sinh theo map đã chọn: MENU -> Play -> chọn map -> SPAWN =====
+-- (mapIdx == 0: không chọn map => chỉ bấm RESPAWN, không đụng tới MENU)
+local function mapRespawnStep(names)
 	local ok, r = pcall(scanScreens, names)
 	if not (ok and r) then return end
-	if mapIdx == 0 and spawnAtPlayerMap and selectedPlayer and r.respawn then -- đang ở màn Locations (có nút SPAWN)
-		local okL, li = pcall(locationsMapOf, selectedPlayer)
-		if okL and li then
-			playerMapIdx[selectedPlayer], playerMapExplicit[selectedPlayer], playerMapStable[selectedPlayer] = li, true, 3
-			lastDetectInfo = MAPS[li][1] .. " (hình đại diện)"
-			if li ~= idx then
-				idx, names = li, namesOf(li)
-				local ok2, r2 = pcall(scanScreens, names)
-				if ok2 and r2 then r = r2 end
-			end
-		end
-	end
 	local function yn(v) return v and "Y" or "N" end
-	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(r.death) .. " play=" .. yn(r.play) .. " menu=" .. yn(r.menu) .. " conf=" .. yn(r.confirm)
-	if r.confirm and r.menu and os.clock() - exitPending < 12 then
-		setStatus("Xác nhận MENU: " .. flags)
-		press("menu", r.menu)
-		task.wait(0.4)
-	elseif r.map and r.respawn then
-		setStatus((lastDetectInfo and spawnAtPlayerMap) and ("Map người chơi: " .. lastDetectInfo) or ("Chọn map: " .. flags))
+	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(r.death) .. " play=" .. yn(r.play) .. " menu=" .. yn(r.menu)
+	if r.map and r.respawn then
+		setStatus("Chọn map: " .. flags)
 		press("map", r.map)
-		task.wait(0.5) -- chờ game nhận map đã chọn (nếu bấm SPAWN quá sớm game dùng map mặc định = Atlas)
+		task.wait(0.5) -- chờ game nhận map đã chọn (nếu bấm SPAWN quá sớm game dùng map mặc định)
 		local ok3, r3 = pcall(scanScreens, names)
 		if ok3 and r3 and r3.map and r3.map.Parent then press("map", r3.map); task.wait(0.3) end
 		press("respawn", (ok3 and r3 and r3.respawn) or r.respawn)
-		pendingLearn = idx and { idx = idx, t = os.clock() } or nil
-		probeActive = false
-		lastSwitchT = os.clock()
 		task.wait(0.9)
 	elseif r.play then
 		setStatus("Bấm Play: " .. flags)
@@ -1145,24 +762,12 @@ local function mapRespawnStep(names, idx, leaveMap)
 		setStatus("Bấm MENU: " .. flags)
 		press("menu", r.menu)
 		task.wait(0.4)
-	elseif leaveMap then
-		-- người chơi ở map khác: bấm nút thoát (hình cánh cửa) -> hộp thoại "Return to main menu?" -> MENU -> Play -> chọn map -> SPAWN
-		local curIdx, exitBtn = scanHud()
-		if exitBtn then
-			if selectedPlayer then probeDone[selectedPlayer] = true end
-			probeActive, probeIdx, probeT = true, curIdx or myMapIdx, os.clock()
-			setStatus("Rời map: " .. (lastDetectInfo and ("người chơi ở " .. lastDetectInfo) or "đọc map người chơi ở màn Locations"))
-			exitPending, lastSwitchT = os.clock(), os.clock()
-			press("exit", exitBtn)
-			task.wait(0.5)
-		else
-			setStatus("Không thấy nút thoát map")
-		end
 	else
 		setStatus("Đang chờ: " .. flags)
 		tries = {}
 	end
 end
+
 
 function setRespawnUI()
 	if not (ui and ui.respawnBtn) then return end
@@ -1262,7 +867,6 @@ function rebuildList()
 				end)
 				tap(row, function()
 					selectedPlayer = plr
-					selectT = os.clock()
 					if tweenMode and not followOn then
 						startTween()
 					elseif walkMode and not followOn then
@@ -1458,7 +1062,6 @@ function buildUI()
 		mapPill.Text = name or "Mặc định"
 		tw(mapPill, 0.2, { TextColor3 = name and C.accent2 or C.muted })
 	end }
-	local spawnMapRow, spawnMapBtn = mkToggle(8, "Spawn map người chơi", "M")
 	mkSection(9, "KHÁC")
 	local noclipRow, noclipBtn = mkToggle(10, "Noclip", "N")
 	local afkRow, afkBtn = mkToggle(11, "Anti AFK", "U")
@@ -1491,7 +1094,7 @@ function buildUI()
 	local modal = make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = uiVisible }, frame)
 
 	ui = { gui = gui, frame = frame, scale = scale, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
-		noclipBtn = noclipBtn, walkBtn = walkBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, spawnMapBtn = spawnMapBtn, mapBtn = mapBtn,
+		noclipBtn = noclipBtn, walkBtn = walkBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, mapBtn = mapBtn,
 		sub = sub, modal = modal, rows = {}, rowMap = {} }
 
 	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
@@ -1523,7 +1126,6 @@ function buildUI()
 	tap(walkRow, toggleWalkMode)
 	tap(tweenRow, toggleTweenMode)
 	tap(afkRow, toggleAntiAfk)
-	tap(spawnMapRow, toggleSpawnMap)
 	tap(mapRow, cycleMap)
 	speedBox.FocusLost:Connect(function()
 		tw(speedStroke, 0.2, { Color = C.panel })
@@ -1551,7 +1153,6 @@ function buildUI()
 	setWalkUI()
 	setTweenUI()
 	setAntiAfkUI()
-	setSpawnMapUI()
 	setMapUI()
 	setStatus(nil)
 end
@@ -1562,8 +1163,6 @@ Players.PlayerRemoving:Connect(function(plr)
 	lastKnownCF[plr] = nil
 	lastKnownVel[plr] = nil
 	lastKnownT[plr] = nil
-	lastKnownMap[plr] = nil
-	friendCache[plr] = nil
 	if selectedPlayer == plr then
 		selectedPlayer = nil
 		stopWalk()
@@ -1584,8 +1183,6 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleRespawn()
 	elseif input.KeyCode == NOCLIP_KEY then
 		toggleNoclip()
-	elseif input.KeyCode == SPAWNMAP_KEY then
-		toggleSpawnMap()
 	elseif input.KeyCode == ANTIAFK_KEY then
 		toggleAntiAfk()
 	elseif input.KeyCode == TWEEN_KEY then
@@ -1597,25 +1194,26 @@ end)
 
 buildUI()
 
--- Vòng auto hồi sinh: thấy nút RESPAWN đang hiện thì tự bấm
+-- Vòng auto hồi sinh:
+--  • Chưa chọn map (Mặc định): thấy nút RESPAWN thì bấm RESPAWN, KHÔNG bấm MENU
+--  • Đã chọn map: MENU -> Play -> chọn map -> SPAWN
 task.spawn(function()
 	while true do
 		task.wait(0.25)
-		local active = respawnOn or spawnAtPlayerMap
-		local names, idx
-		if active then names, idx = respawnTarget() end
-		if active then
-			if names then
-				pcall(mapRespawnStep, names, idx, mapIdx == 0 and wantExit())
-			elseif respawnOn then
+		if respawnOn then
+			if mapIdx > 0 and respawnNames then
+				pcall(mapRespawnStep, respawnNames)
+			else
 				local ok, btn = pcall(findRespawnButton)
 				if ok and btn then
 					press("default", btn)
 					task.wait(0.8) -- chờ game hồi sinh rồi mới kiểm tra tiếp
 				end
+				pcall(setStatus, nil)
 			end
+		else
+			pcall(setStatus, nil)
 		end
-		if not (active and names) then pcall(setStatus, nil) end
 	end
 end)
 
