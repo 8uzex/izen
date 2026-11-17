@@ -20,7 +20,7 @@ local SPAWNMAP_KEY = Enum.KeyCode.M                -- phím bật/tắt "spawn �
 local ANTIAFK_KEY = Enum.KeyCode.U                -- phím bật/tắt anti AFK (PC)
 local FLY_UP_SPEED = 30                            -- tốc độ bay (chậm) khi người chơi ở trên cao (stud/giây)
 local FLY_START_HEIGHT = 6                         -- người chơi cao hơn mình chừng này stud thì bật bay
-local TWEEN_SPEED = 400                          -- tốc độ tween (stud/giây), càng cao bay càng nhanh
+local TWEEN_SPEED = 150                          -- tốc độ bay (stud/giây). Bị giật về chỗ cũ thì giảm số này
 local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
 local DEFAULT_SPEED = 0                            -- tốc độ chạy (WalkSpeed). 0 = giữ mặc định của game
 -- Danh sách map ở màn hình LOCATIONS / Địa điểm. Mỗi map có tên tiếng Anh + tiếng Việt (không phân biệt hoa/thường).
@@ -320,28 +320,32 @@ function startTween()
 	local token = tweenToken
 	tweening = true
 	task.spawn(function()
-		local tries = 0
-		while tweening and tweenToken == token and tries < 20 do
+		local startT = os.clock()
+		local hum0
+		while tweening and tweenToken == token and os.clock() - startT < 20 do
+			local dt = RunService.Heartbeat:Wait()
 			if not (selectedPlayer and selectedPlayer.Parent == Players) then break end
 			local tcf = targetCF(selectedPlayer)
 			local char = player.Character
 			local root = char and char:FindFirstChild("HumanoidRootPart")
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if tcf and root and hum and hum.Health > 0 then
-				local goal = tcf * FOLLOW_OFFSET
-				local dist = (goal.Position - root.Position).Magnitude
+				hum0 = hum
+				hum.PlatformStand = true -- không cho Humanoid tự kéo nhân vật về chỗ cũ
+				local goal = (tcf * FOLLOW_OFFSET).Position
+				local vec = goal - root.Position
+				local dist = vec.Magnitude
 				if dist <= WALK_STOP_DIST then break end
-				tries = tries + 1
-				root.AssemblyLinearVelocity = Vector3.zero
-				local t = TweenService:Create(root, TweenInfo.new(math.max(dist / TWEEN_SPEED, 0.1), Enum.EasingStyle.Linear), { CFrame = goal })
-				activeTween = t
-				t:Play()
-				t.Completed:Wait()
-				activeTween = nil
-			else
-				task.wait(0.2) -- đang chết/hồi sinh thì chờ rồi tween tiếp
+				-- bay bằng vận tốc (như vật lý thật) thay vì đổi CFrame liên tục => server ít khi giật ngược lại
+				local speed = math.min(TWEEN_SPEED, dist / math.max(dt, 1 / 120))
+				root.AssemblyLinearVelocity = vec.Unit * speed
+				root.AssemblyAngularVelocity = Vector3.zero
 			end
 		end
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		if root then root.AssemblyLinearVelocity = Vector3.zero end
+		if hum0 and hum0.Parent then hum0.PlatformStand = false end
 		if tweenToken == token then -- tới nơi (hoặc dừng) => tự tắt chế độ tween
 			stopTween()
 			tweenMode = false
