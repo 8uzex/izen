@@ -834,6 +834,7 @@ end
 local function consider(r, o, pg, names, key)
 	if #key >= 12 and key:find("returntomainmenu", 1, true) then
 		r.confirm = true -- hộp thoại "Return to main menu?" (nút CANCEL / MENU)
+		r.confirmObj = r.confirmObj or o
 		return
 	end
 	if matchesMap(key, names) then
@@ -847,7 +848,10 @@ local function consider(r, o, pg, names, key)
 	elseif key == "defeated" or key:find("eliminatedby", 1, true) then
 		r.defeated = true
 	elseif key == "menu" or (#key <= 10 and key:sub(1, 4) == "menu") then
-		r.menu = r.menu or clickableOf(o, pg)
+		local mc = clickableOf(o, pg)
+		r.menu = r.menu or mc
+		r.menus = r.menus or {}
+		table.insert(r.menus, mc)
 	elseif #key <= 20 and key:sub(1, 7) == "respawn" then
 		r.death = r.death or clickableOf(o, pg)
 	elseif isPlayText(key) then
@@ -975,35 +979,57 @@ local function mapRespawnStep(names)
 	local ok, r = pcall(scanScreens, names)
 	if not (ok and r) then return end
 	local function yn(v) return v and "Y" or "N" end
-	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(r.death) .. " play=" .. yn(r.play) .. " menu=" .. yn(r.menu) .. " defeated=" .. yn(r.defeated)
-	if r.map then
-		-- Thấy map là chọn luôn (không cần chờ nút SPAWN). Có SPAWN thì bấm tiếp sau khi chọn map.
+	local isDead = r.defeated or r.death
+	if not isDead then
+		local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		isDead = h and h.Health <= 0
+	end
+	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(isDead) .. " play=" .. yn(r.play)
+		.. " menu=" .. yn(r.menu) .. (r.confirm and " confirm=Y" or "")
+
+	-- Nếu có hộp thoại "Return to main menu?": chọn nút MENU nằm gần hộp thoại nhất
+	local menuBtn = r.menu
+	if r.confirm and r.confirmObj and r.menus and #r.menus > 1 then
+		local cc, best = centerOf(r.confirmObj), math.huge
+		for _, m in ipairs(r.menus) do
+			local d = (centerOf(m) - cc).Magnitude
+			if d < best then best, menuBtn = d, m end
+		end
+	end
+
+	if r.map and r.respawn then
+		-- Màn hình Locations (có cả danh sách map lẫn nút SPAWN)
 		if os.clock() - mapClickedAt > 4 then
 			setStatus("Chọn map " .. tostring(respawnMap) .. ": " .. flags)
 			clickOnce(r.map)
 			mapClickedAt = os.clock()
 			task.wait(0.7)
-		elseif r.respawn then
+		else
 			setStatus("SPAWN " .. tostring(respawnMap) .. ": " .. flags)
 			local ok3, r3 = pcall(scanScreens, names)
 			clickOnce((ok3 and r3 and r3.respawn) or r.respawn)
 			task.wait(1)
-		else
-			task.wait(0.3)
 		end
 	elseif r.play then
 		mapClickedAt = 0
 		setStatus("Bấm Play: " .. flags)
 		press("play", r.play)
 		task.wait(0.5)
-	elseif r.menu and (r.death or r.respawn or r.defeated or (function()
-			local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-			return h and h.Health <= 0
-		end)()) then
+	elseif isDead and menuBtn then
+		-- Màn hình DEFEATED: bấm MENU (bỏ qua chữ tên map lẻ trên HUD)
 		mapClickedAt = 0
 		setStatus("Bấm MENU: " .. flags)
-		press("menu", r.menu)
+		press("menu", menuBtn)
+		if menuBtn.Parent and isShown(menuBtn) then clickOnce(menuBtn) end -- press chưa ăn thì bấm thêm 1 lần
 		task.wait(0.6)
+	elseif r.map and not isDead then
+		-- Có danh sách map nhưng không có nút SPAWN: chọn map luôn
+		if os.clock() - mapClickedAt > 4 then
+			setStatus("Chọn map " .. tostring(respawnMap) .. ": " .. flags)
+			clickOnce(r.map)
+			mapClickedAt = os.clock()
+		end
+		task.wait(0.3)
 	else
 		setStatus("Đang chờ: " .. flags)
 	end
@@ -1283,8 +1309,8 @@ function buildUI()
 	end
 
 	mkSection(1, "DỊCH CHUYỂN")
-	local autoRow, autoBtn = mkToggle(2, "Bám theo", "K")
-	local tweenRow, tweenBtn = mkToggle(4, "Bay (tween) tới người", "T")
+	local autoRow, autoBtn = mkToggle(2, "Teleport player", "K")
+	local tweenRow, tweenBtn = mkToggle(4, "Tween player", "T")
 	mkSection(5, "HỒI SINH")
 	local respawnRow, respawnBtn = mkToggle(6, "Auto hồi sinh", "J")
 	local mapRow = mkRow(7, "Map hồi sinh", 110)
