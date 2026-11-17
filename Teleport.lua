@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
+local TweenService = game:GetService("TweenService")
 local VIM = nil
 pcall(function() VIM = game:GetService("VirtualInputManager") end)
 local player = Players.LocalPlayer
@@ -13,13 +14,13 @@ local TOGGLE_UI_KEY = Enum.KeyCode.RightShift      -- phím ẩn/hiện bảng (
 local FOLLOW_KEY = Enum.KeyCode.K                  -- phím bật/tắt bám theo (PC)
 local RESPAWN_KEY = Enum.KeyCode.J                 -- phím bật/tắt auto hồi sinh (PC)
 local NOCLIP_KEY = Enum.KeyCode.N                  -- phím bật/tắt noclip (PC)
+local TWEEN_KEY = Enum.KeyCode.T                  -- phím bật/tắt chế độ tween tới người chơi (PC)
 local WALK_KEY = Enum.KeyCode.B                    -- phím bật/tắt chế độ đi bộ tới người chơi (PC)
-local RESPAWN_WALK_KEY = Enum.KeyCode.L            -- phím bật/tắt "đi bộ tới người chơi sau khi hồi sinh" (PC)
 local SPAWNMAP_KEY = Enum.KeyCode.M                -- phím bật/tắt "spawn đúng map của người chơi đã chọn" (PC)
-local WALKFOLLOW_KEY = Enum.KeyCode.H              -- phím bật/tắt "đi bộ bám theo người chơi" (PC)
 local ANTIAFK_KEY = Enum.KeyCode.U                -- phím bật/tắt anti AFK (PC)
 local FLY_UP_SPEED = 30                            -- tốc độ bay (chậm) khi người chơi ở trên cao (stud/giây)
 local FLY_START_HEIGHT = 6                         -- người chơi cao hơn mình chừng này stud thì bật bay
+local TWEEN_SPEED = 400                          -- tốc độ tween (stud/giây), càng cao bay càng nhanh
 local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
 local DEFAULT_SPEED = 0                            -- tốc độ chạy (WalkSpeed). 0 = giữ mặc định của game
 -- Danh sách map ở màn hình LOCATIONS / Địa điểm. Mỗi map có tên tiếng Anh + tiếng Việt (không phân biệt hoa/thường).
@@ -103,8 +104,10 @@ local probeDone = {}           -- [Player] = true: đã vào màn Locations 1 l�
 local probeActive, probeIdx, probeT = false, nil, 0 -- đang đi vòng qua Locations để đọc map (probeIdx = map mình vừa rời)
 local exitPending = -1000    -- lần cuối script bấm nút thoát (chờ hộp thoại "Return to main menu?")
 local antiAfkOn = true        -- chống bị kick vì đứng im (AFK) lâu
-local walkFollowOn = false   -- đi bộ bám theo liên tục: người chơi đi đâu thì đi bộ theo tới đó (không dừng hẳn khi tới nơi)
-local respawnWalkOn = false  -- riêng: hồi sinh xong tự đi bộ tới người đã chọn (không phụ thuộc nút "Đi bộ tới người")
+local tweenMode = false     -- chế độ: chọn người chơi thì tween (bay mượt) tới
+local tweening = false
+local tweenToken = 0
+local activeTween = nil
 local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
 local walking = false       -- đang đi bộ
 local flyConn = nil           -- vòng bay lên (chỉ chạy khi đang đi bộ tới người ở trên cao)
@@ -120,10 +123,9 @@ local savedFramePos = nil   -- nhớ vị trí bảng khi bị kéo, để UI d�
 local rebuildList, setFollowUI, setVisible, toggleFollow, buildUI
 local setRespawnUI, toggleRespawn
 local setNoclipUI, toggleNoclip, setWalkUI, toggleWalkMode, stopWalk, startWalk
+local setTweenUI, toggleTweenMode, stopTween, startTween
 local setMapUI, cycleMap
-local setRespawnWalkUI, toggleRespawnWalk
 local setSpawnMapUI, toggleSpawnMap
-local setWalkFollowUI, toggleWalkFollow
 local setAntiAfkUI, toggleAntiAfk
 
 -- Người chơi ở xa có thể bị game "unload" (StreamingEnabled) nên không thấy nhân vật của họ.
@@ -199,7 +201,7 @@ end
 RunService.Stepped:Connect(function()
 	local char = player.Character
 	if not char then return end
-	if noclipOn or walking then
+	if noclipOn or walking or tweening then
 		for _, p in ipairs(char:GetDescendants()) do
 			if p:IsA("BasePart") and p.CanCollide then
 				p.CanCollide = false
@@ -304,6 +306,67 @@ function startWalk(continuous)
 	end)
 end
 
+-- ===== Tween tới người chơi (bay mượt thẳng tới, tự bật noclip, đuổi theo nếu người chơi đổi chỗ) =====
+function stopTween()
+	tweening = false
+	tweenToken = tweenToken + 1
+	if activeTween then pcall(function() activeTween:Cancel() end); activeTween = nil end
+end
+
+function startTween()
+	if followOn then return end
+	stopWalk()
+	stopTween()
+	local token = tweenToken
+	tweening = true
+	task.spawn(function()
+		local tries = 0
+		while tweening and tweenToken == token and tries < 20 do
+			if not (selectedPlayer and selectedPlayer.Parent == Players) then break end
+			local tcf = targetCF(selectedPlayer)
+			local char = player.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if tcf and root and hum and hum.Health > 0 then
+				local goal = tcf * FOLLOW_OFFSET
+				local dist = (goal.Position - root.Position).Magnitude
+				if dist <= WALK_STOP_DIST then break end
+				tries = tries + 1
+				root.AssemblyLinearVelocity = Vector3.zero
+				local t = TweenService:Create(root, TweenInfo.new(math.max(dist / TWEEN_SPEED, 0.1), Enum.EasingStyle.Linear), { CFrame = goal })
+				activeTween = t
+				t:Play()
+				t.Completed:Wait()
+				activeTween = nil
+			else
+				task.wait(0.2) -- đang chết/hồi sinh thì chờ rồi tween tiếp
+			end
+		end
+		if tweenToken == token then -- tới nơi (hoặc dừng) => tự tắt chế độ tween
+			stopTween()
+			tweenMode = false
+			setTweenUI()
+		end
+	end)
+end
+
+function setTweenUI()
+	if not (ui and ui.tweenBtn) then return end
+	ui.tweenBtn.Text = tweenMode and "Tween tới người: BẬT" or "Tween tới người: TẮT"
+	ui.tweenBtn.BackgroundColor3 = tweenMode and ON or OFF
+end
+
+function toggleTweenMode()
+	tweenMode = not tweenMode
+	if tweenMode then
+		if walkMode then walkMode = false; stopWalk(); setWalkUI() end
+		if selectedPlayer and not followOn then startTween() end
+	else
+		stopTween()
+	end
+	setTweenUI()
+end
+
 function setWalkUI()
 	if not (ui and ui.walkBtn) then return end
 	ui.walkBtn.Text = walkMode and "Đi bộ tới người: BẬT" or "Đi bộ tới người: TẮT"
@@ -312,51 +375,14 @@ end
 
 function toggleWalkMode()
 	walkMode = not walkMode
+	if walkMode and tweenMode then tweenMode = false; stopTween(); setTweenUI() end
 	if not walkMode then
-		if not walkFollowOn then stopWalk() end
-	elseif selectedPlayer and not followOn and not walkFollowOn then
+		stopWalk()
+	elseif selectedPlayer and not followOn then
 		startWalk() -- đã chọn người từ trước thì đi luôn
 	end
 	setWalkUI()
 end
-
--- ===== Đi bộ bám theo liên tục (khác "Bám theo" là teleport, khác "Đi bộ tới người" là đi 1 lần rồi dừng) =====
-function setWalkFollowUI()
-	if not (ui and ui.walkFollowBtn) then return end
-	ui.walkFollowBtn.Text = walkFollowOn and "Đi bộ bám theo: BẬT" or "Đi bộ bám theo: TẮT"
-	ui.walkFollowBtn.BackgroundColor3 = walkFollowOn and ON or OFF
-end
-
-function toggleWalkFollow()
-	walkFollowOn = not walkFollowOn
-	if walkFollowOn then
-		if followOn then stopFollow(); setFollowUI() end -- 2 kiểu bám không chạy cùng lúc
-		if selectedPlayer and selectedPlayer.Parent == Players then startWalk(true) end -- chưa chọn người thì chọn xong sẽ tự đi
-	else
-		stopWalk()
-	end
-	setWalkFollowUI()
-end
-
--- ===== Đi bộ sau khi hồi sinh (tách riêng, có nút bật/tắt riêng) =====
-function setRespawnWalkUI()
-	if not (ui and ui.rwBtn) then return end
-	ui.rwBtn.Text = respawnWalkOn and "Đi bộ khi hồi sinh: BẬT" or "Đi bộ khi hồi sinh: TẮT"
-	ui.rwBtn.BackgroundColor3 = respawnWalkOn and ON or OFF
-end
-
-function toggleRespawnWalk()
-	respawnWalkOn = not respawnWalkOn
-	setRespawnWalkUI()
-end
-
-player.CharacterAdded:Connect(function(char)
-	if not respawnWalkOn then return end
-	if not char:WaitForChild("HumanoidRootPart", 10) then return end
-	task.wait(1) -- chờ game đặt nhân vật vào map xong
-	if not respawnWalkOn or followOn or walkFollowOn or player.Character ~= char then return end
-	if selectedPlayer and selectedPlayer.Parent == Players then startWalk() end
-end)
 
 -- ===== Anti AFK: Roblox kick người chơi đứng im ~20 phút; giả lập thao tác nhẹ mỗi khi bị báo "Idled" =====
 local VirtualUser = nil
@@ -403,8 +429,7 @@ function toggleFollow()
 		stopFollow()
 	else
 		stopWalk()
-		walkFollowOn = false
-		setWalkFollowUI()
+		stopTween()
 		followOn = true
 		startFollow()
 	end
@@ -847,6 +872,9 @@ end
 -- Tên map + nguồn nhận diện lần gần nhất (hiện trên tiêu đề bảng để biết đang đoán đúng không)
 local lastDetectInfo = nil
 local function respawnTarget()
+	if mapIdx > 0 and respawnNames then
+		return respawnNames, mapIdx, false -- đã chọn map thủ công => ưu tiên tuyệt đối, không đoán theo người chơi
+	end
 	if spawnAtPlayerMap and selectedPlayer and selectedPlayer.Parent == Players then
 		local i = playerMapIdx[selectedPlayer] or detectMapOf(selectedPlayer)
 		if i then return namesOf(i), i, true end
@@ -957,7 +985,7 @@ end
 local function mapRespawnStep(names, idx, leaveMap)
 	local ok, r = pcall(scanScreens, names)
 	if not (ok and r) then return end
-	if spawnAtPlayerMap and selectedPlayer and r.respawn then -- đang ở màn Locations (có nút SPAWN)
+	if mapIdx == 0 and spawnAtPlayerMap and selectedPlayer and r.respawn then -- đang ở màn Locations (có nút SPAWN)
 		local okL, li = pcall(locationsMapOf, selectedPlayer)
 		if okL and li then
 			playerMapIdx[selectedPlayer], playerMapExplicit[selectedPlayer], playerMapStable[selectedPlayer] = li, true, 3
@@ -978,8 +1006,10 @@ local function mapRespawnStep(names, idx, leaveMap)
 	elseif r.map and r.respawn then
 		setStatus((lastDetectInfo and spawnAtPlayerMap) and ("Map người chơi: " .. lastDetectInfo) or ("Chọn map: " .. flags))
 		press("map", r.map)
-		task.wait(0.1)
-		press("respawn", r.respawn)
+		task.wait(0.5) -- chờ game nhận map đã chọn (nếu bấm SPAWN quá sớm game dùng map mặc định = Atlas)
+		local ok3, r3 = pcall(scanScreens, names)
+		if ok3 and r3 and r3.map and r3.map.Parent then press("map", r3.map); task.wait(0.3) end
+		press("respawn", (ok3 and r3 and r3.respawn) or r.respawn)
 		pendingLearn = idx and { idx = idx, t = os.clock() } or nil
 		probeActive = false
 		lastSwitchT = os.clock()
@@ -1066,8 +1096,8 @@ function rebuildList()
 				tap(btn, function()
 					selectedPlayer = plr
 					selectT = os.clock()
-					if walkFollowOn and not followOn then
-						startWalk(true)
+					if tweenMode and not followOn then
+						startTween()
 					elseif walkMode and not followOn then
 						startWalk()
 					else
@@ -1173,17 +1203,16 @@ function buildUI()
 	end
 
 	local autoBtn = mkBtn("Bám theo: TẮT", 1)
-	local walkFollowBtn = mkBtn("Đi bộ bám theo: TẮT", 2)
-	local walkBtn = mkBtn("Đi bộ tới người: TẮT", 3)
-	local rwBtn = mkBtn("Đi bộ khi hồi sinh: TẮT", 4)
-	local respawnBtn = mkBtn("Auto hồi sinh: TẮT", 5)
-	local mapBtn = mkBtn("Map hồi sinh: Mặc định", 6, PANEL)
-	local spawnMapBtn = mkBtn("Spawn map người chơi: TẮT", 7)
-	local noclipBtn = mkBtn("Noclip: TẮT", 8)
-	local afkBtn = mkBtn("Anti AFK: BẬT", 9)
+	local walkBtn = mkBtn("Đi bộ tới người: TẮT", 2)
+	local tweenBtn = mkBtn("Tween tới người: TẮT", 3)
+	local respawnBtn = mkBtn("Auto hồi sinh: TẮT", 4)
+	local mapBtn = mkBtn("Map hồi sinh: Mặc định", 5, PANEL)
+	local spawnMapBtn = mkBtn("Spawn map người chơi: TẮT", 6)
+	local noclipBtn = mkBtn("Noclip: TẮT", 7)
+	local afkBtn = mkBtn("Anti AFK: BẬT", 8)
 
 	local speedBox = make("TextBox", {
-		LayoutOrder = 10,
+		LayoutOrder = 9,
 		BackgroundColor3 = PANEL, Text = customSpeed > 0 and tostring(customSpeed) or "",
 		PlaceholderText = "Tốc độ (trống = mặc định)",
 		Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = WHITE, TextScaled = true,
@@ -1203,7 +1232,7 @@ function buildUI()
 	}, frame)
 
 	ui = { gui = gui, frame = frame, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
-		noclipBtn = noclipBtn, walkBtn = walkBtn, walkFollowBtn = walkFollowBtn, afkBtn = afkBtn, rwBtn = rwBtn, spawnMapBtn = spawnMapBtn, mapBtn = mapBtn,
+		noclipBtn = noclipBtn, walkBtn = walkBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, spawnMapBtn = spawnMapBtn, mapBtn = mapBtn,
 		title = titleLbl, modal = modal, rows = {} }
 
 	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
@@ -1233,9 +1262,8 @@ function buildUI()
 	tap(respawnBtn, toggleRespawn)
 	tap(noclipBtn, toggleNoclip)
 	tap(walkBtn, toggleWalkMode)
-	tap(walkFollowBtn, toggleWalkFollow)
+	tap(tweenBtn, toggleTweenMode)
 	tap(afkBtn, toggleAntiAfk)
-	tap(rwBtn, toggleRespawnWalk)
 	tap(spawnMapBtn, toggleSpawnMap)
 	tap(mapBtn, cycleMap)
 	speedBox.FocusLost:Connect(function()
@@ -1261,9 +1289,8 @@ function buildUI()
 	setRespawnUI()
 	setNoclipUI()
 	setWalkUI()
-	setWalkFollowUI()
+	setTweenUI()
 	setAntiAfkUI()
-	setRespawnWalkUI()
 	setSpawnMapUI()
 	setMapUI()
 end
@@ -1277,6 +1304,7 @@ Players.PlayerRemoving:Connect(function(plr)
 	if selectedPlayer == plr then
 		selectedPlayer = nil
 		stopWalk()
+		stopTween()
 		stopFollow()
 		setFollowUI()
 	end
@@ -1295,12 +1323,10 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleNoclip()
 	elseif input.KeyCode == SPAWNMAP_KEY then
 		toggleSpawnMap()
-	elseif input.KeyCode == RESPAWN_WALK_KEY then
-		toggleRespawnWalk()
 	elseif input.KeyCode == ANTIAFK_KEY then
 		toggleAntiAfk()
-	elseif input.KeyCode == WALKFOLLOW_KEY then
-		toggleWalkFollow()
+	elseif input.KeyCode == TWEEN_KEY then
+		toggleTweenMode()
 	elseif input.KeyCode == WALK_KEY then
 		toggleWalkMode()
 	end
@@ -1317,7 +1343,7 @@ task.spawn(function()
 		if active then names, idx = respawnTarget() end
 		if active then
 			if names then
-				pcall(mapRespawnStep, names, idx, wantExit())
+				pcall(mapRespawnStep, names, idx, mapIdx == 0 and wantExit())
 			elseif respawnOn then
 				local ok, btn = pcall(findRespawnButton)
 				if ok and btn then
