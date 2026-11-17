@@ -23,7 +23,12 @@ local FLY_START_HEIGHT = 6                         -- người chơi cao hơn m�
 local TWEEN_TARGET_DISTANCE = 28                  -- Target Distance: khoảng cách giữ với người chơi (stud)
 local TWEEN_SPEED = 150                          -- Tween Speed: tốc độ bay (stud/giây)
 local TWEEN_ORBIT_SPEED = 1.799                  -- Orbit Speed: tốc độ quay quanh người chơi (rad/giây), 0 = đứng yên
-local TWEEN_RETARGET_DELAY = 0.35                -- Retarget Delay: cứ mỗi chừng này giây tính lại điểm tới (giây)
+local TWEEN_RETARGET_DELAY = 0.35                -- (không còn dùng: tween giờ tính lại điểm tới MỖI FRAME nên không bị giật)
+local TWEEN_FAR_FACTOR = 1.5                       -- càng xa càng bay nhanh: tốc độ = khoảng cách x hệ số này (kẹp trong TWEEN_SPEED..TWEEN_MAX_SPEED)
+local TWEEN_MAX_SPEED = 2000                       -- tốc độ bay tối đa khi ở rất xa (stud/giây)
+local HOLD_RADIUS = 6                              -- người chơi bị unload (không thấy): tới gần chỗ đoán này thì đứng chờ game tải, không giật qua lại
+local STALE_EXTRAPOLATE = 2                        -- khi mất dấu người chơi, đoán tiếp vị trí theo vận tốc cũ tối đa chừng này giây
+local STALE_MAX_VEL = 120                          -- giới hạn vận tốc dùng để đoán (stud/giây)
 local WALK_STOP_DIST = 4                           -- dừng lại khi cách người chơi chừng này stud
 local DEFAULT_SPEED = 0                            -- tốc độ chạy (WalkSpeed). 0 = giữ mặc định của game
 -- Danh sách map ở màn hình LOCATIONS / Địa điểm. Mỗi map có tên tiếng Anh + tiếng Việt (không phân biệt hoa/thường).
@@ -110,7 +115,7 @@ local antiAfkOn = true        -- chống bị kick vì đứng im (AFK) lâu
 local tweenMode = false     -- chế độ: chọn người chơi thì tween (bay mượt) tới
 local tweening = false
 local tweenToken = 0
-local activeTween = nil
+local tweenConn = nil
 local walkMode = false      -- chế độ: chọn người chơi thì đi bộ tới (thay vì teleport tức thì)
 local walking = false       -- đang đi bộ
 local flyConn = nil           -- vòng bay lên (chỉ chạy khi đang đi bộ tới người ở trên cao)
@@ -135,10 +140,12 @@ local setAntiAfkUI, toggleAntiAfk
 -- Người chơi ở xa có thể bị game "unload" (StreamingEnabled) nên không thấy nhân vật của họ.
 -- Script nhớ vị trí cuối cùng thấy được, đi/teleport tới đó và xin game tải khu vực đó; thấy người rồi thì dùng vị trí thật.
 local lastKnownCF = {}
+local lastKnownVel = {}      -- [Player] = vận tốc lần cuối thấy (để đoán vị trí khi người chơi bị unload)
+local lastKnownT = {}        -- [Player] = os.clock() lần cuối thấy thật
 local lastKnownMap = {}      -- [Player] = map mình đang ở lúc thấy họ lần cuối (vị trí cuối còn hợp lệ nếu mình chưa đổi map)
 local lastStream = 0
 local function requestStream(pos)
-	if os.clock() - lastStream < 1.5 then return end
+	if os.clock() - lastStream < 0.6 then return end
 	lastStream = os.clock()
 	task.spawn(function() pcall(function() workspace:RequestStreamAroundAsync(pos, 1) end) end)
 end
@@ -149,6 +156,10 @@ local function playerCF(plr)
 	local r = char and (char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart)
 	if r then
 		lastKnownCF[plr] = r.CFrame
+		local v = r.AssemblyLinearVelocity
+		if v.Magnitude > STALE_MAX_VEL then v = v.Unit * STALE_MAX_VEL end
+		lastKnownVel[plr] = v
+		lastKnownT[plr] = os.clock()
 		lastKnownMap[plr] = myMapIdx
 		return r.CFrame
 	end
@@ -160,20 +171,23 @@ local function otherMap(plr)
 	if not spawnAtPlayerMap then return false end
 	local t = playerMapIdx[plr]
 	if not (t ~= nil and myMapIdx ~= nil and t ~= myMapIdx and (playerMapStable[plr] or 0) >= 3) then return false end
-	-- chỉ đoán theo vị trí mà mình từng thấy họ ngay trong map hiện tại của mình => vị trí cuối vẫn đúng, cứ đi tới
-	-- (người chơi ở xa + đứng im vẫn đi bộ tới được). Nhận diện chắc chắn (thuộc tính/thư mục) mới chặn.
 	if not playerMapExplicit[plr] and lastKnownCF[plr] and lastKnownMap[plr] == myMapIdx then return false end
 	return true
 end
 
 -- trả về (CFrame, đang_thấy_thật)
+-- Khi người chơi ở quá xa bị game unload: KHÔNG quay về vị trí cũ nữa mà đoán tiếp vị trí theo vận tốc lần cuối thấy,
+-- đồng thời xin game tải khu vực đó; thấy lại người rồi thì dùng vị trí thật.
 local function targetCF(plr)
 	if otherMap(plr) then return nil, false end
 	local cf = playerCF(plr)
 	if cf then return cf, true end
 	local last = plr and lastKnownCF[plr]
-	if last then requestStream(last.Position) end
-	return last, false
+	if not last then return nil, false end
+	local age = os.clock() - (lastKnownT[plr] or os.clock())
+	local pred = last + (lastKnownVel[plr] or Vector3.zero) * math.min(age, STALE_EXTRAPOLATE)
+	requestStream(pred.Position)
+	return pred, false
 end
 
 local function teleportToPlayer(plr)
@@ -182,21 +196,43 @@ local function teleportToPlayer(plr)
 	if cf and root then root.CFrame = cf + Vector3.new(0, 3, 0) end
 end
 
+-- Giữ nhân vật không bị Humanoid/trọng lực kéo lại (PlatformStand) khi đang bám/tween
+local holdHum = nil
+local function setHold(on)
+	if on then
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if not hum then return end
+		if holdHum and holdHum ~= hum then pcall(function() holdHum.PlatformStand = false end) end
+		holdHum = hum
+		if not hum.PlatformStand then pcall(function() hum.PlatformStand = true end) end
+	elseif holdHum then
+		pcall(function() holdHum.PlatformStand = false end)
+		holdHum = nil
+	end
+end
+
 local function stopFollow()
 	followOn = false
 	if followConn then followConn:Disconnect(); followConn = nil end
+	setHold(false)
 end
 
 local function startFollow()
 	if followConn then followConn:Disconnect() end
 	followConn = RunService.Heartbeat:Connect(function()
-		local cf = targetCF(selectedPlayer)
+		local cf, live = targetCF(selectedPlayer)
 		local char = player.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
 		if cf and root and hum and hum.Health > 0 then
-			root.CFrame = cf * FOLLOW_OFFSET
+			setHold(true)
+			local goal = cf * FOLLOW_OFFSET
+			-- thấy người chơi thật: bám sát. Mất dấu (ở rất xa): bay tới chỗ đoán, tới gần rồi thì đứng chờ game tải (không giật)
+			if live or (root.Position - goal.Position).Magnitude > HOLD_RADIUS then
+				root.CFrame = goal
+			end
 			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
 		end
 	end)
 end
@@ -310,11 +346,13 @@ function startWalk(continuous)
 	end)
 end
 
--- ===== Tween tới người chơi (bay mượt thẳng tới, tự bật noclip, đuổi theo nếu người chơi đổi chỗ) =====
+-- ===== Tween tới người chơi: tự di chuyển MỖI FRAME (không dùng TweenService nữa nên không bị hủy/tạo lại gây giật về chỗ cũ) =====
+-- Tính lại điểm tới mỗi frame => đuổi kịp cả khi người chơi đứng yên hoặc đang chạy; càng xa càng bay nhanh nên tới được rất xa.
 function stopTween()
 	tweening = false
 	tweenToken = tweenToken + 1
-	if activeTween then pcall(function() activeTween:Cancel() end); activeTween = nil end
+	if tweenConn then tweenConn:Disconnect(); tweenConn = nil end
+	setHold(false)
 end
 
 function startTween()
@@ -323,51 +361,55 @@ function startTween()
 	stopTween()
 	local token = tweenToken
 	tweening = true
-	task.spawn(function()
-		local t0 = os.clock()
-		local angle0 = nil
-		while tweening and tweenToken == token do
-			if not (selectedPlayer and selectedPlayer.Parent == Players) then break end
-			local tcf = targetCF(selectedPlayer)
-			local char = player.Character
-			local root = char and char:FindFirstChild("HumanoidRootPart")
-			local hum = char and char:FindFirstChildOfClass("Humanoid")
-			if tcf and root and hum and hum.Health > 0 then
-				local tpos = tcf.Position
-				-- điểm quay quanh người chơi: bán kính = Target Distance, góc tăng dần theo Orbit Speed
-				if not angle0 then
-					local d = root.Position - tpos
-					angle0 = math.atan2(d.Z, d.X) - TWEEN_ORBIT_SPEED * (os.clock() - t0)
-				end
-				local a = angle0 + TWEEN_ORBIT_SPEED * (os.clock() - t0)
-				-- tính trước 1 chút theo hướng quay để không bị chậm hơn điểm cần tới
-				a = a + TWEEN_ORBIT_SPEED * TWEEN_RETARGET_DELAY
-				local goalPos = Vector3.new(tpos.X + math.cos(a) * TWEEN_TARGET_DISTANCE, tpos.Y, tpos.Z + math.sin(a) * TWEEN_TARGET_DISTANCE)
-				local dist = (goalPos - root.Position).Magnitude
-				root.AssemblyLinearVelocity = Vector3.zero
-				root.AssemblyAngularVelocity = Vector3.zero
-				if dist > 0.5 then
-					local t = TweenService:Create(root, TweenInfo.new(math.max(dist / TWEEN_SPEED, 0.03), Enum.EasingStyle.Linear),
-						{ CFrame = CFrame.lookAt(goalPos, Vector3.new(tpos.X, goalPos.Y, tpos.Z)) })
-					activeTween = t
-					t:Play()
-					task.wait(TWEEN_RETARGET_DELAY) -- hết Retarget Delay thì tính lại điểm tới
-					if activeTween == t then
-						pcall(function() t:Cancel() end)
-						activeTween = nil
-					end
-				else
-					task.wait(TWEEN_RETARGET_DELAY)
-				end
-			else
-				task.wait(0.2) -- đang chết/hồi sinh thì chờ rồi tween tiếp
-			end
-		end
-		if tweenToken == token then -- người chơi rời game => tắt
+	local angle = nil
+	tweenConn = RunService.Heartbeat:Connect(function(dt)
+		if not (tweening and tweenToken == token) then return end
+		if not (selectedPlayer and selectedPlayer.Parent == Players) then -- người chơi rời game => tắt
 			stopTween()
 			tweenMode = false
 			setTweenUI()
+			return
 		end
+		local tcf, live = targetCF(selectedPlayer)
+		local char = player.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if not (tcf and root and hum and hum.Health > 0) then return end -- đang chết/hồi sinh: chờ
+		dt = math.min(dt, 0.1)
+		setHold(true)
+		local tpos = tcf.Position
+		local cur = root.Position
+		local goal
+		if live then
+			-- quay quanh người chơi: bán kính = Target Distance, góc tăng dần theo Orbit Speed
+			if not angle then
+				local d = cur - tpos
+				angle = math.atan2(d.Z, d.X)
+			end
+			angle = angle + TWEEN_ORBIT_SPEED * dt
+			goal = Vector3.new(tpos.X + math.cos(angle) * TWEEN_TARGET_DISTANCE, tpos.Y, tpos.Z + math.sin(angle) * TWEEN_TARGET_DISTANCE)
+		else
+			-- mất dấu (người chơi ở rất xa, bị unload): bay thẳng tới chỗ đoán, tới gần thì đứng chờ game tải
+			if (tpos - cur).Magnitude <= HOLD_RADIUS then
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
+				return
+			end
+			goal = tpos
+		end
+		local offset = goal - cur
+		local dist = offset.Magnitude
+		local speed = math.clamp(dist * TWEEN_FAR_FACTOR, TWEEN_SPEED, TWEEN_MAX_SPEED)
+		local newPos = cur
+		if dist > 1e-3 then newPos = cur + offset.Unit * math.min(dist, speed * dt) end
+		local look = Vector3.new(tpos.X, newPos.Y, tpos.Z)
+		if live and (look - newPos).Magnitude > 0.1 then
+			root.CFrame = CFrame.lookAt(newPos, look)
+		else
+			root.CFrame = root.CFrame.Rotation + newPos
+		end
+		root.AssemblyLinearVelocity = Vector3.zero
+		root.AssemblyAngularVelocity = Vector3.zero
 	end)
 end
 
@@ -1320,6 +1362,8 @@ end
 Players.PlayerAdded:Connect(function() rebuildList() end)
 Players.PlayerRemoving:Connect(function(plr)
 	lastKnownCF[plr] = nil
+	lastKnownVel[plr] = nil
+	lastKnownT[plr] = nil
 	lastKnownMap[plr] = nil
 	friendCache[plr] = nil
 	if selectedPlayer == plr then
