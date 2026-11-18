@@ -505,10 +505,41 @@ local function targetCF(plr)
 	return pred, false
 end
 
+local tpToken = 0
+local tpNote = nil -- {msg, t}: thông báo tạm thời khi dịch chuyển 1 lần thất bại
 local function teleportToPlayer(plr)
-	local cf = targetCF(plr)
-	local root = myRoot()
-	if cf and root then root.CFrame = cf + Vector3.new(0, 3, 0) end
+	tpToken = tpToken + 1
+	local token = tpToken
+	tpNote = nil
+	task.spawn(function()
+		local t0 = os.clock()
+		local done = false
+		local why = nil
+		-- Đặt vị trí liên tục ~1 giây: game kéo nhân vật về / chưa kịp tải thì vẫn ăn
+		while os.clock() - t0 < 1 and tpToken == token do
+			local cf = targetCF(plr)
+			local root = myRoot()
+			if not root then
+				local m = findModelByName(player)
+				root = m and rootOf(m)
+			end
+			if not root then
+				why = "Không thấy nhân vật của mình"
+			elseif not cf then
+				why = "Chưa thấy nhân vật của " .. plr.DisplayName .. " (khác map / chưa tải)"
+			else
+				why = nil
+				done = true
+				root.CFrame = cf + Vector3.new(0, 3, 0)
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
+			end
+			RunService.Heartbeat:Wait()
+		end
+		if not done and tpToken == token then
+			tpNote = { msg = why or "Không dịch chuyển được", t = os.clock() + 4 }
+		end
+	end)
 end
 
 -- Giữ nhân vật không bị Humanoid/trọng lực kéo lại (PlatformStand) khi đang bám/tween
@@ -847,13 +878,15 @@ local function consider(r, o, pg, names, key)
 		end
 	elseif key == "defeated" or key:find("eliminatedby", 1, true) then
 		r.defeated = true
+		r.anchorObj = r.anchorObj or o
 	elseif key == "menu" or (#key <= 10 and key:sub(1, 4) == "menu") then
 		local mc = clickableOf(o, pg)
 		r.menu = r.menu or mc
 		r.menus = r.menus or {}
-		table.insert(r.menus, mc)
+		table.insert(r.menus, { txt = o, btn = mc }) -- nhớ cả chữ "MENU" để bấm ĐÚNG chỗ chữ đó
 	elseif #key <= 20 and key:sub(1, 7) == "respawn" then
 		r.death = r.death or clickableOf(o, pg)
+		r.anchorObj = o -- ưu tiên neo vào nút RESPAWN (cùng hàng với MENU)
 	elseif isPlayText(key) then
 		r.play = r.play or clickableOf(o, pg)
 	elseif isRespawnText(key) then
@@ -974,6 +1007,21 @@ local function clickOnce(obj)
 	end
 end
 
+-- Bấm đúng tâm của chữ (vd "MENU"), không bấm tâm của khung nút bọc ngoài (có thể lệch chỗ)
+local function pressText(txt, btn)
+	local methods = {}
+	if btn and btn:IsA("GuiButton") and (firesignal or getconnections) then
+		table.insert(methods, function() fireSignals(btn) end)
+	end
+	table.insert(methods, function() vimTap(txt) end)
+	table.insert(methods, function() vimClick(txt) end)
+	for _, m in ipairs(methods) do
+		pcall(m)
+		task.wait(0.12)
+		if not (txt.Parent and isShown(txt)) then return end
+	end
+end
+
 local mapClickedAt = 0
 local function mapRespawnStep(names)
 	local ok, r = pcall(scanScreens, names)
@@ -987,15 +1035,17 @@ local function mapRespawnStep(names)
 	local flags = "map=" .. yn(r.map) .. " spawn=" .. yn(r.respawn) .. " dead=" .. yn(isDead) .. " play=" .. yn(r.play)
 		.. " menu=" .. yn(r.menu) .. (r.confirm and " confirm=Y" or "")
 
-	-- Nếu có hộp thoại "Return to main menu?": chọn nút MENU nằm gần hộp thoại nhất
-	local menuBtn = r.menu
-	if r.confirm and r.confirmObj and r.menus and #r.menus > 1 then
-		local cc, best = centerOf(r.confirmObj), math.huge
+	-- Chọn đúng chữ MENU: gần hộp thoại confirm nhất (nếu có), không thì gần nút RESPAWN/DEFEATED nhất
+	local menuEntry = r.menus and r.menus[1]
+	local anchor = (r.confirm and r.confirmObj) or r.anchorObj
+	if anchor and r.menus and #r.menus > 1 then
+		local cc, best = centerOf(anchor), math.huge
 		for _, m in ipairs(r.menus) do
-			local d = (centerOf(m) - cc).Magnitude
-			if d < best then best, menuBtn = d, m end
+			local d = (centerOf(m.txt) - cc).Magnitude
+			if d < best then best, menuEntry = d, m end
 		end
 	end
+	local menuBtn = menuEntry and menuEntry.txt
 
 	if r.map and r.respawn then
 		-- Màn hình Locations (có cả danh sách map lẫn nút SPAWN)
@@ -1019,8 +1069,7 @@ local function mapRespawnStep(names)
 		-- Màn hình DEFEATED: bấm MENU (bỏ qua chữ tên map lẻ trên HUD)
 		mapClickedAt = 0
 		setStatus("Bấm MENU: " .. flags)
-		press("menu", menuBtn)
-		if menuBtn.Parent and isShown(menuBtn) then clickOnce(menuBtn) end -- press chưa ăn thì bấm thêm 1 lần
+		pressText(menuEntry.txt, menuEntry.btn)
 		task.wait(0.6)
 	elseif r.map and not isDead then
 		-- Có danh sách map nhưng không có nút SPAWN: chọn map luôn
@@ -1497,6 +1546,7 @@ task.spawn(function()
 				end
 			end
 		end
+		if not msg and tpNote and os.clock() < tpNote.t then msg = tpNote.msg end
 		diagMsg = msg
 		pcall(setStatus, nil)
 	end
