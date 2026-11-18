@@ -554,7 +554,7 @@ function Tab:_row(height)
     local f = new("Frame", {
         Size = UDim2.new(1, 0, 0, height),
         BackgroundColor3 = Theme.Surface,
-        BackgroundTransparency = (Assets.Background ~= "") and 0.45 or 0,
+        BackgroundTransparency = (Assets.Background ~= "") and 0.8 or 0,
         BorderSizePixel = 0,
     })
     round(f, 8)
@@ -586,7 +586,7 @@ function Tab:CreateParagraph(o)
         Size = UDim2.new(1, 0, 0, 0),
         AutomaticSize = Enum.AutomaticSize.Y,
         BackgroundColor3 = Theme.Surface,
-        BackgroundTransparency = (Assets.Background ~= "") and 0.45 or 0,
+        BackgroundTransparency = (Assets.Background ~= "") and 0.8 or 0,
         BorderSizePixel = 0,
     })
     round(f, 8)
@@ -639,7 +639,7 @@ function Tab:CreateStatGrid(o)
     for index, item in ipairs(items) do
         local card = new("Frame", {
             BackgroundColor3 = Theme.Surface,
-        BackgroundTransparency = (Assets.Background ~= "") and 0.45 or 0,
+        BackgroundTransparency = (Assets.Background ~= "") and 0.8 or 0,
             BorderSizePixel = 0,
             LayoutOrder = index,
         }, grid)
@@ -963,7 +963,7 @@ function Tab:_dropdown(o, multi)
     local f = new("Frame", {
         Size = UDim2.new(1, 0, 0, 42),
         BackgroundColor3 = Theme.Surface,
-        BackgroundTransparency = (Assets.Background ~= "") and 0.45 or 0,
+        BackgroundTransparency = (Assets.Background ~= "") and 0.8 or 0,
         BorderSizePixel = 0,
         ClipsDescendants = true,
     })
@@ -1540,7 +1540,7 @@ function Library:CreateWindow(o)
             Name = "BackgroundShade",
             Size = UDim2.new(1, 0, 1, 0),
             BackgroundColor3 = Theme.Background,
-            BackgroundTransparency = 0.5,
+            BackgroundTransparency = 0.6,
             BorderSizePixel = 0,
             ZIndex = 0,
         }, main)
@@ -1559,7 +1559,7 @@ function Library:CreateWindow(o)
     local top = new("Frame", {
         Size = UDim2.new(1, 0, 0, 46),
         BackgroundColor3 = Theme.Topbar,
-        BackgroundTransparency = hasBg and 0.5 or 0,
+        BackgroundTransparency = hasBg and 0.8 or 0,
         BorderSizePixel = 0,
     }, main)
     new("Frame", {
@@ -1659,7 +1659,7 @@ function Library:CreateWindow(o)
         Position = UDim2.new(0, 0, 0, 46),
         Size = UDim2.new(0, 150, 1, -46),
         BackgroundColor3 = Theme.Sidebar,
-        BackgroundTransparency = hasBg and 0.5 or 0,
+        BackgroundTransparency = hasBg and 0.8 or 0,
         BorderSizePixel = 0,
     }, main)
     new("Frame", {
