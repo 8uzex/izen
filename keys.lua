@@ -2284,6 +2284,8 @@ do
     end
 end
 
+local IsGameAllowingSkill, IsSkillSlotAvailable, IsSkillOnCooldown, IsSkillKeyReady, UzexFilter, TriggerGuiButton
+do
 local function FindSkillNumberValue(char, key)
     local skillsFolder = cachedSkillsFolder or (char and char:FindFirstChild("Skills"))
     if not skillsFolder then return nil, nil end
@@ -2317,7 +2319,7 @@ local function FindSkillButton(key)
     return nil
 end
 
-local function IsGameAllowingSkill(char)
+function IsGameAllowingSkill(char)
     if not FishingGui or not FishingGui.Visible then
         wasMinigameVisible = false
         return false
@@ -2384,7 +2386,7 @@ local function IsGameAllowingSkill(char)
     return true
 end
 
-local function IsSkillSlotAvailable(char, key)
+function IsSkillSlotAvailable(char, key)
     if PlayerData then
         local rodVal = PlayerData:FindFirstChild("FishingRod")
         local rodInv = PlayerData:FindFirstChild("FishingRodInventory")
@@ -2403,7 +2405,7 @@ local function IsSkillSlotAvailable(char, key)
     return s ~= nil
 end
 
-local function IsSkillOnCooldown(char, key)
+function IsSkillOnCooldown(char, key)
     local btn = FindSkillButton(key)
     if btn then
         local cd = btn:FindFirstChild("CD")
@@ -2426,7 +2428,7 @@ local function IsSkillConfirmedUsed(char, key)
     return IsSkillOnCooldown(char, key)
 end
 
-local function IsSkillKeyReady(char, key)
+function IsSkillKeyReady(char, key)
     if not IsSkillSlotAvailable(char, key) then
         return false
     end
@@ -2478,7 +2480,7 @@ local barPosConn = nil
 local boundBar = nil
 
 -- Fish filter: Auto Cast keeps casting until a Boss / Secret Boss fish bites
-local UzexFilter = { Skip = false, Cache = {}, LastNotify = 0, AntiChecked = {} }
+UzexFilter = { Skip = false, Cache = {}, LastNotify = 0, AntiChecked = {} }
 
 local function LockFishingBar()
     if isLockingBar then return end
@@ -2523,7 +2525,7 @@ end
 
 BindFishingBarLock()
 
-local function TriggerGuiButton(btn)
+function TriggerGuiButton(btn)
     if not btn then return false end
     if not btn:IsA("GuiButton") then
         btn = btn:FindFirstChildWhichIsA("GuiButton", true) or (btn.Parent and btn.Parent:IsA("GuiButton") and btn.Parent) or nil
@@ -2767,7 +2769,10 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
-local function GetModelPart(obj)
+end
+local GetModelPart, FindBossTarget, GetButtonLabelText, FindBossMenuFrame, CheckBossStatusOnToggle, clearPlayerESP
+do
+function GetModelPart(obj)
     if not obj then return nil end
     if obj:IsA("BasePart") then return obj end
     if obj:IsA("Model") then
@@ -2978,7 +2983,7 @@ local function IsLongDiaoHaiName(obj)
     return string.find(raw, "diaohai", 1, true) ~= nil or string.find(raw, "longdiao", 1, true) ~= nil
 end
 
-local function FindBossTarget(wantSecret)
+function FindBossTarget(wantSecret)
     local npcFolder = workspace:FindFirstChild("NPC")
     local bossFolder = npcFolder and npcFolder:FindFirstChild("Boss")
 
@@ -3055,7 +3060,7 @@ local lastBossNotifyTick = 0
 local function NotifyBoss(title, content, key, cooldown)
 end
 
-local function GetButtonLabelText(obj)
+function GetButtonLabelText(obj)
     if not obj then return "" end
     if obj:IsA("TextButton") or obj:IsA("TextLabel") then
         if obj.Text and obj.Text ~= "" then
@@ -3115,7 +3120,7 @@ local function TriggerGuiButton(btn)
     return triggered
 end
 
-local function FindBossMenuFrame()
+function FindBossMenuFrame()
     if not MainGui then return nil end
     local menu = MainGui:FindFirstChild("Menu")
     if not menu then return nil end
@@ -3211,7 +3216,7 @@ local function CloseBossMenuFrame(bossFrame)
     end
 end
 
-local function CheckBossStatusOnToggle(wantSecret)
+function CheckBossStatusOnToggle(wantSecret)
     bossSummoned = false
     bossSummonTick = 0
     local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
@@ -3787,7 +3792,7 @@ Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
     end
 end)
 
-local function clearPlayerESP()
+function clearPlayerESP()
     for _, player in ipairs(Players:GetPlayers()) do
         local char = player.Character
         if char then
@@ -3800,6 +3805,7 @@ local function clearPlayerESP()
     end
 end
 
+end
 local function updateESP()
     if not Config.ESPEnabled then return end
     for _, player in ipairs(Players:GetPlayers()) do
@@ -4070,7 +4076,9 @@ task.spawn(function()
     end
 end)
 
-local lastTicketQuestTime = 0
+local lastTicketQuestTime, GetBuyableBaits
+do
+lastTicketQuestTime = 0
 local ChooseDialogueOption = Events:WaitForChild("ChooseDialogueOption", 9e9)
 
 local function HideTicketDialogueUI()
@@ -5003,7 +5011,7 @@ task.spawn(function()
     end
 end)
 
-local function GetBuyableBaits()
+function GetBuyableBaits()
     local list = {}
     local seen = {}
     local baitFolder = Info:FindFirstChild("Bait")
@@ -5032,6 +5040,7 @@ local function GetBuyableBaits()
     return list
 end
 
+end
 local function GetCraftableBaits()
     local list = {}
     local baitFolder = Info:FindFirstChild("Bait")
