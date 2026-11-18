@@ -2827,6 +2827,29 @@ local function UzexFishData(name)
     return data
 end
 
+-- Secret Boss list from the game (Info.FishingAreaRarity["Secret Boss"]), refreshed every 30s
+function UzexFilter.SecretSet()
+    local now = os.clock()
+    if UzexFilter.SecretSetData and now - (UzexFilter.SecretSetAt or 0) < 30 then
+        return UzexFilter.SecretSetData
+    end
+    local set = {}
+    pcall(function()
+        local mod = Info:FindFirstChild("FishingAreaRarity")
+        local data = mod and require(mod)
+        local list = type(data) == "table" and data["Secret Boss"]
+        if type(list) == "table" then
+            for key, value in pairs(list) do
+                if type(key) == "string" then set[string.lower(key)] = true end
+                if type(value) == "string" then set[string.lower(value)] = true end
+            end
+        end
+    end)
+    UzexFilter.SecretSetData = set
+    UzexFilter.SecretSetAt = now
+    return set
+end
+
 -- returns isBoss, isSecret, shownName for the fish currently on the line
 function UzexFilter.Classify()
     local isBoss, isSecret, shown, known = false, false, "", false
@@ -2869,14 +2892,19 @@ function UzexFilter.Classify()
                     known = true
                     if data.Boss == true then isBoss = true end
                     -- secret only when the game says so (no guessing from drop chance)
-                    if data.Secret == true or data.Rarity == "Secret" then
+                    if data.Secret == true or data.SecretBoss == true or data.Rarity == "Secret" then
                         isSecret = true
                     end
+                    if data.SpecialBoss == true then isBoss = true end
                     if type(data.Rarity) == "string" and string.lower(data.Rarity) == "boss" then
                         isBoss = true
                     end
                 end
                 local lower = string.lower(clean)
+                if UzexFilter.SecretSet()[lower] then
+                    isSecret = true
+                    known = true
+                end
                 if string.find(lower, "secret", 1, true) or string.find(lower, "diaohai", 1, true)
                     or string.find(lower, "wuzhi", 1, true) then
                     isSecret = true
