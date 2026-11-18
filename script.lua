@@ -105,14 +105,31 @@ local function verify(key)
     return nil, msg2 or msg
 end
 
-local function launch(tier)
+local function launch(tier, key)
     notify("Key hợp lệ (" .. string.upper(tier) .. "). Đang tải script...")
     local scriptUrl = (tier == "premium") and SCRIPT_PREMIUM or SCRIPT_FREE
-    local okLoad, err = pcall(function()
-        loadstring(game:HttpGet(scriptUrl))()
-    end)
-    if not okLoad then
-        notify("Lỗi khi tải script: " .. tostring(err))
+    if key then getgenv().Key = key end   -- script chính đọc key từ getgenv().Key
+
+    -- Bước 1: tải nội dung script
+    local okGet, src = pcall(function() return game:HttpGet(scriptUrl) end)
+    if not okGet or type(src) ~= "string" or src == "" then
+        warn("[Uzex Hub] HttpGet lỗi: " .. tostring(src))
+        return notify("Không tải được script. Kiểm tra lại link GitHub.")
+    end
+
+    -- Bước 2: biên dịch (nếu nội dung không phải code Lua, ví dụ trang 404, sẽ báo ở đây)
+    local fn, compileErr = loadstring(src)
+    if not fn then
+        warn("[Uzex Hub] Script tải về không hợp lệ: " .. tostring(compileErr))
+        warn("[Uzex Hub] 60 ký tự đầu của nội dung: " .. src:sub(1, 60))
+        return notify("Script tải về không phải code hợp lệ: " .. src:sub(1, 40))
+    end
+
+    -- Bước 3: chạy
+    local okRun, err = xpcall(fn, function(e) return tostring(e) .. "\n" .. debug.traceback() end)
+    if not okRun then
+        warn("[Uzex Hub] Lỗi khi chạy script: " .. tostring(err))
+        notify("Lỗi khi chạy script: " .. tostring(err):sub(1, 120))
     end
 end
 
@@ -313,7 +330,7 @@ local function showPrompt(prefill)
                 saveKey(typed)
                 task.wait(0.6)
                 closeGui()
-                launch(tier)
+                launch(tier, typed)
             else
                 setStatus(message or "Key không hợp lệ.", BAD)
                 for _, dx in ipairs({ 8, -8, 5, -5, 0 }) do
@@ -351,7 +368,7 @@ if type(presetKey) == "string" and presetKey:gsub("%s+", "") ~= "" then
     local tier, message = verify(presetKey)
     if tier then
         saveKey(presetKey)
-        return launch(tier)
+        return launch(tier, presetKey)
     end
     notify(message or "Key không hợp lệ.")
     return showPrompt(presetKey)
@@ -362,7 +379,7 @@ local stored = savedKey()
 if stored then
     local tier = verify(stored)
     if tier then
-        return launch(tier)
+        return launch(tier, stored)
     end
 end
 
