@@ -6,7 +6,7 @@
 --   dán key vào ô rồi bấm "Kiểm tra key". Key đúng được lưu lại cho lần sau.
 
 ---------------- CẤU HÌNH (chủ bot sửa) ----------------
-local API_URL        = "https://equipment-barrel-hardcover.ngrok-free.dev"   -- link ngrok cố định của bot
+local API_URL        = "https://uzex.izen-ws.workers.dev"   -- link ngrok cố định của bot
 local SCRIPT_PREMIUM = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
 local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
 local WEB_API        = "https://uzex.izen-ws.workers.dev"                   -- server web cấp key free (phải có /verify)
