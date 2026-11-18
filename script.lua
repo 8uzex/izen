@@ -6,7 +6,7 @@
 --   dán key vào ô rồi bấm "Kiểm tra key". Key đúng được lưu lại cho lần sau.
 
 ---------------- CẤU HÌNH (chủ bot sửa) ----------------
-local API_URL        = "https://uzex.izen-ws.workers.dev"   -- link ngrok cố định của bot
+local API_URL        = "https://uzex.izen-ws.workers.dev"   -- server kiểm tra key (premium cũng nằm ở web)
 local SCRIPT_PREMIUM = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
 local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
 local WEB_API        = "https://uzex.izen-ws.workers.dev"                   -- server web cấp key free (phải có /verify)
@@ -95,6 +95,7 @@ local function verify(key)
     local tier, msg, connErr = verifyAt(WEB_API, key)
     if tier then return tier end
 
+    if API_URL == WEB_API then return nil, msg end   -- cùng 1 server thì không hỏi lại
     local tier2, msg2, connErr2 = verifyAt(API_URL, key)
     if tier2 then return tier2 end
 
