@@ -1916,14 +1916,40 @@ local function GetModuleData(mod)
     return nil
 end
 
+-- Anti-AFK: Roblox kicks after 20 minutes idle (error 278), which Auto Rejoin then
+-- turns into a server change. Old Roblox Idled handlers are disabled FIRST, and only
+-- then do we connect our own (before, the loop below disabled our own handler too).
+if getconnections then
+    pcall(function()
+        for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
+            if conn.Disable then
+                conn:Disable()
+            elseif conn.Disconnect then
+                conn:Disconnect()
+            end
+        end
+    end)
+end
+
 local lastAfkTick = os.clock()
 
-LocalPlayer.Idled:Connect(function()
-    if not Config.AntiAFK then return end
+local function AntiAfkPulse()
     pcall(function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new(0, 0))
     end)
+    pcall(function()
+        -- fallback: tiny real input so the idle timer always resets
+        VirtualInputManager:SendMouseMoveEvent(1, 1, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftShift, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftShift, false, game)
+    end)
+end
+
+LocalPlayer.Idled:Connect(function()
+    if not Config.AntiAFK then return end
+    AntiAfkPulse()
 end)
 
 task.spawn(function()
@@ -1931,12 +1957,9 @@ task.spawn(function()
         task.wait(1)
         if Config.AntiAFK then
             local now = os.clock()
-            if now - lastAfkTick >= 600 then
+            if now - lastAfkTick >= 240 then -- every 4 minutes (kick is at 20)
                 lastAfkTick = now
-                pcall(function()
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton2(Vector2.new(0, 0))
-                end)
+                AntiAfkPulse()
             end
 
             pcall(function()
@@ -1953,16 +1976,6 @@ task.spawn(function()
         end
     end
 end)
-
-if getconnections then
-    for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
-        if conn.Disable then
-            conn:Disable()
-        elseif conn.Disconnect then
-            conn:Disconnect()
-        end
-    end
-end
 
 local cachedChar = LocalPlayer.Character
 local cachedHum = cachedChar and cachedChar:FindFirstChildOfClass("Humanoid")
