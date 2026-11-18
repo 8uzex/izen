@@ -7,8 +7,8 @@
 
 ---------------- CẤU HÌNH (chủ bot sửa) ----------------
 local API_URL        = "https://uzex.izen-ws.workers.dev"   -- server kiểm tra key (premium cũng nằm ở web)
-local SCRIPT_PREMIUM = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
-local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/loader.lua"
+local SCRIPT_PREMIUM = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/keys.lua"
+local SCRIPT_FREE    = "https://raw.githubusercontent.com/8uzex/izen/refs/heads/main/keys.lua"
 local WEB_API        = "https://uzex.izen-ws.workers.dev"                   -- server web cấp key free (phải có /verify)
 local GET_KEY_URL    = "https://uzex.izen-ws.workers.dev/uzexhub"          -- trang lấy key free
 local SAVE_FILE      = "UzexHub_Key.txt"                                       -- nơi lưu key đã nhập đúng
