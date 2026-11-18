@@ -6,6 +6,62 @@ local ProtectionConfig = {
 }
 
 -------------------------------------------------------------------------------
+-- Arceus X compatibility layer (added). Fills in missing executor functions
+-- with safe fallbacks so the rest of the script never errors on them.
+-------------------------------------------------------------------------------
+pcall(function()
+    local G = (type(getgenv) == "function" and getgenv()) or getfenv(0)
+    local function def(name, value)
+        if G[name] == nil and value ~= nil then
+            G[name] = value
+        end
+    end
+
+    -- HTTP request: Arceus X usually exposes request / http_request
+    def("request", http_request or (syn and syn.request) or (fluxus and fluxus.request) or (http and http.request))
+    def("http_request", request)
+
+    -- Clipboard
+    def("setclipboard", toclipboard or (Clipboard and Clipboard.set) or set_clipboard)
+
+    -- Queue on teleport (script already handles it being nil)
+    def("queue_on_teleport", queueonteleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport))
+
+    -- firesignal fallback built on getconnections
+    if G.firesignal == nil and type(getconnections) == "function" then
+        G.firesignal = function(signal, ...)
+            for _, conn in ipairs(getconnections(signal)) do
+                if conn.Fire then
+                    conn:Fire(...)
+                elseif conn.Function then
+                    task.spawn(conn.Function, ...)
+                end
+            end
+        end
+    end
+
+    -- fireproximityprompt fallback
+    if G.fireproximityprompt == nil then
+        G.fireproximityprompt = function(prompt)
+            if prompt and prompt:IsA("ProximityPrompt") then
+                prompt:InputHoldBegin()
+                task.wait((prompt.HoldDuration or 0) + 0.05)
+                prompt:InputHoldEnd()
+            end
+        end
+    end
+
+    -- Tell the user which executor/features were detected
+    local name = (type(identifyexecutor) == "function" and select(1, identifyexecutor())) or "Unknown"
+    print(("[Uzex] Executor: %s | file=%s | getconnections=%s | request=%s"):format(
+        tostring(name),
+        tostring(type(writefile) == "function"),
+        tostring(type(getconnections) == "function"),
+        tostring(type(G.request) == "function")
+    ))
+end)
+
+-------------------------------------------------------------------------------
 -- 👇 YOUR MAIN SCRIPT CODE STARTS HERE 👇
 -------------------------------------------------------------------------------
 
