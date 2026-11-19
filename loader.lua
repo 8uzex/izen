@@ -135,6 +135,11 @@ local EN_TRANSLATIONS = {
     ["Bật"] = "Enabled", ["Tắt"] = "Disabled", ["Đang tải..."] = "Loading...",
     ["Đang tìm máy chủ ít người..."] = "Searching for a low-population server...",
     ["Đang tự động kết nối lại..."] = "Reconnecting automatically...",
+    ["Limited Event"] = "Limited Event", ["Give cá từ xa"] = "Remote Give Fish", ["Chọn cá để give"] = "Select Fish to Give",
+    ["Làm mới danh sách cá"] = "Refresh Fish List", ["Số lượng give"] = "Give Amount",
+    ["Dịch chuyển tạm tới NPC khi give"] = "Temporarily Teleport to NPC When Giving", ["Give cá đã chọn"] = "Give Selected Fish",
+    ["Học remote"] = "Learn Remote", ["Học remote (give thủ công 1 lần)"] = "Learn Remote (give manually once)",
+    ["Xóa dữ liệu đã học"] = "Clear Learned Data",
     ["Đã lưu URL Webhook."] = "Webhook URL saved.", ["Đây không phải liên kết Discord Webhook."] = "This is not a Discord Webhook URL.",
 }
 local function translateText(value)
@@ -6074,6 +6079,7 @@ local Tabs = {
     Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
     Upgrade = Window:CreateTab({ Name = "Nâng cấp", Icon = "arrow-up" }),
     Misc = Window:CreateTab({ Name = "Khác", Icon = "layers" }),
+    LimitedEvent = Window:CreateTab({ Name = "Limited Event", Icon = "gift" }),
     Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" })
 }
 
@@ -8631,6 +8637,337 @@ do
                 Type = copied and "success" or "error",
                 Duration = 4,
             })
+        end
+    })
+end
+
+-------------------------------------------------------------------------------
+-- Limited Event tab: give fish remotely (NPC Noro Derasu)
+-------------------------------------------------------------------------------
+do
+    local EventTab = Tabs.LimitedEvent
+    local NPC_NAME = "Noro Derasu"
+
+    local FishMap = {}          -- display text -> raw inventory name
+    local SelectedRaw = nil
+    local GiveAmount = 1
+    local TempTeleport = false
+    local Giving = false
+
+    local Learn = {
+        Enabled = false,
+        Buffer = {},            -- recent relevant remote calls
+        Sequence = nil,         -- snapshot replayed when giving
+        FishName = nil,         -- fish name seen in the learned call
+    }
+
+    local function norm(s)
+        local out = string.lower(tostring(s or ""))
+        out = string.gsub(out, "[%s_%-]", "")
+        return out
+    end
+
+    local function notify(title, content, kind)
+        pcall(function()
+            Library:Notify({ Title = title, Content = content, Type = kind or "info", Duration = 4 })
+        end)
+    end
+
+    ---------------------------------------------------------------- NPC / fish
+    local function FindEventNPC()
+        local root = workspace:FindFirstChild("NPC")
+        if not root then return nil end
+        local want = norm(NPC_NAME)
+        local found
+        for _, d in ipairs(root:GetDescendants()) do
+            if d:IsA("Model") or d:IsA("BasePart") then
+                local n = norm(d.Name)
+                if n == want or string.find(n, "derasu", 1, true) or string.find(n, "noro", 1, true) then
+                    found = found or d
+                    if d.Parent and d.Parent.Name == "Function" then
+                        return d
+                    end
+                end
+            end
+        end
+        return found
+    end
+
+    local function ItemCount(item)
+        local c = 0
+        pcall(function()
+            if item:IsA("ValueBase") then
+                c = tonumber(item.Value) or 0
+            end
+            if c <= 0 then
+                local q = item:FindFirstChild("Quantity") or item:FindFirstChild("Count") or item:FindFirstChild("Amount")
+                if q and q:IsA("ValueBase") then c = tonumber(q.Value) or 0 end
+            end
+            if c <= 0 then
+                c = tonumber(item:GetAttribute("Quantity") or item:GetAttribute("Count") or item:GetAttribute("Amount")) or 0
+            end
+        end)
+        if c <= 0 then c = 1 end
+        return c
+    end
+
+    local function GetFishOptions()
+        local list, map = {}, {}
+        local inv = PlayerData:FindFirstChild("Inventory")
+        local infoInv = Info:FindFirstChild("Inventory")
+        if inv and infoInv then
+            for _, item in ipairs(inv:GetChildren()) do
+                local mod = infoInv:FindFirstChild(item.Name)
+                local data = mod and GetModuleData(mod)
+                if data then
+                    local t = data.Type
+                    local isFish = (t == "Fish") or ((t ~= "Bait" and t ~= "Fishing Rod") and (data.Rarity ~= nil or data.Chance ~= nil))
+                    if isFish then
+                        local label = string.format("%s x%d", item.Name, ItemCount(item))
+                        table.insert(list, label)
+                        map[label] = item.Name
+                    end
+                end
+            end
+        end
+        table.sort(list)
+        if #list == 0 then list = { "None" } end
+        return list, map
+    end
+
+    ---------------------------------------------------------------- learn hook
+    local NOISY = { "fishing", "cast", "reel", "rhythm", "skill", "hotbar", "afk", "progress", "sell", "bait", "craft", "claim", "redeem", "ping", "heartbeat" }
+    local RELEVANT = { "dialog", "give", "gift", "trade", "submit", "donate", "npc", "event", "quest", "turnin", "limited" }
+
+    local function IsKnownFishName(str)
+        local infoInv = Info:FindFirstChild("Inventory")
+        local mod = infoInv and infoInv:FindFirstChild(str)
+        local data = mod and GetModuleData(mod)
+        if not data then return false end
+        return data.Type ~= "Bait" and data.Type ~= "Fishing Rod"
+    end
+
+    -- looks through the call's arguments for a fish name and for the NPC name
+    local function ScanArgs(v, depth, state)
+        if type(v) == "string" then
+            if norm(v) == norm(NPC_NAME) then state.npc = true end
+            if not state.fish and IsKnownFishName(v) then state.fish = v end
+        elseif type(v) == "table" and depth < 4 then
+            for _, x in pairs(v) do ScanArgs(x, depth + 1, state) end
+        end
+    end
+
+    local function Record(remote, method, args)
+        local rname = string.lower(remote.Name)
+        local noisy = false
+        for _, p in ipairs(NOISY) do
+            if string.find(rname, p, 1, true) then noisy = true break end
+        end
+        local state = {}
+        for i = 1, args.n do ScanArgs(args[i], 0, state) end
+        local relevant = (rname == "choosedialogueoption") or state.npc or state.fish
+        if not relevant then
+            for _, p in ipairs(RELEVANT) do
+                if string.find(rname, p, 1, true) then relevant = true break end
+            end
+        end
+        if noisy and not state.npc then return end
+        if not relevant then return end
+
+        local now = os.clock()
+        table.insert(Learn.Buffer, { remote = remote, method = method, args = args, t = now, fish = state.fish })
+        while #Learn.Buffer > 30 do table.remove(Learn.Buffer, 1) end
+
+        -- a call that carries a fish name = the real "give" call: keep the whole sequence
+        if state.fish then
+            local seq = {}
+            for _, c in ipairs(Learn.Buffer) do
+                if now - c.t <= 25 then table.insert(seq, c) end
+            end
+            Learn.Sequence = seq
+            Learn.FishName = state.fish
+            notify("Limited Event", "Đã học remote give (" .. remote.Name .. "). Giờ có thể give cá từ xa.", "success")
+        end
+    end
+
+    local hooked = false
+    local function InstallHook()
+        if hooked then return true end
+        if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then
+            return false
+        end
+        local wrap = newcclosure or function(f) return f end
+        local old
+        old = hookmetamethod(game, "__namecall", wrap(function(self, ...)
+            local method = getnamecallmethod()
+            if Learn.Enabled and (method == "FireServer" or method == "InvokeServer") and typeof(self) == "Instance" then
+                local args = table.pack(...)
+                pcall(Record, self, method, args)
+            end
+            return old(self, ...)
+        end))
+        hooked = true
+        return true
+    end
+
+    ---------------------------------------------------------------- replay
+    local function Substitute(v, from, to, depth)
+        if type(v) == "string" then
+            if v == from then return to end
+            return v
+        elseif type(v) == "table" and depth < 4 then
+            local out = {}
+            for k, x in pairs(v) do out[k] = Substitute(x, from, to, depth + 1) end
+            return out
+        end
+        return v
+    end
+
+    local function GiveOnce(rawName)
+        for _, c in ipairs(Learn.Sequence) do
+            local remote = c.remote
+            if remote and remote.Parent then
+                local args = {}
+                for i = 1, c.args.n do
+                    args[i] = Substitute(c.args[i], Learn.FishName, rawName, 0)
+                end
+                pcall(function()
+                    if c.method == "InvokeServer" then
+                        remote:InvokeServer(table.unpack(args, 1, c.args.n))
+                    else
+                        remote:FireServer(table.unpack(args, 1, c.args.n))
+                    end
+                end)
+                task.wait(0.2)
+            end
+        end
+    end
+
+    local function DoGive()
+        if Giving then
+            notify("Limited Event", "Đang give, vui lòng chờ.", "info")
+            return
+        end
+        if not SelectedRaw then
+            notify("Limited Event", "Chưa chọn cá để give.", "error")
+            return
+        end
+        if not Learn.Sequence or not Learn.FishName then
+            notify("Limited Event", "Chưa học remote. Bật \"Học remote\", rồi give thủ công 1 lần ở NPC.", "error")
+            return
+        end
+        Giving = true
+        task.spawn(function()
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local backCF = hrp and hrp.CFrame
+            if TempTeleport and hrp then
+                local npc = FindEventNPC()
+                if npc then
+                    local cf = npc:IsA("Model") and npc:GetPivot() or npc.CFrame
+                    hrp.CFrame = cf * CFrame.new(0, 0, 4)
+                    task.wait(0.4)
+                end
+            end
+            local done = 0
+            for _ = 1, math.max(1, GiveAmount) do
+                GiveOnce(SelectedRaw)
+                done += 1
+                task.wait(0.35)
+            end
+            if TempTeleport and hrp and backCF then
+                hrp.CFrame = backCF
+            end
+            Giving = false
+            notify("Limited Event", string.format("Đã gửi lệnh give %s x%d.", SelectedRaw, done), "success")
+        end)
+    end
+
+    ---------------------------------------------------------------- UI
+    EventTab:CreateSection("Limited Event")
+    EventTab:CreateParagraph({
+        Title = "Give cá từ xa",
+        Content = "NPC: Noro Derasu. Bước 1: bật \"Học remote\". Bước 2: give cá thủ công 1 lần ở NPC. Bước 3: tắt học, chọn cá bên dưới rồi bấm Give để give từ xa.",
+    })
+
+    EventTab:CreateSection("Give cá từ xa")
+
+    local options, map = GetFishOptions()
+    FishMap = map
+    SelectedRaw = FishMap[options[1]]
+
+    local FishDropdown = EventTab:CreateDropdown({
+        Flag = "LimitedGiveFishDropdown",
+        Name = "Chọn cá để give",
+        Options = options,
+        CurrentOption = options[1],
+        MultipleOptions = false,
+        AllowNone = false,
+        Callback = function(Value)
+            SelectedRaw = FishMap[Value]
+        end
+    })
+
+    EventTab:CreateButton({
+        Name = "Làm mới danh sách cá",
+        Callback = function()
+            local newOptions, newMap = GetFishOptions()
+            FishMap = newMap
+            FishDropdown:Refresh(newOptions, false, false)
+        end
+    })
+
+    EventTab:CreateInput({
+        Flag = "LimitedGiveAmountInput",
+        Name = "Số lượng give",
+        CurrentValue = "1",
+        Numeric = true,
+        Finished = false,
+        Placeholder = "1",
+        Callback = function(Value)
+            GiveAmount = math.max(1, math.floor(tonumber(Value) or 1))
+        end
+    })
+
+    EventTab:CreateToggle({
+        Flag = "LimitedGiveTeleportToggle",
+        Name = "Dịch chuyển tạm tới NPC khi give",
+        CurrentValue = false,
+        Callback = function(Value)
+            TempTeleport = Value == true
+        end
+    })
+
+    EventTab:CreateButton({
+        Name = "Give cá đã chọn",
+        Callback = DoGive
+    })
+
+    EventTab:CreateSection("Học remote")
+
+    EventTab:CreateToggle({
+        Flag = "LimitedLearnToggle",
+        Name = "Học remote (give thủ công 1 lần)",
+        CurrentValue = false,
+        Callback = function(Value)
+            Learn.Enabled = Value == true
+            if Learn.Enabled then
+                if not InstallHook() then
+                    Learn.Enabled = false
+                    notify("Limited Event", "Executor không hỗ trợ hookmetamethod nên không học được remote.", "error")
+                else
+                    notify("Limited Event", "Đang học. Hãy give 1 con cá thủ công ở Noro Derasu.", "info")
+                end
+            end
+        end
+    })
+
+    EventTab:CreateButton({
+        Name = "Xóa dữ liệu đã học",
+        Callback = function()
+            Learn.Buffer = {}
+            Learn.Sequence = nil
+            Learn.FishName = nil
+            notify("Limited Event", "Đã xóa dữ liệu remote đã học.", "info")
         end
     })
 end
