@@ -1115,11 +1115,12 @@ local X = {
 	},
 	modes = { "Phím", "Nút UI" },
 	btnCache = {}, btnTry = {},
-	lagSaved = setmetatable({}, { __mode = "k" }), lagOrig = {},
+	lagSaved = setmetatable({}, { __mode = "k" }), lagOrig = {}, lagG = {}, lagSA = {},
 	lagClasses = {
 		ParticleEmitter = true, Trail = true, Beam = true, Smoke = true, Fire = true, Sparkles = true,
 		PointLight = true, SpotLight = true, SurfaceLight = true,
 		BlurEffect = true, BloomEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true, DepthOfFieldEffect = true,
+		Highlight = true, Clouds = true,
 	},
 }
 
@@ -1206,14 +1207,59 @@ function X.allSkills()
 	X.refreshUI()
 end
 
--- ===== Fix lag: giảm đồ hoạ (có thể bật/tắt, tắt là trả lại như cũ) =====
+-- ===== Fast Mode / Low GFX (Fix lag): tắt hiệu ứng ánh sáng, bóng đổ, hiệu ứng, texture/material, đồ hoạ thấp nhất =====
+-- Tắt công tắc là trả lại đúng như cũ.
+local function setHidden(inst, prop, val)
+	if sethiddenproperty then
+		local ok = pcall(sethiddenproperty, inst, prop, val)
+		if ok then return true end
+	end
+	return (pcall(function() inst[prop] = val end))
+end
+
+-- Đổi 1 thuộc tính "toàn cục" (Lighting, settings, Terrain...) và nhớ giá trị cũ để trả lại
+local function lagGlobal(inst, prop, val)
+	local ok, cur = pcall(function() return inst[prop] end)
+	if not ok and gethiddenproperty then ok, cur = pcall(gethiddenproperty, inst, prop) end
+	if not ok then return end
+	local saved = false
+	for _, e in ipairs(X.lagG) do
+		if e[1] == inst and e[2] == prop then saved = true break end
+	end
+	if not saved then table.insert(X.lagG, { inst, prop, cur }) end
+	setHidden(inst, prop, val)
+end
+
+-- Đổi 1 thuộc tính của object trong workspace/Lighting và nhớ giá trị cũ
+local function lagSet(o, prop, val)
+	local ok, cur = pcall(function() return o[prop] end)
+	if not ok or cur == val then return end
+	local s = X.lagSaved[o]
+	if not s then s = {}; X.lagSaved[o] = s end
+	if s[prop] == nil then s[prop] = cur end
+	pcall(function() o[prop] = val end)
+end
+
 local function lagTouch(o)
-	if X.lagClasses[o.ClassName] and not X.lagSaved[o] then
-		local ok, v = pcall(function() return o.Enabled end)
-		if ok and v then
-			X.lagSaved[o] = true
-			pcall(function() o.Enabled = false end)
+	local cls = o.ClassName
+	if X.lagClasses[cls] then                       -- particle, trail, beam, đèn, blur/bloom/sunrays/colorcorrection/DOF...
+		lagSet(o, "Enabled", false)
+	elseif cls == "Explosion" then
+		lagSet(o, "Visible", false)
+	elseif cls == "Atmosphere" then                 -- sương mù / ánh sáng khí quyển
+		lagSet(o, "Density", 0); lagSet(o, "Haze", 0); lagSet(o, "Glare", 0)
+	elseif cls == "Decal" or cls == "Texture" then  -- texture dán
+		lagSet(o, "Transparency", 1)
+	elseif cls == "SurfaceAppearance" then          -- material PBR: gỡ ra, tắt thì gắn lại
+		if o.Parent and not X.lagSA[o] then
+			X.lagSA[o] = o.Parent
+			pcall(function() o.Parent = nil end)
 		end
+	elseif o:IsA("BasePart") and not o:IsA("Terrain") then
+		lagSet(o, "CastShadow", false)              -- tắt bóng đổ
+		lagSet(o, "Material", Enum.Material.SmoothPlastic) -- tắt material
+		lagSet(o, "Reflectance", 0)
+		if cls == "MeshPart" then lagSet(o, "TextureID", "") end -- tắt texture của mesh
 	end
 end
 
@@ -1221,17 +1267,29 @@ function X.setLag(on)
 	X.lag = on
 	local Lighting = game:GetService("Lighting")
 	if on then
+		X.lagG = X.lagG or {}
+		X.lagSA = X.lagSA or {}
+		-- Bóng đổ + đồ hoạ thấp nhất
+		lagGlobal(Lighting, "GlobalShadows", false)
+		lagGlobal(Lighting, "ShadowSoftness", 0)
+		lagGlobal(Lighting, "EnvironmentDiffuseScale", 0)
+		lagGlobal(Lighting, "EnvironmentSpecularScale", 0)
+		-- Voxel / ShadowMap -> Compatibility
+		lagGlobal(Lighting, "Technology", Enum.Technology.Compatibility)
+		-- Chất lượng (texture/mesh) thấp nhất
 		pcall(function()
-			if X.lagOrig.shadows == nil then X.lagOrig.shadows = Lighting.GlobalShadows end
-			Lighting.GlobalShadows = false
+			local r = settings().Rendering
+			lagGlobal(r, "QualityLevel", Enum.QualityLevel.Level01)
+			lagGlobal(r, "MeshPartDetailLevel", Enum.MeshPartDetailLevel.Level04)
 		end)
+		-- Material mới 2022 + nước + cỏ
+		pcall(function() lagGlobal(game:GetService("MaterialService"), "Use2022Materials", false) end)
 		pcall(function()
-			if X.lagOrig.quality == nil then X.lagOrig.quality = settings().Rendering.QualityLevel end
-			settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-		end)
-		pcall(function()
-			if X.lagOrig.deco == nil then X.lagOrig.deco = workspace.Terrain.Decoration end
-			if sethiddenproperty then sethiddenproperty(workspace.Terrain, "Decoration", false) end
+			local t = workspace.Terrain
+			lagGlobal(t, "Decoration", false)
+			lagGlobal(t, "WaterWaveSize", 0)
+			lagGlobal(t, "WaterWaveSpeed", 0)
+			lagGlobal(t, "WaterReflectance", 0)
 		end)
 		for _, o in ipairs(Lighting:GetDescendants()) do pcall(lagTouch, o) end
 		if X.lagConn then X.lagConn:Disconnect() end
@@ -1244,22 +1302,25 @@ function X.setLag(on)
 				if not X.lag then return end
 				pcall(lagTouch, o)
 				n = n + 1
-				if n % 300 == 0 then task.wait() end
+				if n % 200 == 0 then task.wait() end
 			end
 		end)
 	else
 		if X.lagConn then X.lagConn:Disconnect(); X.lagConn = nil end
 		if X.lagConn2 then X.lagConn2:Disconnect(); X.lagConn2 = nil end
-		for o in pairs(X.lagSaved) do
-			pcall(function() if o.Parent then o.Enabled = true end end)
+		for o, props in pairs(X.lagSaved) do
+			for k, v in pairs(props) do pcall(function() o[k] = v end) end
 		end
 		X.lagSaved = setmetatable({}, { __mode = "k" })
-		pcall(function() if X.lagOrig.shadows ~= nil then Lighting.GlobalShadows = X.lagOrig.shadows end end)
-		pcall(function() if X.lagOrig.quality ~= nil then settings().Rendering.QualityLevel = X.lagOrig.quality end end)
-		pcall(function()
-			if X.lagOrig.deco ~= nil and sethiddenproperty then sethiddenproperty(workspace.Terrain, "Decoration", X.lagOrig.deco) end
-		end)
-		X.lagOrig = {}
+		for o, parent in pairs(X.lagSA or {}) do
+			pcall(function() if parent and parent.Parent then o.Parent = parent end end)
+		end
+		X.lagSA = {}
+		for i = #(X.lagG or {}), 1, -1 do
+			local e = X.lagG[i]
+			setHidden(e[1], e[2], e[3])
+		end
+		X.lagG = {}
 	end
 	X.refreshUI()
 end
@@ -1892,7 +1953,7 @@ function buildUI()
 	mkSection(4, "KHÁC")
 	local noclipRow, noclipBtn = mkToggle(5, "Noclip", "N")
 	local afkRow, afkBtn = mkToggle(6, "Anti AFK", "U")
-	local lagRow, lagBtn = mkToggle(7, "Fix lag (giảm đồ hoạ)", nil)
+	local lagRow, lagBtn = mkToggle(7, "Fast Mode", nil)
 	local _, speedBox, speedStroke = mkInputRow(8, "Tốc độ chạy", customSpeed > 0 and tostring(customSpeed) or "", "mặc định")
 
 	if hasKeys then
