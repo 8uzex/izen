@@ -1376,6 +1376,16 @@ local function matchKw(name, kws)
 	end
 	return false
 end
+-- Mob thêm sẵn vào auto farm dù KHÔNG có Humanoid (Wyrmite...). Khớp theo tên model, không phân biệt hoa/thường.
+local EXTRA_ENEMY = { "wyrmite" }
+local function anyPart(m) return m:FindFirstChildWhichIsA("BasePart", true) end
+-- Còn sống? Có Humanoid: theo máu. Không có: theo thuộc tính Health (nếu có), không thì coi như còn sống khi model còn tồn tại
+local function enemyAlive(m, h)
+	if h then return h.Health > 0 end
+	local a = m:GetAttribute("Health")
+	if type(a) == "number" then return a > 0 end
+	return m.Parent ~= nil
+end
 local function isMine(m)
 	local ch = player.Character
 	return ch and (m == ch or m:IsDescendantOf(ch))
@@ -1383,6 +1393,55 @@ end
 local function pivotPos(m)
 	local ok, cf = pcall(function() return m:GetPivot() end)
 	return ok and cf.Position or nil
+end
+
+-- ===== Chia toà nhà theo ĐẢO =====
+-- Hai toà nhà cách nhau <= ISLAND_LINK stud (theo mặt phẳng ngang) cùng chuỗi liên kết => cùng 1 đảo.
+-- Đảo hiện tại = đảo của toà nhà gần mình nhất, và phải nằm trong ISLAND_REACH stud (xa hơn = đang ở đảo không có nhà).
+local ISLAND_LINK, ISLAND_REACH = 600, 800
+local function clusterBuildings(B)
+	local pos, parent, grid = {}, {}, {}
+	local function find(i)
+		while parent[i] ~= i do parent[i] = parent[parent[i]]; i = parent[i] end
+		return i
+	end
+	local function cellOf(p) return math.floor(p.X / ISLAND_LINK), math.floor(p.Z / ISLAND_LINK) end
+	for i, m in ipairs(B) do
+		local p = pivotPos(m)
+		if p then
+			pos[i], parent[i] = p, i
+			local cx, cz = cellOf(p)
+			local key = cx .. "," .. cz
+			grid[key] = grid[key] or {}
+			table.insert(grid[key], i)
+		end
+	end
+	local steps = 0
+	for i, p in pairs(pos) do
+		local cx, cz = cellOf(p)
+		for dx = -1, 1 do
+			for dz = -1, 1 do
+				local cell = grid[(cx + dx) .. "," .. (cz + dz)]
+				if cell then
+					for _, j in ipairs(cell) do
+						local ri, rj = find(i), find(j)
+						if ri ~= rj then
+							local q = pos[j]
+							local ddx, ddz = p.X - q.X, p.Z - q.Z
+							if ddx * ddx + ddz * ddz <= ISLAND_LINK * ISLAND_LINK then parent[ri] = rj end
+						end
+						steps += 1
+						if steps % 20000 == 0 then task.wait() end
+					end
+				end
+			end
+		end
+	end
+	local islandOf = setmetatable({}, { __mode = "k" })
+	for i, m in ipairs(B) do
+		if parent[i] then islandOf[m] = find(i) end
+	end
+	return islandOf
 end
 
 -- Quét quái / toà nhà nền (có nhường frame) để không đứng hình
@@ -1400,6 +1459,14 @@ task.spawn(function()
 				n += 1
 				if n % 1500 == 0 then task.wait() end
 				pcall(function()
+					if F.farm and d:IsA("Model") and not seen[d] and matchKw(d.Name, EXTRA_ENEMY) and #EXTRA_ENEMY > 0
+						and (#eK == 0 or matchKw(d.Name, eK)) and not d:FindFirstChildOfClass("Humanoid")
+						and not isMine(d) and not Players:GetPlayerFromCharacter(d)
+						and not (d.Parent and d.Parent:IsA("Model") and matchKw(d.Parent.Name, EXTRA_ENEMY))
+						and anyPart(d) then
+						seen[d] = true
+						E[#E + 1] = { m = d, h = nil }
+					end
 					if F.farm and d:IsA("Humanoid") and d.Health > 0 then
 						local m = d.Parent
 						if m and m:IsA("Model") and not isMine(m) and not Players:GetPlayerFromCharacter(m)
@@ -1420,17 +1487,47 @@ task.spawn(function()
 					end
 				end)
 			end
-			F.cacheE, F.cacheB = E, B
+			local islandOf = F.build and clusterBuildings(B) or {}
+			F.cacheE, F.cacheB, F.islandOf = E, B, islandOf
 		end
 	end
 end)
+
+-- Toà nhà gần nhất trên ĐẢO ĐANG ĐỨNG (không sang đảo khác)
+local function nearestOnIsland(root)
+	local nb, nd
+	for _, m in ipairs(F.cacheB) do
+		if m.Parent then
+			local p = pivotPos(m)
+			if p then
+				local d = (p - root.Position).Magnitude
+				if not nd or d < nd then nb, nd = m, d end
+			end
+		end
+	end
+	if not nb or nd > ISLAND_REACH then F.noIsland = true; return nil end
+	F.noIsland = false
+	local islandOf = F.islandOf or {}
+	local id = islandOf[nb]
+	local best, bd
+	for _, m in ipairs(F.cacheB) do
+		if m.Parent and not isBad(m) and (id == nil or islandOf[m] == id) then
+			local p = pivotPos(m)
+			if p then
+				local d = (p - root.Position).Magnitude
+				if not bd or d < bd then best, bd = m, d end
+			end
+		end
+	end
+	return best
+end
 
 local function pickTarget(root)
 	local function nearest(list, enemy)
 		local best, bd
 		for _, e in ipairs(list) do
 			local m = enemy and e.m or e
-			if m.Parent and not isBad(m) and (not enemy or e.h.Health > 0) then
+			if m.Parent and not isBad(m) and (not enemy or enemyAlive(m, e.h)) then
 				local p = pivotPos(m)
 				if p then
 					local d = (p - root.Position).Magnitude
@@ -1442,7 +1539,7 @@ local function pickTarget(root)
 	end
 	local e, ed, b
 	if F.farm then e, ed = nearest(F.cacheE, true) end
-	if F.build then b = nearest(F.cacheB, false) end
+	if F.build then b = nearestOnIsland(root) end
 	if e and (not b or ed <= MOB_PRIORITY_RANGE) then return e.m, "enemy", e.h end
 	if b then return b, "build", nil end
 	if e then return e.m, "enemy", e.h end
@@ -1506,7 +1603,7 @@ task.spawn(function()
 				-- kiểm tra mục tiêu hiện tại còn hợp lệ
 				local m = F.cur
 				if m then
-					local dead = not m.Parent or (F.curKind == "enemy" and F.curHum and F.curHum.Health <= 0)
+					local dead = not m.Parent or (F.curKind == "enemy" and not enemyAlive(m, F.curHum))
 					local timeout = F.curKind ~= "enemy" and os.clock() - F.curT > FARM_TIMEOUT_BUILD -- mob: không bao giờ bỏ giữa chừng, phải hạ xong mới đổi
 					if dead then
 						if F.curKind ~= "enemy" then markBad(m, BAD_DONE) end
@@ -1516,8 +1613,8 @@ task.spawn(function()
 						-- mỗi giây kiểm tra tiến triển: xong rồi (hết part) hoặc không thay đổi gì khi đã đứng sát -> đổi mục tiêu
 						F.sigT = os.clock()
 						local sig, empty
-						if F.curKind == "enemy" then
-							sig = tostring(F.curHum and F.curHum.Health)
+						if F.curKind == "enemy" and F.curHum then
+							sig = tostring(F.curHum.Health)
 						else
 							local ok, n, s = pcall(buildSig, m)
 							if ok then sig, empty = s, (n == 0) end
@@ -1525,11 +1622,11 @@ task.spawn(function()
 						local mp = pivotPos(m)
 						local near = mp and (root.Position - mp).Magnitude <= F.dist + 30
 						if empty then
-							markBad(m, BAD_DONE); F.cur = nil
+							markBad(m, F.curKind == "enemy" and BAD_STUCK or BAD_DONE); F.cur = nil
 						elseif sig ~= F.curSig or not near then
 							F.curSig = sig; F.curChg = os.clock()
-						elseif F.curKind ~= "enemy" and os.clock() - (F.curChg or os.clock()) > STALL_BUILD then
-							markBad(m, BAD_DONE); F.cur = nil
+						elseif (F.curKind ~= "enemy" or not F.curHum) and os.clock() - (F.curChg or os.clock()) > (F.curKind == "enemy" and STALL_BUILD * 2 or STALL_BUILD) then
+							markBad(m, F.curKind == "enemy" and BAD_STUCK or BAD_DONE); F.cur = nil
 						end
 					end
 				end
@@ -1551,10 +1648,16 @@ task.spawn(function()
 						local d = off.Magnitude
 						F.active = true
 						if d > 4 then
-							local speed = math.clamp(d * TWEEN_FAR_FACTOR, TWEEN_SPEED, TWEEN_MAX_SPEED)
-							local np = root.Position + off.Unit * math.min(d, speed * dt)
-							root.CFrame = CFrame.lookAt(np, Vector3.new(tpos.X, np.Y, tpos.Z))
-							root.AssemblyLinearVelocity = Vector3.zero
+							if F.curKind == "build" then -- phá nhà: teleport thẳng tới nhà (cùng đảo)
+								pcall(requestStream, goal)
+								root.CFrame = CFrame.lookAt(goal, Vector3.new(tpos.X, goal.Y, tpos.Z))
+								root.AssemblyLinearVelocity = Vector3.zero
+							else
+								local speed = math.clamp(d * TWEEN_FAR_FACTOR, TWEEN_SPEED, TWEEN_MAX_SPEED)
+								local np = root.Position + off.Unit * math.min(d, speed * dt)
+								root.CFrame = CFrame.lookAt(np, Vector3.new(tpos.X, np.Y, tpos.Z))
+								root.AssemblyLinearVelocity = Vector3.zero
+							end
 						end
 					end
 					if os.clock() - lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
@@ -2216,7 +2319,7 @@ task.spawn(function()
 			if F.cur and F.cur.Parent then
 				msg = (F.curKind == "enemy" and "Đang đánh mob: " or "Đang phá: ") .. F.cur.Name
 			else
-				msg = "Đang tìm mục tiêu..."
+				msg = (F.build and F.noIsland and not F.farm) and "Không có nhà nào ở đảo này" or "Đang tìm mục tiêu..."
 			end
 		end
 		if not msg and tpNote and os.clock() < tpNote.t then msg = tpNote.msg end
