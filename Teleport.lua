@@ -452,7 +452,7 @@ local function findModelByName(plr)
 	local m = modelCache[plr]
 	if m and m.Parent and rootOf(m) then return m end
 	modelCache[plr] = nil
-	if os.clock() - (modelScanT[plr] or 0) < 1.5 then return nil end
+	if os.clock() - (modelScanT[plr] or 0) < 4 then return nil end
 	modelScanT[plr] = os.clock()
 	local n1, n2 = string.lower(plr.Name), string.lower(plr.DisplayName)
 	local found
@@ -584,23 +584,34 @@ local function startFollow()
 end
 
 -- ===== Noclip (tắt va chạm; tự bật trong lúc đang đi bộ tới người chơi) =====
-RunService.Stepped:Connect(function()
-	local char = player.Character
-	if not char then return end
-	if noclipOn or tweening then
-		for _, p in ipairs(char:GetDescendants()) do
-			if p:IsA("BasePart") and p.CanCollide then
-				p.CanCollide = false
-				noclipChanged[p] = true
+do
+	local ncParts, ncT, ncChar = {}, 0, nil
+	RunService.Stepped:Connect(function()
+		local char = player.Character
+		if not char then return end
+		if noclipOn or tweening then
+			if char ~= ncChar or os.clock() - ncT > 0.7 then
+				ncChar, ncT = char, os.clock()
+				ncParts = {}
+				for _, p in ipairs(char:GetDescendants()) do
+					if p:IsA("BasePart") then ncParts[#ncParts + 1] = p end
+				end
 			end
+			for i = 1, #ncParts do
+				local p = ncParts[i]
+				if p.Parent and p.CanCollide then
+					p.CanCollide = false
+					noclipChanged[p] = true
+				end
+			end
+		elseif next(noclipChanged) then
+			for p in pairs(noclipChanged) do
+				if p.Parent then p.CanCollide = true end
+			end
+			noclipChanged = {}
 		end
-	elseif next(noclipChanged) then
-		for p in pairs(noclipChanged) do
-			if p.Parent then p.CanCollide = true end
-		end
-		noclipChanged = {}
-	end
-end)
+	end)
+end
 
 function setNoclipUI()
 	if not (ui and ui.noclipBtn) then return end
@@ -1085,6 +1096,166 @@ local function mapRespawnStep(names)
 end
 
 
+-- ===== PHẦN MỚI: Auto skill + Fix lag + Tab =====
+local X = {
+	tab = 1, auto = false, mode = 1, interval = 0.3, lag = false,
+	skillOn = { true, true, true, true, true, true, true },
+	skills = {
+		{ "1", Enum.KeyCode.One }, { "2", Enum.KeyCode.Two }, { "3", Enum.KeyCode.Three },
+		{ "4", Enum.KeyCode.Four }, { "5", Enum.KeyCode.Five }, { "V", Enum.KeyCode.V }, { "P", Enum.KeyCode.P },
+	},
+	modes = { "Phím", "Nút UI" },
+	btnCache = {}, btnTry = {},
+	lagSaved = setmetatable({}, { __mode = "k" }), lagOrig = {},
+	lagClasses = {
+		ParticleEmitter = true, Trail = true, Beam = true, Smoke = true, Fire = true, Sparkles = true,
+		PointLight = true, SpotLight = true, SurfaceLight = true,
+		BlurEffect = true, BloomEffect = true, SunRaysEffect = true, ColorCorrectionEffect = true, DepthOfFieldEffect = true,
+	},
+}
+
+-- Tìm nút skill trên màn hình (chế độ "Nút UI"): nhãn chữ trùng phím (1,2,3,4,5,V,P) nằm trong ô vuông ở nửa dưới màn hình
+function X.findBtn(i)
+	local c = X.btnCache[i]
+	if c and c.Parent and isShown(c) then return c end
+	X.btnCache[i] = nil
+	if os.clock() - (X.btnTry[i] or 0) < 2 then return nil end
+	X.btnTry[i] = os.clock()
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then return nil end
+	local cam = workspace.CurrentCamera
+	local vpY = cam and cam.ViewportSize.Y or 0
+	local want = string.lower(X.skills[i][1])
+	local best
+	for _, o in ipairs(pg:GetDescendants()) do
+		if (o:IsA("TextLabel") or o:IsA("TextButton")) and norm(o.Text) == want
+			and not (ui and ui.gui and o:IsDescendantOf(ui.gui)) and isShown(o) then
+			local slot = o.Parent
+			if slot and slot:IsA("GuiObject") then
+				local s = slot.AbsoluteSize
+				if s.X >= 40 and s.X <= 160 and s.Y >= 40 and s.Y <= 160
+					and (vpY == 0 or slot.AbsolutePosition.Y > vpY * 0.55) then
+					best = clickableOf(slot, pg)
+					break
+				end
+			end
+		end
+	end
+	X.btnCache[i] = best
+	return best
+end
+
+function X.cast(i)
+	local kc = X.skills[i][2]
+	if X.mode == 1 and VIM then
+		pcall(function()
+			VIM:SendKeyEvent(true, kc, false, game)
+			task.wait(0.04)
+			VIM:SendKeyEvent(false, kc, false, game)
+		end)
+	else
+		local b = X.findBtn(i)
+		if b then pcall(clickOnce, b) end
+	end
+end
+
+-- Vòng auto skill: mỗi lượt bấm lần lượt các skill đã chọn, rồi chờ X.interval giây
+task.spawn(function()
+	while true do
+		task.wait(math.max(0.05, X.interval))
+		if X.auto and not UserInputService:GetFocusedTextBox() then
+			local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+			if not hum or hum.Health > 0 then
+				for i = 1, #X.skills do
+					if not X.auto then break end
+					if X.skillOn[i] then
+						pcall(X.cast, i)
+						task.wait(0.1)
+					end
+				end
+			end
+		end
+	end
+end)
+
+function X.refreshUI()
+	local w = X.w
+	if not w then return end
+	if w.autoBtn then w.autoBtn.set(X.auto) end
+	if w.lagBtn then w.lagBtn.set(X.lag) end
+	if w.modePill then w.modePill.Text = X.modes[X.mode] end
+	for i, c in ipairs(w.chips or {}) do c.set(X.skillOn[i]) end
+end
+
+function X.toggleAuto() X.auto = not X.auto; X.refreshUI() end
+function X.cycleMode() X.mode = X.mode % #X.modes + 1; X.btnCache = {}; X.refreshUI() end
+function X.toggleSkill(i) X.skillOn[i] = not X.skillOn[i]; X.refreshUI() end
+function X.allSkills()
+	local anyOff = false
+	for i = 1, #X.skills do if not X.skillOn[i] then anyOff = true end end
+	for i = 1, #X.skills do X.skillOn[i] = anyOff end
+	X.refreshUI()
+end
+
+-- ===== Fix lag: giảm đồ hoạ (có thể bật/tắt, tắt là trả lại như cũ) =====
+local function lagTouch(o)
+	if X.lagClasses[o.ClassName] and not X.lagSaved[o] then
+		local ok, v = pcall(function() return o.Enabled end)
+		if ok and v then
+			X.lagSaved[o] = true
+			pcall(function() o.Enabled = false end)
+		end
+	end
+end
+
+function X.setLag(on)
+	X.lag = on
+	local Lighting = game:GetService("Lighting")
+	if on then
+		pcall(function()
+			if X.lagOrig.shadows == nil then X.lagOrig.shadows = Lighting.GlobalShadows end
+			Lighting.GlobalShadows = false
+		end)
+		pcall(function()
+			if X.lagOrig.quality == nil then X.lagOrig.quality = settings().Rendering.QualityLevel end
+			settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+		end)
+		pcall(function()
+			if X.lagOrig.deco == nil then X.lagOrig.deco = workspace.Terrain.Decoration end
+			if sethiddenproperty then sethiddenproperty(workspace.Terrain, "Decoration", false) end
+		end)
+		for _, o in ipairs(Lighting:GetDescendants()) do pcall(lagTouch, o) end
+		if X.lagConn then X.lagConn:Disconnect() end
+		if X.lagConn2 then X.lagConn2:Disconnect() end
+		X.lagConn = workspace.DescendantAdded:Connect(function(o) pcall(lagTouch, o) end)
+		X.lagConn2 = Lighting.DescendantAdded:Connect(function(o) pcall(lagTouch, o) end)
+		task.spawn(function() -- quét dần workspace, không làm đứng hình
+			local n = 0
+			for _, o in ipairs(workspace:GetDescendants()) do
+				if not X.lag then return end
+				pcall(lagTouch, o)
+				n = n + 1
+				if n % 300 == 0 then task.wait() end
+			end
+		end)
+	else
+		if X.lagConn then X.lagConn:Disconnect(); X.lagConn = nil end
+		if X.lagConn2 then X.lagConn2:Disconnect(); X.lagConn2 = nil end
+		for o in pairs(X.lagSaved) do
+			pcall(function() if o.Parent then o.Enabled = true end end)
+		end
+		X.lagSaved = setmetatable({}, { __mode = "k" })
+		pcall(function() if X.lagOrig.shadows ~= nil then Lighting.GlobalShadows = X.lagOrig.shadows end end)
+		pcall(function() if X.lagOrig.quality ~= nil then settings().Rendering.QualityLevel = X.lagOrig.quality end end)
+		pcall(function()
+			if X.lagOrig.deco ~= nil and sethiddenproperty then sethiddenproperty(workspace.Terrain, "Decoration", X.lagOrig.deco) end
+		end)
+		X.lagOrig = {}
+	end
+	X.refreshUI()
+end
+function X.toggleLag() X.setLag(not X.lag) end
+
 function setRespawnUI()
 	if not (ui and ui.respawnBtn) then return end
 	ui.respawnBtn.set(respawnOn)
@@ -1213,7 +1384,7 @@ function buildUI()
 	local cam = workspace.CurrentCamera
 	local vp = cam and cam.ViewportSize or Vector2.new(800, 400)
 	local W = math.clamp(math.floor(vp.X * 0.9), 320, 520)
-	local H = math.clamp(math.floor(vp.Y * 0.88), 240, 330)
+	local H = math.clamp(math.floor(vp.Y * 0.88), 260, 350)
 	local hasKeys = UserInputService.KeyboardEnabled
 	local LW = 0.4 -- độ rộng cột trái (danh sách người chơi)
 
@@ -1250,7 +1421,7 @@ function buildUI()
 	makeLogo(header, 32, { Position = UDim2.fromOffset(12, 10) })
 	make("TextLabel", {
 		Position = UDim2.fromOffset(54, 8), Size = UDim2.new(1, -110, 0, 19), BackgroundTransparency = 1,
-		Text = "Teleport", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.text,
+		Text = "Teleport Hub", Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = C.text,
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, header)
 	local sub = make("TextLabel", {
@@ -1267,12 +1438,42 @@ function buildUI()
 	closeBtn.MouseLeave:Connect(function() tw(closeBtn, 0.15, { BackgroundColor3 = C.row, TextColor3 = C.muted }) end)
 	make("Frame", { Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = C.stroke, BorderSizePixel = 0 }, header)
 
-	-- Cột trái: tìm kiếm + danh sách người chơi
+	-- Thanh tab: Dịch chuyển / Skill / Khác
+	local TOP = 90
+	local TABS = { "Dịch chuyển", "Skill", "Khác" }
+	local tabBar = make("Frame", { Position = UDim2.fromOffset(0, 52), Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, frame)
+	make("Frame", { Position = UDim2.fromOffset(0, 88), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.stroke, BorderSizePixel = 0 }, frame)
+	local pages, tabBtns = {}, {}
+	for i = 1, #TABS do
+		pages[i] = make("Frame", {
+			Position = UDim2.fromOffset(0, TOP + 2), Size = UDim2.new(1, 0, 1, -(TOP + 2)),
+			BackgroundTransparency = 1, Visible = (X.tab == i),
+		}, frame)
+	end
+	local function selectTab(i)
+		X.tab = i
+		for k = 1, #TABS do
+			pages[k].Visible = (k == i)
+			tw(tabBtns[k], 0.15, { BackgroundColor3 = (k == i) and C.accent or C.row, TextColor3 = (k == i) and C.white or C.muted })
+		end
+	end
+	for i = 1, #TABS do
+		local b = make("TextButton", {
+			Position = UDim2.new((i - 1) / #TABS, 6, 0, 4), Size = UDim2.new(1 / #TABS, -10, 0, 28),
+			BackgroundColor3 = (X.tab == i) and C.accent or C.row, Text = TABS[i], Font = Enum.Font.GothamBold, TextSize = 12,
+			TextColor3 = (X.tab == i) and C.white or C.muted, AutoButtonColor = false,
+		}, tabBar)
+		round(b, 8)
+		tabBtns[i] = b
+		tap(b, function() selectTab(i) end)
+	end
+
+	-- ===== TAB 1: Dịch chuyển =====
 	local searchBox = make("TextBox", {
-		Size = UDim2.new(LW, -14, 0, 32), Position = UDim2.fromOffset(10, 62), BackgroundColor3 = C.row,
+		Size = UDim2.new(LW, -14, 0, 32), Position = UDim2.fromOffset(10, 4), BackgroundColor3 = C.row,
 		Text = filterText, PlaceholderText = "Tìm người chơi...", Font = Enum.Font.Gotham, TextSize = 13,
 		TextColor3 = C.text, PlaceholderColor3 = C.muted, ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left,
-	}, frame)
+	}, pages[1])
 	round(searchBox, 9)
 	make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 8) }, searchBox)
 	local searchStroke = make("UIStroke", { Color = C.stroke, Thickness = 1 }, searchBox)
@@ -1280,21 +1481,24 @@ function buildUI()
 	searchBox.FocusLost:Connect(function() tw(searchStroke, 0.2, { Color = C.stroke }) end)
 
 	local list = make("ScrollingFrame", {
-		Size = UDim2.new(LW, -14, 1, -104), Position = UDim2.fromOffset(10, 100), BackgroundTransparency = 1,
+		Size = UDim2.new(LW, -14, 1, -44), Position = UDim2.fromOffset(10, 42), BackgroundTransparency = 1,
 		BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.stroke,
 		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-	}, frame)
+	}, pages[1])
 	make("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, list)
 	make("UIPadding", { PaddingRight = UDim.new(0, 5) }, list)
 
-	-- Cột phải: công tắc điều khiển
-	local ctrl = make("ScrollingFrame", {
-		Size = UDim2.new(1 - LW, -14, 1, -62), Position = UDim2.new(LW, 4, 0, 62), BackgroundTransparency = 1,
-		BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = C.stroke,
-		CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-	}, frame)
-	make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, ctrl)
-	make("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 10) }, ctrl)
+	local function mkCtrl(par, pos, size)
+		local c = make("ScrollingFrame", {
+			Size = size, Position = pos, BackgroundTransparency = 1, BorderSizePixel = 0,
+			ScrollBarThickness = 3, ScrollBarImageColor3 = C.stroke,
+			CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		}, par)
+		make("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, c)
+		make("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingBottom = UDim.new(0, 10) }, c)
+		return c
+	end
+	local ctrl = mkCtrl(pages[1], UDim2.new(LW, 4, 0, 4), UDim2.new(1 - LW, -14, 1, -4))
 
 	local function mkSection(order, text)
 		make("TextLabel", {
@@ -1319,9 +1523,8 @@ function buildUI()
 		return row
 	end
 
-	-- Dòng công tắc: chữ + (phím tắt trên PC) + switch trượt mượt. Trả về nút bấm + đối tượng có :set(bật/tắt)
 	local function mkToggle(order, text, key)
-		local row = mkRow(order, text, hasKeys and 98 or 70)
+		local row = mkRow(order, text, (hasKeys and key) and 98 or 70)
 		if hasKeys and key then
 			local tag = make("TextLabel", {
 				AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -60, 0.5, 0), Size = UDim2.fromOffset(22, 20),
@@ -1357,49 +1560,96 @@ function buildUI()
 		return row, obj
 	end
 
+	local function mkPill(row, text)
+		local pill = make("TextLabel", {
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(96, 24),
+			BackgroundColor3 = C.panel, Text = text, Font = Enum.Font.GothamBold, TextSize = 12,
+			TextColor3 = C.muted, TextScaled = true,
+		}, row)
+		round(pill, 8)
+		make("UITextSizeConstraint", { MaxTextSize = 12, MinTextSize = 8 }, pill)
+		make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, pill)
+		return pill
+	end
+
+	local function mkInputRow(order, text, init, placeholder)
+		local row = make("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.row, LayoutOrder = order }, ctrl)
+		round(row, 10)
+		local lbl = make("TextLabel", {
+			Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
+			Text = text, Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.text, TextScaled = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, row)
+		make("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 8 }, lbl)
+		local box = make("TextBox", {
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(96, 26),
+			BackgroundColor3 = C.panel, Text = init, PlaceholderText = placeholder,
+			Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, PlaceholderColor3 = C.muted, ClearTextOnFocus = false,
+		}, row)
+		round(box, 8)
+		local stroke = make("UIStroke", { Color = C.panel, Thickness = 1 }, box)
+		box.Focused:Connect(function() tw(stroke, 0.15, { Color = C.accent }) end)
+		return row, box, stroke
+	end
+
 	mkSection(1, "DỊCH CHUYỂN")
 	local autoRow, autoBtn = mkToggle(2, "Teleport player", "K")
 	local tweenRow, tweenBtn = mkToggle(4, "Tween player", "T")
-	mkSection(5, "HỒI SINH")
-	local respawnRow, respawnBtn = mkToggle(6, "Auto hồi sinh", "J")
-	local mapRow = mkRow(7, "Map hồi sinh", 110)
-	local mapPill = make("TextLabel", {
-		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(96, 24),
-		BackgroundColor3 = C.panel, Text = "Mặc định", Font = Enum.Font.GothamBold, TextSize = 12,
-		TextColor3 = C.muted, TextScaled = true,
-	}, mapRow)
-	round(mapPill, 8)
-	make("UITextSizeConstraint", { MaxTextSize = 12, MinTextSize = 8 }, mapPill)
-	make("UIPadding", { PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) }, mapPill)
+
+	-- ===== TAB 2: Skill =====
+	ctrl = mkCtrl(pages[2], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
+	mkSection(1, "AUTO SKILL")
+	local skillAutoRow, skillAutoBtn = mkToggle(2, "Auto skill (bật/tắt)", nil)
+	local modeRow = mkRow(3, "Kiểu bấm skill", 110)
+	local modePill = mkPill(modeRow, X.modes[X.mode])
+	modePill.TextColor3 = C.accent2
+	local _, ivBox, ivStroke = mkInputRow(4, "Chờ giữa các lượt (giây)", tostring(X.interval), "0.3")
+	mkSection(5, "CHỌN SKILL (bấm để chọn / bỏ)")
+	local grid = make("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = 6 }, ctrl)
+	make("UIGridLayout", {
+		CellSize = UDim2.new(0.25, -5, 0, 36), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder,
+	}, grid)
+	local chips = {}
+	for i, s in ipairs(X.skills) do
+		local b = make("TextButton", {
+			BackgroundColor3 = C.row, Text = s[1], Font = Enum.Font.GothamBold, TextSize = 15,
+			TextColor3 = C.muted, AutoButtonColor = false, LayoutOrder = i,
+		}, grid)
+		round(b, 9)
+		local st = make("UIStroke", { Color = C.accent, Thickness = 1.5, Transparency = 1 }, b)
+		chips[i] = { set = function(on)
+			tw(b, 0.15, { BackgroundColor3 = on and C.sel or C.row, TextColor3 = on and C.white or C.muted })
+			tw(st, 0.15, { Transparency = on and 0 or 1 })
+		end }
+		tap(b, function() X.toggleSkill(i) end)
+	end
+	local allRow = mkRow(7, "Chọn tất cả / Bỏ chọn tất cả", 12)
+	make("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, LayoutOrder = 8, TextWrapped = true,
+		Text = "Kiểu \"Phím\": gửi phím 1-5, V, P. Nếu không ăn thì đổi sang \"Nút UI\" (bấm thẳng vào ô skill).",
+		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
+	}, ctrl)
+
+	-- ===== TAB 3: Khác =====
+	ctrl = mkCtrl(pages[3], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
+	mkSection(1, "HỒI SINH")
+	local respawnRow, respawnBtn = mkToggle(2, "Auto hồi sinh", "J")
+	local mapRow = mkRow(3, "Map hồi sinh", 110)
+	local mapPill = mkPill(mapRow, "Mặc định")
 	local mapBtn = { set = function(name)
 		mapPill.Text = name or "Mặc định"
 		tw(mapPill, 0.2, { TextColor3 = name and C.accent2 or C.muted })
 	end }
-	mkSection(9, "KHÁC")
-	local noclipRow, noclipBtn = mkToggle(10, "Noclip", "N")
-	local afkRow, afkBtn = mkToggle(11, "Anti AFK", "U")
-
-	local speedRow = make("Frame", { Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.row, LayoutOrder = 12 }, ctrl)
-	round(speedRow, 10)
-	local speedLbl = make("TextLabel", {
-		Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1,
-		Text = "Tốc độ chạy", Font = Enum.Font.GothamMedium, TextSize = 13, TextColor3 = C.text, TextScaled = true,
-		TextXAlignment = Enum.TextXAlignment.Left,
-	}, speedRow)
-	make("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 8 }, speedLbl)
-	local speedBox = make("TextBox", {
-		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(96, 26),
-		BackgroundColor3 = C.panel, Text = customSpeed > 0 and tostring(customSpeed) or "", PlaceholderText = "mặc định",
-		Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = C.text, PlaceholderColor3 = C.muted, ClearTextOnFocus = false,
-	}, speedRow)
-	round(speedBox, 8)
-	local speedStroke = make("UIStroke", { Color = C.panel, Thickness = 1 }, speedBox)
-	speedBox.Focused:Connect(function() tw(speedStroke, 0.15, { Color = C.accent }) end)
+	mkSection(4, "KHÁC")
+	local noclipRow, noclipBtn = mkToggle(5, "Noclip", "N")
+	local afkRow, afkBtn = mkToggle(6, "Anti AFK", "U")
+	local lagRow, lagBtn = mkToggle(7, "Fix lag (giảm đồ hoạ)", nil)
+	local _, speedBox, speedStroke = mkInputRow(8, "Tốc độ chạy", customSpeed > 0 and tostring(customSpeed) or "", "mặc định")
 
 	if hasKeys then
 		make("TextLabel", {
 			Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Text = "RightShift: ẩn / hiện bảng",
-			Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, LayoutOrder = 13,
+			Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, LayoutOrder = 9,
 		}, ctrl)
 	end
 
@@ -1409,6 +1659,18 @@ function buildUI()
 	ui = { gui = gui, frame = frame, scale = scale, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
 		noclipBtn = noclipBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, mapBtn = mapBtn,
 		sub = sub, modal = modal, rows = {}, rowMap = {} }
+	X.w = { autoBtn = skillAutoBtn, lagBtn = lagBtn, modePill = modePill, chips = chips }
+
+	tap(skillAutoRow, X.toggleAuto)
+	tap(modeRow, X.cycleMode)
+	tap(allRow, X.allSkills)
+	tap(lagRow, X.toggleLag)
+	ivBox.FocusLost:Connect(function()
+		tw(ivStroke, 0.2, { Color = C.panel })
+		local n = tonumber(ivBox.Text)
+		if n then X.interval = math.clamp(n, 0.05, 10) end
+		ivBox.Text = tostring(X.interval)
+	end)
 
 	-- Kéo bảng bằng thanh tiêu đề (chuột hoặc cảm ứng)
 	if dragConn then dragConn:Disconnect(); dragConn = nil end
@@ -1466,6 +1728,7 @@ function buildUI()
 	setAntiAfkUI()
 	setMapUI()
 	setStatus(nil)
+	X.refreshUI()
 end
 
 -- ===== Sự kiện =====
@@ -1507,7 +1770,7 @@ buildUI()
 --  • Đã chọn map: MENU -> Play -> chọn map -> SPAWN
 task.spawn(function()
 	while true do
-		task.wait(0.25)
+		task.wait(0.5)
 		if respawnOn then
 			if mapIdx > 0 and respawnNames then
 				pcall(mapRespawnStep, respawnNames)
@@ -1555,7 +1818,7 @@ end)
 -- Ghi nhớ vị trí mọi người chơi đang thấy được (để còn biết đường tới khi họ ở xa bị game unload)
 task.spawn(function()
 	while true do
-		task.wait(0.5)
+		task.wait(1)
 		for _, plr in ipairs(Players:GetPlayers()) do
 			if plr ~= player then pcall(playerCF, plr) end
 		end
