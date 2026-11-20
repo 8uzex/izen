@@ -27,6 +27,8 @@ local TWEEN_MAX_SPEED = 2000                       -- tốc độ bay tối đa 
 local HOLD_RADIUS = 6                              -- người chơi bị unload (không thấy): tới gần chỗ đoán này thì đứng chờ game tải, không giật qua lại
 local STALE_EXTRAPOLATE = 2                        -- khi mất dấu người chơi, đoán tiếp vị trí theo vận tốc cũ tối đa chừng này giây
 local STALE_MAX_VEL = 120                          -- giới hạn vận tốc dùng để đoán (stud/giây)
+local FOLLOW_SLACK = 4                             -- bám theo: chỉ kéo lại khi cách điểm đứng > chừng này stud (để còn tự đi được)
+local USER_PAUSE = 0.35                            -- vừa tự di chuyển/nhảy xong thì script nhường quyền điều khiển chừng này giây
 local DEFAULT_SPEED = 0                            -- tốc độ chạy (WalkSpeed). 0 = giữ mặc định của game
 -- Danh sách map ở màn hình LOCATIONS / Địa điểm. Mỗi map có tên tiếng Anh + tiếng Việt (không phân biệt hoa/thường).
 -- Phần tử đầu tiên là tên hiện trên nút của bảng.
@@ -413,8 +415,11 @@ local mapIdx = 0            -- 0 = mặc định (bấm nút RESPAWN), 1.. = ch�
 local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện trên nút)
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
+local F = { farm = false, build = false, active = false, dist = 30, enemyKw = "", buildKw = "" } -- auto farm / auto phá nhà
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
+local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
+local launcherConn = nil
 local savedFramePos = nil   -- nhớ vị trí bảng khi bị kéo, để UI dựng lại vẫn giữ chỗ cũ
 local rebuildList, setFollowUI, setVisible, toggleFollow, buildUI
 local setRespawnUI, toggleRespawn
@@ -542,19 +547,21 @@ local function teleportToPlayer(plr)
 	end)
 end
 
--- Giữ nhân vật không bị Humanoid/trọng lực kéo lại (PlatformStand) khi đang bám/tween
+-- Người chơi đang tự điều khiển (đi/nhảy)? => script nhường, không ép vị trí nữa
+local lastUserInput = 0
+local function userActive(hum)
+	if hum and (hum.MoveDirection.Magnitude > 0.05 or hum.Jump or UserInputService:IsKeyDown(Enum.KeyCode.Space)
+		or hum:GetState() == Enum.HumanoidStateType.Jumping) then
+		lastUserInput = os.clock()
+	end
+	return os.clock() - lastUserInput < USER_PAUSE
+end
+
+-- (đã bỏ PlatformStand: nó làm nhân vật không đi/nhảy được) chỉ còn trả lại trạng thái bình thường nếu lỡ bị bật
 local holdHum = nil
 local function setHold(on)
-	if on then
-		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-		if not hum then return end
-		if holdHum and holdHum ~= hum then pcall(function() holdHum.PlatformStand = false end) end
-		holdHum = hum
-		if not hum.PlatformStand then pcall(function() hum.PlatformStand = true end) end
-	elseif holdHum then
-		pcall(function() holdHum.PlatformStand = false end)
-		holdHum = nil
-	end
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if hum and hum.PlatformStand then pcall(function() hum.PlatformStand = false end) end
 end
 
 local function stopFollow()
@@ -572,13 +579,14 @@ local function startFollow()
 		local hum = char and char:FindFirstChildOfClass("Humanoid")
 		if cf and root and (not hum or hum.Health > 0) then
 			setHold(true)
+			if userActive(hum) then return end -- đang tự đi/nhảy: không kéo lại
 			local goal = cf * FOLLOW_OFFSET
-			-- thấy người chơi thật: bám sát. Mất dấu (ở rất xa): bay tới chỗ đoán, tới gần rồi thì đứng chờ game tải (không giật)
-			if live or (root.Position - goal.Position).Magnitude > HOLD_RADIUS then
+			local dist = (root.Position - goal.Position).Magnitude
+			-- thấy người chơi thật: bám khi cách > FOLLOW_SLACK. Mất dấu (ở rất xa): bay tới chỗ đoán, tới gần rồi thì đứng chờ game tải
+			if (live and dist > FOLLOW_SLACK) or (not live and dist > HOLD_RADIUS) then
 				root.CFrame = goal
+				root.AssemblyLinearVelocity = Vector3.zero
 			end
-			root.AssemblyLinearVelocity = Vector3.zero
-			root.AssemblyAngularVelocity = Vector3.zero
 		end
 	end)
 end
@@ -589,7 +597,7 @@ do
 	RunService.Stepped:Connect(function()
 		local char = player.Character
 		if not char then return end
-		if noclipOn or tweening then
+		if noclipOn or tweening or F.active then
 			if char ~= ncChar or os.clock() - ncT > 0.7 then
 				ncChar, ncT = char, os.clock()
 				ncParts = {}
@@ -661,6 +669,7 @@ function startTween()
 		if not (tcf and root and (not hum or hum.Health > 0)) then return end -- đang chết/hồi sinh: chờ
 		dt = math.min(dt, 0.1)
 		setHold(true)
+		if userActive(hum) then angle = nil return end -- đang tự đi/nhảy: nhường
 		local tpos = tcf.Position
 		local cur = root.Position
 		local goal
@@ -1256,6 +1265,225 @@ function X.setLag(on)
 end
 function X.toggleLag() X.setLag(not X.lag) end
 
+
+-- ===== AUTO FARM + AUTO PHÁ NHÀ =====
+local BUILD_DEFAULT = { "building", "house", "tower", "skyscraper", "apartment", "hotel", "office", "destruct" }
+local FARM_TIMEOUT_ENEMY, FARM_TIMEOUT_BUILD = 30, 15 -- quá lâu không hạ được thì bỏ qua mục tiêu đó
+F.cacheE, F.cacheB = {}, {}
+F.bad = setmetatable({}, { __mode = "k" })
+F.cur, F.curKind, F.curT = nil, nil, 0
+
+local function splitKw(str)
+	local t = {}
+	for w in string.gmatch(string.lower(str or ""), "[^,]+") do
+		w = w:gsub("^%s+", ""):gsub("%s+$", "")
+		if w ~= "" then t[#t + 1] = w end
+	end
+	return t
+end
+local function matchKw(name, kws)
+	if #kws == 0 then return true end
+	name = string.lower(name)
+	for _, k in ipairs(kws) do
+		if string.find(name, k, 1, true) then return true end
+	end
+	return false
+end
+local function isMine(m)
+	local ch = player.Character
+	return ch and (m == ch or m:IsDescendantOf(ch))
+end
+local function pivotPos(m)
+	local ok, cf = pcall(function() return m:GetPivot() end)
+	return ok and cf.Position or nil
+end
+
+-- Quét quái / toà nhà nền (có nhường frame) để không đứng hình
+task.spawn(function()
+	while true do
+		local waited = 0
+		while waited < 2 and not F.scanNow do task.wait(0.25) waited += 0.25 end
+		F.scanNow = false
+		if F.farm or F.build then
+			local bK = splitKw(F.buildKw)
+			if #bK == 0 then bK = BUILD_DEFAULT end
+			local eK = splitKw(F.enemyKw)
+			local E, B, seen, n = {}, {}, {}, 0
+			for _, d in ipairs(workspace:GetDescendants()) do
+				n += 1
+				if n % 1500 == 0 then task.wait() end
+				pcall(function()
+					if F.farm and d:IsA("Humanoid") and d.Health > 0 then
+						local m = d.Parent
+						if m and m:IsA("Model") and not isMine(m) and not Players:GetPlayerFromCharacter(m)
+							and rootOf(m) and matchKw(m.Name, eK) then
+							E[#E + 1] = { m = m, h = d }
+						end
+					elseif F.build then
+						if d:IsA("Model") and not d:FindFirstChildOfClass("Humanoid") and not isMine(d)
+							and matchKw(d.Name, bK) and not seen[d]
+							and not (d.Parent and d.Parent:IsA("Model") and matchKw(d.Parent.Name, bK)) then
+							seen[d] = true
+							B[#B + 1] = d
+						elseif d:IsA("Folder") and matchKw(d.Name, bK) then -- thư mục "Buildings": mỗi model con là 1 toà nhà
+							for _, c in ipairs(d:GetChildren()) do
+								if c:IsA("Model") and not seen[c] then seen[c] = true; B[#B + 1] = c end
+							end
+						end
+					end
+				end)
+			end
+			F.cacheE, F.cacheB = E, B
+		end
+	end
+end)
+
+local function pickTarget(root)
+	local function nearest(list, enemy)
+		local best, bd
+		for _, e in ipairs(list) do
+			local m = enemy and e.m or e
+			if m.Parent and not F.bad[m] and (not enemy or e.h.Health > 0) then
+				local p = pivotPos(m)
+				if p then
+					local d = (p - root.Position).Magnitude
+					if not bd or d < bd then best, bd = e, d end
+				end
+			end
+		end
+		return best
+	end
+	if F.farm then
+		local e = nearest(F.cacheE, true)
+		if e then return e.m, "enemy", e.h end
+	end
+	if F.build then
+		local b = nearest(F.cacheB, false)
+		if b then return b, "build", nil end
+	end
+	return nil
+end
+
+local attacking = false
+local function attackBurst()
+	if attacking then return end
+	attacking = true
+	task.spawn(function()
+		for i = 1, #X.skills do
+			if not (F.farm or F.build) then break end
+			if X.skillOn[i] then pcall(X.cast, i) task.wait(0.08) end
+		end
+		if VIM then -- đánh thường: click giữa màn hình
+			pcall(function()
+				local cam = workspace.CurrentCamera
+				local c = cam and cam.ViewportSize / 2 or Vector2.new(400, 200)
+				VIM:SendMouseButtonEvent(c.X, c.Y, 0, true, game, 0)
+				task.wait(0.03)
+				VIM:SendMouseButtonEvent(c.X, c.Y, 0, false, game, 0)
+			end)
+		end
+		attacking = false
+	end)
+end
+
+task.spawn(function()
+	local lastAtk = 0
+	while true do
+		local dt = math.min(RunService.Heartbeat:Wait(), 0.1)
+		if not (F.farm or F.build) then
+			F.active, F.cur = false, nil
+			task.wait(0.2)
+		else
+			local char = player.Character
+			local root, hum = rootOf(char), char and char:FindFirstChildOfClass("Humanoid")
+			if not root or (hum and hum.Health <= 0) then
+				F.active, F.cur = false, nil
+			else
+				-- kiểm tra mục tiêu hiện tại còn hợp lệ
+				local m = F.cur
+				if m then
+					local dead = not m.Parent or (F.curKind == "enemy" and F.curHum and F.curHum.Health <= 0)
+					local timeout = os.clock() - F.curT > (F.curKind == "enemy" and FARM_TIMEOUT_ENEMY or FARM_TIMEOUT_BUILD)
+					if dead then F.cur = nil
+					elseif timeout then F.bad[m] = true; F.cur = nil end
+				end
+				if not F.cur then
+					F.cur, F.curKind, F.curHum = pickTarget(root)
+					F.curT = os.clock()
+					if not F.cur and next(F.bad) then -- hết mục tiêu: xoá danh sách bỏ qua để thử lại
+						if os.clock() - (F.badClear or 0) > 20 then F.badClear = os.clock(); F.bad = setmetatable({}, { __mode = "k" }) end
+					end
+				end
+				local tgt = F.cur
+				local tpos = tgt and pivotPos(tgt)
+				if tgt and tpos then
+					-- di chuyển tới điểm đứng (nhường khi người chơi tự đi/nhảy)
+					if not userActive(hum) then
+						local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
+						local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
+						local goal = tpos + dir * F.dist + Vector3.new(0, 8, 0)
+						local off = goal - root.Position
+						local d = off.Magnitude
+						F.active = true
+						if d > 4 then
+							local speed = math.clamp(d * TWEEN_FAR_FACTOR, TWEEN_SPEED, TWEEN_MAX_SPEED)
+							local np = root.Position + off.Unit * math.min(d, speed * dt)
+							root.CFrame = CFrame.lookAt(np, Vector3.new(tpos.X, np.Y, tpos.Z))
+							root.AssemblyLinearVelocity = Vector3.zero
+						end
+					end
+					if os.clock() - lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
+						lastAtk = os.clock()
+						attackBurst()
+					end
+				else
+					F.active = false
+				end
+			end
+		end
+	end
+end)
+
+-- Luôn cho phép nhảy/đi khi đang dùng các chức năng (một số game đặt JumpPower = 0 hoặc để PlatformStand)
+RunService.Heartbeat:Connect(function()
+	if not (followOn or tweenMode or F.farm or F.build or noclipOn) then return end
+	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	pcall(function()
+		if hum.PlatformStand then hum.PlatformStand = false end
+		if hum.UseJumpPower then
+			if hum.JumpPower <= 0 then hum.JumpPower = 50 end
+		elseif hum.JumpHeight <= 0 then
+			hum.JumpHeight = 7.2
+		end
+		hum:SetStateEnabled(Enum.HumanoidStateType.Jumping, true)
+	end)
+end)
+
+function F.refreshUI()
+	local w = F.w
+	if not w then return end
+	if w.farmBtn then w.farmBtn.set(F.farm) end
+	if w.buildBtn then w.buildBtn.set(F.build) end
+end
+local function farmPrep()
+	if followOn then stopFollow(); setFollowUI() end
+	if tweenMode then tweenMode = false; stopTween(); setTweenUI() end
+	F.scanNow = true
+end
+function F.toggleFarm()
+	F.farm = not F.farm
+	if F.farm then farmPrep() end
+	if not (F.farm or F.build) then F.cur = nil end
+	F.refreshUI()
+end
+function F.toggleBuild()
+	F.build = not F.build
+	if F.build then farmPrep() end
+	if not (F.farm or F.build) then F.cur = nil end
+	F.refreshUI()
+end
+
 function setRespawnUI()
 	if not (ui and ui.respawnBtn) then return end
 	ui.respawnBtn.set(respawnOn)
@@ -1394,10 +1622,31 @@ function buildUI()
 	}, parent)
 
 	-- Nút logo mở/đóng bảng
-	local launcher = makeLogo(gui, 52, { Position = UDim2.new(0, 12, 0.5, -26) })
+	local launcher = makeLogo(gui, 36, { Position = savedLauncherPos or UDim2.new(0, 12, 0.5, -18) })
 	if not launcher:GetAttribute("img") then make("UIStroke", { Color = C.white, Thickness = 1.5, Transparency = 0.7 }, launcher) end
 	local lscale = make("UIScale", {}, launcher)
 	local hit = make("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 10 }, launcher)
+	-- Kéo logo đi chỗ khác (kéo > 15px thì không tính là bấm mở bảng)
+	do
+		if launcherConn then launcherConn:Disconnect(); launcherConn = nil end
+		local ld, lStart, lPos = false, nil, nil
+		hit.InputBegan:Connect(function(input)
+			if isPointer(input) then
+				ld, lStart, lPos = true, input.Position, launcher.Position
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then ld = false end
+				end)
+			end
+		end)
+		launcherConn = UserInputService.InputChanged:Connect(function(input)
+			if ld and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				local d = input.Position - lStart
+				local pos = UDim2.new(lPos.X.Scale, lPos.X.Offset + d.X, lPos.Y.Scale, lPos.Y.Offset + d.Y)
+				launcher.Position = pos
+				savedLauncherPos = pos
+			end
+		end)
+	end
 	hit.MouseEnter:Connect(function() tw(lscale, 0.15, { Scale = 1.08 }) end)
 	hit.MouseLeave:Connect(function() tw(lscale, 0.15, { Scale = 1 }) end)
 	hit.InputBegan:Connect(function(i) if isPointer(i) then tw(lscale, 0.1, { Scale = 0.92 }) end end)
@@ -1440,7 +1689,7 @@ function buildUI()
 
 	-- Thanh tab: Dịch chuyển / Skill / Khác
 	local TOP = 90
-	local TABS = { "Dịch chuyển", "Skill", "Khác" }
+	local TABS = { "Dịch chuyển", "Skill", "Khác", "Farm" }
 	local tabBar = make("Frame", { Position = UDim2.fromOffset(0, 52), Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1 }, frame)
 	make("Frame", { Position = UDim2.fromOffset(0, 88), Size = UDim2.new(1, 0, 0, 1), BackgroundColor3 = C.stroke, BorderSizePixel = 0 }, frame)
 	local pages, tabBtns = {}, {}
@@ -1460,7 +1709,7 @@ function buildUI()
 	for i = 1, #TABS do
 		local b = make("TextButton", {
 			Position = UDim2.new((i - 1) / #TABS, 6, 0, 4), Size = UDim2.new(1 / #TABS, -10, 0, 28),
-			BackgroundColor3 = (X.tab == i) and C.accent or C.row, Text = TABS[i], Font = Enum.Font.GothamBold, TextSize = 12,
+			BackgroundColor3 = (X.tab == i) and C.accent or C.row, Text = TABS[i], Font = Enum.Font.GothamBold, TextSize = 11,
 			TextColor3 = (X.tab == i) and C.white or C.muted, AutoButtonColor = false,
 		}, tabBar)
 		round(b, 8)
@@ -1653,6 +1902,20 @@ function buildUI()
 		}, ctrl)
 	end
 
+	-- ===== TAB 4: Farm =====
+	ctrl = mkCtrl(pages[4], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
+	mkSection(1, "AUTO FARM")
+	local farmRow, farmBtn = mkToggle(2, "Auto farm quái", "F")
+	local buildRow, buildBtn = mkToggle(3, "Auto phá nhà", "B")
+	local _, distBox, distStroke = mkInputRow(4, "Khoảng cách đứng (stud)", tostring(F.dist), "30")
+	local _, enemyBox = mkInputRow(5, "Tên quái (cách nhau dấu ,)", F.enemyKw, "để trống = tất cả")
+	local _, buildKwBox = mkInputRow(6, "Tên toà nhà (cách nhau dấu ,)", F.buildKw, "mặc định")
+	make("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 44), BackgroundTransparency = 1, LayoutOrder = 7, TextWrapped = true,
+		Text = "Farm/phá nhà dùng các skill đã chọn ở tab Skill + đánh thường. Tự đi/nhảy thì script tạm nhường điều khiển.",
+		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
+	}, ctrl)
+
 	-- Nút ẩn dùng để bật Modal (mở khoá con trỏ chuột khi bảng đang hiện)
 	local modal = make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = uiVisible }, frame)
 
@@ -1661,6 +1924,16 @@ function buildUI()
 		sub = sub, modal = modal, rows = {}, rowMap = {} }
 	X.w = { autoBtn = skillAutoBtn, lagBtn = lagBtn, modePill = modePill, chips = chips }
 
+	F.w = { farmBtn = farmBtn, buildBtn = buildBtn }
+	tap(farmRow, function() F.toggleFarm() end)
+	tap(buildRow, function() F.toggleBuild() end)
+	distBox.FocusLost:Connect(function()
+		local n = tonumber(distBox.Text)
+		if n then F.dist = math.clamp(n, 5, 300) end
+		distBox.Text = tostring(F.dist)
+	end)
+	enemyBox.FocusLost:Connect(function() F.enemyKw = enemyBox.Text; F.cacheE = {}; F.scanNow = true end)
+	buildKwBox.FocusLost:Connect(function() F.buildKw = buildKwBox.Text; F.cacheB = {}; F.scanNow = true end)
 	tap(skillAutoRow, X.toggleAuto)
 	tap(modeRow, X.cycleMode)
 	tap(allRow, X.allSkills)
@@ -1729,6 +2002,7 @@ function buildUI()
 	setMapUI()
 	setStatus(nil)
 	X.refreshUI()
+	if F.refreshUI then F.refreshUI() end
 end
 
 -- ===== Sự kiện =====
@@ -1760,6 +2034,10 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		toggleAntiAfk()
 	elseif input.KeyCode == TWEEN_KEY then
 		toggleTweenMode()
+	elseif input.KeyCode == Enum.KeyCode.F then
+		F.toggleFarm()
+	elseif input.KeyCode == Enum.KeyCode.B then
+		F.toggleBuild()
 	end
 end)
 
