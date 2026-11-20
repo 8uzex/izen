@@ -1043,6 +1043,12 @@ local function pressText(txt, btn)
 end
 
 local mapClickedAt = 0
+-- Theo dõi bước hồi sinh đang làm: lặp lại cùng 1 bước nhiều lần = đang bị kẹt -> đổi cách bấm / chọn lại map
+local rs = { step = nil, n = 0 }
+local function stepTrack(name)
+	if rs.step == name then rs.n += 1 else rs.step, rs.n = name, 1 end
+	return rs.n
+end
 local function mapRespawnStep(names)
 	local ok, r = pcall(scanScreens, names)
 	if not (ok and r) then return end
@@ -1070,27 +1076,37 @@ local function mapRespawnStep(names)
 	if r.map and r.respawn then
 		-- Màn hình Locations (có cả danh sách map lẫn nút SPAWN)
 		if os.clock() - mapClickedAt > 4 then
+			stepTrack("map")
 			setStatus("Chọn map " .. tostring(respawnMap) .. ": " .. flags)
 			clickOnce(r.map)
 			mapClickedAt = os.clock()
 			task.wait(0.7)
 		else
+			local n = stepTrack("spawn")
 			setStatus("SPAWN " .. tostring(respawnMap) .. ": " .. flags)
 			local ok3, r3 = pcall(scanScreens, names)
-			clickOnce((ok3 and r3 and r3.respawn) or r.respawn)
+			local sp = (ok3 and r3 and r3.respawn) or r.respawn
+			if n >= 3 then press("spawn", sp) else clickOnce(sp) end -- kẹt: thử đủ kiểu bấm
+			if n >= 6 then mapClickedAt = 0; rs.n = 0 end        -- kẹt lâu: chọn lại map rồi SPAWN lại
 			task.wait(1)
 		end
 	elseif r.play then
 		mapClickedAt = 0
+		stepTrack("play")
 		setStatus("Bấm Play: " .. flags)
 		press("play", r.play)
-		task.wait(0.5)
+		task.wait(0.4)
 	elseif isDead and menuBtn then
 		-- Màn hình DEFEATED: bấm MENU (bỏ qua chữ tên map lẻ trên HUD)
 		mapClickedAt = 0
+		local n = stepTrack("menu")
 		setStatus("Bấm MENU: " .. flags)
-		pressText(menuEntry.txt, menuEntry.btn)
-		task.wait(0.6)
+		if n >= 3 and n % 2 == 0 then
+			press("menu", menuEntry.btn or menuEntry.txt) -- kẹt: thử bấm cả khung nút bằng đủ kiểu
+		else
+			pressText(menuEntry.txt, menuEntry.btn)
+		end
+		task.wait(0.45)
 	elseif r.map and not isDead then
 		-- Có danh sách map nhưng không có nút SPAWN: chọn map luôn
 		if os.clock() - mapClickedAt > 4 then
@@ -1100,6 +1116,7 @@ local function mapRespawnStep(names)
 		end
 		task.wait(0.3)
 	else
+		rs.step, rs.n = nil, 0
 		setStatus("Đang chờ: " .. flags)
 	end
 end
@@ -1329,9 +1346,18 @@ function X.toggleLag() X.setLag(not X.lag) end
 
 -- ===== AUTO FARM + AUTO PHÁ NHÀ =====
 local BUILD_DEFAULT = { "building", "house", "tower", "skyscraper", "apartment", "hotel", "office", "destruct" }
-local FARM_TIMEOUT_ENEMY, FARM_TIMEOUT_BUILD = 30, 15 -- quá lâu không hạ được thì bỏ qua mục tiêu đó
+local FARM_TIMEOUT_BUILD = 120 -- toà nhà: giới hạn cứng, quá lâu vẫn chưa xong thì bỏ qua (mob thì KHÔNG có giới hạn: phải hạ xong con đó mới đổi)
+local STALL_BUILD = 4          -- toà nhà: đang ở sát mà không thay đổi chừng này giây -> coi như xong, đổi toà khác
 F.cacheE, F.cacheB = {}, {}
-F.bad = setmetatable({}, { __mode = "k" })
+F.bad = setmetatable({}, { __mode = "k" }) -- [model] = thời điểm hết hạn bỏ qua
+local BAD_DONE, BAD_STUCK = 240, 30              -- nhà đã phá: bỏ qua 240s (game xây lại sau vài phút); kẹt/timeout: chỉ 30s rồi thử lại
+local MOB_PRIORITY_RANGE = 300                   -- bật cả farm lẫn phá nhà: mob chỉ được ưu tiên khi ở trong tầm này, xa hơn thì phá nhà gần trước
+local function markBad(m, secs) F.bad[m] = os.clock() + secs end
+local function isBad(m) local t = F.bad[m]; return t ~= nil and t > os.clock() end
+-- yêu cầu quét lại danh sách mục tiêu (giới hạn tần suất để không quét toàn map liên tục)
+local function requestScan()
+	if os.clock() - (F.scanReq or 0) > 2 then F.scanReq = os.clock(); F.scanNow = true end
+end
 F.cur, F.curKind, F.curT = nil, nil, 0
 
 local function splitKw(str)
@@ -1363,7 +1389,7 @@ end
 task.spawn(function()
 	while true do
 		local waited = 0
-		while waited < 2 and not F.scanNow do task.wait(0.25) waited += 0.25 end
+		while waited < 3 and not F.scanNow do task.wait(0.25) waited += 0.25 end
 		F.scanNow = false
 		if F.farm or F.build then
 			local bK = splitKw(F.buildKw)
@@ -1404,7 +1430,7 @@ local function pickTarget(root)
 		local best, bd
 		for _, e in ipairs(list) do
 			local m = enemy and e.m or e
-			if m.Parent and not F.bad[m] and (not enemy or e.h.Health > 0) then
+			if m.Parent and not isBad(m) and (not enemy or e.h.Health > 0) then
 				local p = pivotPos(m)
 				if p then
 					local d = (p - root.Position).Magnitude
@@ -1412,17 +1438,34 @@ local function pickTarget(root)
 				end
 			end
 		end
-		return best
+		return best, bd
 	end
-	if F.farm then
-		local e = nearest(F.cacheE, true)
-		if e then return e.m, "enemy", e.h end
-	end
-	if F.build then
-		local b = nearest(F.cacheB, false)
-		if b then return b, "build", nil end
-	end
+	local e, ed, b
+	if F.farm then e, ed = nearest(F.cacheE, true) end
+	if F.build then b = nearest(F.cacheB, false) end
+	if e and (not b or ed <= MOB_PRIORITY_RANGE) then return e.m, "enemy", e.h end
+	if b then return b, "build", nil end
+	if e then return e.m, "enemy", e.h end
 	return nil
+end
+
+-- Chữ ký trạng thái toà nhà: đổi khi bị phá (part bị xoá / mờ đi / thu nhỏ / máu giảm). n = số part còn lại
+local function buildSig(m)
+	local n, tr, hp = 0, 0, ""
+	for _, p in ipairs(m:GetDescendants()) do
+		if p:IsA("BasePart") then
+			n += 1; tr += p.Transparency
+		elseif p:IsA("NumberValue") or p:IsA("IntValue") then
+			hp ..= tostring(p.Value) .. ","
+		end
+	end
+	for k, v in pairs(m:GetAttributes()) do
+		if type(v) == "number" then hp ..= k .. "=" .. tostring(v) .. "," end
+	end
+	local sz = ""
+	local ok, s = pcall(function() return m:GetExtentsSize() end)
+	if ok and s then sz = string.format("%.1f,%.1f,%.1f", s.X, s.Y, s.Z) end
+	return n, string.format("%d|%.2f|%s|%s", n, tr, sz, hp)
 end
 
 local attacking = false
@@ -1464,16 +1507,37 @@ task.spawn(function()
 				local m = F.cur
 				if m then
 					local dead = not m.Parent or (F.curKind == "enemy" and F.curHum and F.curHum.Health <= 0)
-					local timeout = os.clock() - F.curT > (F.curKind == "enemy" and FARM_TIMEOUT_ENEMY or FARM_TIMEOUT_BUILD)
-					if dead then F.cur = nil
-					elseif timeout then F.bad[m] = true; F.cur = nil end
+					local timeout = F.curKind ~= "enemy" and os.clock() - F.curT > FARM_TIMEOUT_BUILD -- mob: không bao giờ bỏ giữa chừng, phải hạ xong mới đổi
+					if dead then
+						if F.curKind ~= "enemy" then markBad(m, BAD_DONE) end
+						F.cur = nil
+					elseif timeout then markBad(m, BAD_STUCK); F.cur = nil
+					elseif os.clock() - (F.sigT or 0) >= 1 then
+						-- mỗi giây kiểm tra tiến triển: xong rồi (hết part) hoặc không thay đổi gì khi đã đứng sát -> đổi mục tiêu
+						F.sigT = os.clock()
+						local sig, empty
+						if F.curKind == "enemy" then
+							sig = tostring(F.curHum and F.curHum.Health)
+						else
+							local ok, n, s = pcall(buildSig, m)
+							if ok then sig, empty = s, (n == 0) end
+						end
+						local mp = pivotPos(m)
+						local near = mp and (root.Position - mp).Magnitude <= F.dist + 30
+						if empty then
+							markBad(m, BAD_DONE); F.cur = nil
+						elseif sig ~= F.curSig or not near then
+							F.curSig = sig; F.curChg = os.clock()
+						elseif F.curKind ~= "enemy" and os.clock() - (F.curChg or os.clock()) > STALL_BUILD then
+							markBad(m, BAD_DONE); F.cur = nil
+						end
+					end
 				end
 				if not F.cur then
 					F.cur, F.curKind, F.curHum = pickTarget(root)
 					F.curT = os.clock()
-					if not F.cur and next(F.bad) then -- hết mục tiêu: xoá danh sách bỏ qua để thử lại
-						if os.clock() - (F.badClear or 0) > 20 then F.badClear = os.clock(); F.bad = setmetatable({}, { __mode = "k" }) end
-					end
+					F.curSig, F.curChg, F.sigT = nil, os.clock(), 0
+					if not F.cur then requestScan() end -- hết mục tiêu: quét lại tìm cái mới
 				end
 				local tgt = F.cur
 				local tpos = tgt and pivotPos(tgt)
@@ -2109,7 +2173,7 @@ buildUI()
 --  • Đã chọn map: MENU -> Play -> chọn map -> SPAWN
 task.spawn(function()
 	while true do
-		task.wait(0.5)
+		task.wait((respawnOn and mapIdx > 0) and 0.3 or 0.5)
 		if respawnOn then
 			if mapIdx > 0 and respawnNames then
 				pcall(mapRespawnStep, respawnNames)
@@ -2146,6 +2210,13 @@ task.spawn(function()
 				else
 					msg = "Chưa thấy nhân vật của " .. selectedPlayer.DisplayName .. " (khác map / chưa tải)"
 				end
+			end
+		end
+		if not msg and (F.farm or F.build) and rootOf(player.Character) then
+			if F.cur and F.cur.Parent then
+				msg = (F.curKind == "enemy" and "Đang đánh mob: " or "Đang phá: ") .. F.cur.Name
+			else
+				msg = "Đang tìm mục tiêu..."
 			end
 		end
 		if not msg and tpNote and os.clock() < tpNote.t then msg = tpNote.msg end
