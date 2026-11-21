@@ -415,7 +415,8 @@ local mapIdx = 0            -- 0 = mặc định (bấm nút RESPAWN), 1.. = ch�
 local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện trên nút)
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
-local F = { farm = false, build = false, active = false, dist = 30, enemyKw = "", buildKw = "", range = 180, densityR = 250 } -- auto farm / Auto Farm City
+local F = { farm = false, build = false, active = false, dist = 30, enemyKw = "", buildKw = "", range = 180, densityR = 250,
+	mobDist = 28, mobSpeed = 150, orbitSpeed = 1.8, retargetDelay = 0.35 } -- auto farm / Auto Farm City
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
 local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
@@ -1603,6 +1604,15 @@ local function buildSig(m)
 	return n, string.format("%d|%.2f|%s|%s", n, tr, sz, hp)
 end
 
+-- Bật lại nút di chuyển (joystick / nhảy) của game nếu bị tắt
+local function ensureControls()
+	pcall(function() GuiService.TouchControlsEnabled = true end)
+	pcall(function()
+		local ps = player:FindFirstChild("PlayerScripts")
+		local pm = ps and ps:FindFirstChild("PlayerModule")
+		if pm then require(pm):GetControls():Enable() end
+	end)
+end
 local attacking = false
 
 -- Các khung của script đang hiện trên màn hình (bảng chính + logo): click giả phải tránh những vùng này
@@ -1674,7 +1684,10 @@ task.spawn(function()
 			if not root or (hum and hum.Health <= 0) then
 				F.active, F.cur = false, nil
 			else
+				-- giữ nút di chuyển (joystick / nhảy) luôn bật khi đang farm
+				if os.clock() - (F.ctrlT or 0) > 3 then F.ctrlT = os.clock(); ensureControls() end
 				-- kiểm tra mục tiêu hiện tại còn hợp lệ
+				local hadCur = F.cur
 				local m = F.cur
 				if m then
 					local dead = not m.Parent or (F.curKind == "enemy" and not enemyAlive(m, F.curHum))
@@ -1694,7 +1707,7 @@ task.spawn(function()
 							if ok then sig, empty = s, (n == 0) end
 						end
 						local mp = pivotPos(m)
-						local near = mp and (root.Position - mp).Magnitude <= F.dist + 30
+						local near = mp and (root.Position - mp).Magnitude <= (F.curKind == "enemy" and F.mobDist or F.dist) + 30
 						if empty then
 							markBad(m, F.curKind == "enemy" and BAD_STUCK or BAD_DONE); F.cur = nil
 						elseif sig ~= F.curSig or not near then
@@ -1704,7 +1717,10 @@ task.spawn(function()
 						end
 					end
 				end
-				if not F.cur then
+				if hadCur and not F.cur then -- vừa xong 1 mục tiêu: mob thì nghỉ Retarget Delay rồi mới đổi con khác
+					F.pickAfter = os.clock() + (F.curKind == "enemy" and F.retargetDelay or 0)
+				end
+				if not F.cur and os.clock() >= (F.pickAfter or 0) then
 					F.cur, F.curKind, F.curHum = pickTarget(root)
 					F.curT = os.clock()
 					F.curSig, F.curChg, F.sigT = nil, os.clock(), 0
@@ -1717,17 +1733,27 @@ task.spawn(function()
 					if not userActive(hum) then
 						local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
 						local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
-						local goal = tpos + dir * F.dist + Vector3.new(0, 8, 0)
+						local goal
+						if F.curKind == "enemy" then -- Auto Farm Mob: đứng cách mob Target Distance và quay quanh mob theo Orbit Speed
+							if F.orbitTgt ~= tgt or F.orbitAng == nil then
+								F.orbitTgt = tgt
+								F.orbitAng = math.atan2(root.Position.Z - tpos.Z, root.Position.X - tpos.X)
+							end
+							if F.orbitSpeed > 0 then F.orbitAng += F.orbitSpeed * dt end
+							goal = tpos + Vector3.new(math.cos(F.orbitAng), 0, math.sin(F.orbitAng)) * F.mobDist + Vector3.new(0, 8, 0)
+						else
+							goal = tpos + dir * F.dist + Vector3.new(0, 8, 0)
+						end
 						local off = goal - root.Position
 						local d = off.Magnitude
 						F.active = true
-						if d > 4 then
+						if d > ((F.curKind == "enemy" and F.orbitSpeed > 0) and 0.5 or 4) then
 							if F.curKind == "build" then -- phá nhà: teleport thẳng tới nhà (cùng đảo)
 								pcall(requestStream, goal)
 								root.CFrame = CFrame.lookAt(goal, Vector3.new(tpos.X, goal.Y, tpos.Z))
 								root.AssemblyLinearVelocity = Vector3.zero
 							else
-								local speed = math.clamp(d * TWEEN_FAR_FACTOR, TWEEN_SPEED, TWEEN_MAX_SPEED)
+								local speed = math.clamp(d * TWEEN_FAR_FACTOR, F.mobSpeed, TWEEN_MAX_SPEED)
 								local np = root.Position + off.Unit * math.min(d, speed * dt)
 								root.CFrame = CFrame.lookAt(np, Vector3.new(tpos.X, np.Y, tpos.Z))
 								root.AssemblyLinearVelocity = Vector3.zero
@@ -1769,6 +1795,7 @@ function F.refreshUI()
 	if w.buildBtn then w.buildBtn.set(F.build) end
 end
 local function farmPrep()
+	ensureControls()
 	if followOn then stopFollow(); setFollowUI() end
 	if tweenMode then tweenMode = false; stopTween(); setTweenUI() end
 	F.scanNow = true
@@ -1816,7 +1843,8 @@ end
 function setVisible(v)
 	uiVisible = v
 	if not ui then return end
-	ui.modal.Modal = v -- Modal = true giúp con trỏ không bị game khoá, luôn bấm được nút
+	-- Modal chỉ cần cho máy có chuột; trên điện thoại Modal làm MẤT nút di chuyển nên không bật
+	ui.modal.Modal = v and not (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
 	UI.visToken = UI.visToken + 1
 	local token, frame, scale = UI.visToken, ui.frame, ui.scale
 	if v then
@@ -2149,7 +2177,7 @@ function buildUI()
 	end
 
 	-- Hàng thanh trượt: kéo để chỉnh, hoặc gõ số vào ô bên phải
-	local function mkSliderRow(order, text, minV, maxV, init, onChange)
+	local function mkSliderRow(order, text, minV, maxV, init, onChange, step)
 		local scroller = ctrl
 		local row = make("Frame", { Size = UDim2.new(1, 0, 0, 56), BackgroundColor3 = C.row, LayoutOrder = order }, ctrl)
 		round(row, 10)
@@ -2176,8 +2204,10 @@ function buildUI()
 		local hit = make("TextButton", {
 			Position = UDim2.new(0, 4, 0, 30), Size = UDim2.new(1, -8, 0, 26), BackgroundTransparency = 1, Text = "", ZIndex = 5,
 		}, row)
+		step = step or 1
 		local function setValue(v, fire)
-			v = math.clamp(math.floor(v + 0.5), minV, maxV)
+			v = math.clamp(math.floor(v / step + 0.5) * step, minV, maxV)
+			v = tonumber(string.format("%.3f", v))
 			local a = (v - minV) / (maxV - minV)
 			fill.Size = UDim2.fromScale(a, 1)
 			knob.Position = UDim2.fromScale(a, 0.5)
@@ -2280,22 +2310,25 @@ function buildUI()
 
 	-- ===== TAB 4: Farm =====
 	ctrl = mkCtrl(pages[4], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
-	mkSection(1, "AUTO FARM")
-	local farmRow, farmBtn = mkToggle(2, "Auto farm quái", "F")
-	local buildRow, buildBtn = mkToggle(3, "Auto Farm City", "B")
-	mkSliderRow(4, "Building Search Range", 50, 1000, F.range, function(v) F.range = v end)
-	mkSliderRow(5, "Density Area Size", 50, 600, F.densityR, function(v) F.densityR = v end)
-	local _, distBox, distStroke = mkInputRow(6, "Khoảng cách đứng (stud)", tostring(F.dist), "30")
-	local _, enemyBox = mkInputRow(7, "Tên quái (cách nhau dấu ,)", F.enemyKw, "để trống = tất cả")
-	local _, buildKwBox = mkInputRow(8, "Tên toà nhà (cách nhau dấu ,)", F.buildKw, "mặc định: City")
+	mkSection(1, "AUTO FARM MOB")
+	local farmRow, farmBtn = mkToggle(2, "Auto Farm Mob", "F")
+	mkSliderRow(3, "Target Distance", 5, 150, F.mobDist, function(v) F.mobDist = v end)
+	mkSliderRow(4, "Tween Speed", 20, 500, F.mobSpeed, function(v) F.mobSpeed = v end)
+	mkSliderRow(5, "Orbit Speed", 0, 6, F.orbitSpeed, function(v) F.orbitSpeed = v end, 0.01)
+	mkSliderRow(6, "Retarget Delay", 0, 3, F.retargetDelay, function(v) F.retargetDelay = v end, 0.05)
+	mkSection(7, "AUTO FARM CITY")
+	local buildRow, buildBtn = mkToggle(8, "Auto Farm City", "B")
+	mkSliderRow(9, "Building Search Range", 50, 1000, F.range, function(v) F.range = v end)
+	mkSliderRow(10, "Density Area Size", 50, 600, F.densityR, function(v) F.densityR = v end)
+	local _, distBox, distStroke = mkInputRow(11, "Khoảng cách đứng City", tostring(F.dist), "30")
 	make("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 58), BackgroundTransparency = 1, LayoutOrder = 9, TextWrapped = true,
-		Text = "Auto Farm City: teleport tới City trên đảo đang đứng. Search Range = tầm tìm City quanh bạn; Density Area Size = chọn khu có nhiều City nhất. Farm dùng skill đã chọn ở tab Skill + đánh thường.",
+		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 12, TextWrapped = true,
+		Text = "Farm Mob: bay tới mob, quay quanh mob (Orbit), Retarget Delay = nghỉ bao lâu trước khi đổi mob. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
 
 	-- Nút ẩn dùng để bật Modal (mở khoá con trỏ chuột khi bảng đang hiện)
-	local modal = make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = uiVisible }, frame)
+	local modal = make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = uiVisible and not (UserInputService.TouchEnabled and not UserInputService.MouseEnabled) }, frame)
 
 	ui = { gui = gui, frame = frame, scale = scale, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
 		noclipBtn = noclipBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, mapBtn = mapBtn,
@@ -2310,8 +2343,6 @@ function buildUI()
 		if n then F.dist = math.clamp(n, 5, 300) end
 		distBox.Text = tostring(F.dist)
 	end)
-	enemyBox.FocusLost:Connect(function() F.enemyKw = enemyBox.Text; F.cacheE = {}; F.scanNow = true end)
-	buildKwBox.FocusLost:Connect(function() F.buildKw = buildKwBox.Text; F.cacheB = {}; F.scanNow = true end)
 	tap(skillAutoRow, X.toggleAuto)
 	tap(modeRow, X.cycleMode)
 	tap(allRow, X.allSkills)
