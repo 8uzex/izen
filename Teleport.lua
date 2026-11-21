@@ -1172,9 +1172,14 @@ function X.findBtn(i)
 	return best
 end
 
+-- Điện thoại / máy không có bàn phím: gửi phím ảo không ăn => tự dùng bấm nút skill trên màn hình
+local function effectiveMode()
+	if X.mode == 1 and UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then return 2 end
+	return X.mode
+end
 function X.cast(i)
 	local kc = X.skills[i][2]
-	if X.mode == 1 and VIM then
+	if effectiveMode() == 1 and VIM then
 		pcall(function()
 			VIM:SendKeyEvent(true, kc, false, game)
 			task.wait(0.04)
@@ -1378,6 +1383,20 @@ local function matchKw(name, kws)
 end
 -- Mob thêm sẵn vào auto farm dù KHÔNG có Humanoid (Wyrmite...). Khớp theo tên model, không phân biệt hoa/thường.
 local EXTRA_ENEMY = { "wyrmite" }
+-- Mob bị LOẠI khỏi auto farm (tên chứa từ này): Arctic Wyrmite level cao, đánh không lại
+local EXCLUDE_ENEMY = { "arctic" }
+local function nameHas(name, list)
+	local n = string.lower(name or "")
+	for _, k in ipairs(list) do
+		if n:find(k, 1, true) then return true end
+	end
+	return false
+end
+-- Đúng "Wyrmite" (cho phép thêm số/khoảng trắng phía sau: Wyrmite1, Wyrmite 2), KHÔNG khớp "Arctic Wyrmite"
+local function isPlainWyrmite(name)
+	local n = string.lower(name or "")
+	return n:match("^%s*wyrmite[%s%d_%-]*$") ~= nil
+end
 local function anyPart(m) return m:FindFirstChildWhichIsA("BasePart", true) end
 -- Còn sống? Có Humanoid: theo máu. Không có: theo thuộc tính Health (nếu có), không thì coi như còn sống khi model còn tồn tại
 local function enemyAlive(m, h)
@@ -1459,10 +1478,10 @@ task.spawn(function()
 				n += 1
 				if n % 1500 == 0 then task.wait() end
 				pcall(function()
-					if F.farm and d:IsA("Model") and not seen[d] and matchKw(d.Name, EXTRA_ENEMY) and #EXTRA_ENEMY > 0
+					if F.farm and d:IsA("Model") and not seen[d] and isPlainWyrmite(d.Name)
 						and (#eK == 0 or matchKw(d.Name, eK)) and not d:FindFirstChildOfClass("Humanoid")
 						and not isMine(d) and not Players:GetPlayerFromCharacter(d)
-						and not (d.Parent and d.Parent:IsA("Model") and matchKw(d.Parent.Name, EXTRA_ENEMY))
+						and not (d.Parent and d.Parent:IsA("Model") and isPlainWyrmite(d.Parent.Name))
 						and anyPart(d) then
 						seen[d] = true
 						E[#E + 1] = { m = d, h = nil }
@@ -1470,7 +1489,8 @@ task.spawn(function()
 					if F.farm and d:IsA("Humanoid") and d.Health > 0 then
 						local m = d.Parent
 						if m and m:IsA("Model") and not isMine(m) and not Players:GetPlayerFromCharacter(m)
-							and rootOf(m) and matchKw(m.Name, eK) then
+							and rootOf(m) and matchKw(m.Name, eK)
+							and not nameHas(m.Name, EXCLUDE_ENEMY) and not nameHas(d.DisplayName, EXCLUDE_ENEMY) then
 							E[#E + 1] = { m = m, h = d }
 						end
 					elseif F.build then
@@ -1566,18 +1586,54 @@ local function buildSig(m)
 end
 
 local attacking = false
+
+-- Các khung của script đang hiện trên màn hình (bảng chính + logo): click giả phải tránh những vùng này
+local function scriptRects()
+	local rects = {}
+	local g = ui and ui.gui
+	if g and g.Parent then
+		for _, o in ipairs(g:GetChildren()) do
+			if o:IsA("GuiObject") and o.Visible then
+				rects[#rects + 1] = { o.AbsolutePosition, o.AbsoluteSize }
+			end
+		end
+	end
+	return rects
+end
+
+-- Chọn điểm click đánh thường: ưu tiên giữa màn hình, nếu bị bảng script che thì dời sang chỗ trống
+local function attackClickPoint()
+	local cam = workspace.CurrentCamera
+	local vp = cam and cam.ViewportSize or Vector2.new(800, 400)
+	local rects = scriptRects()
+	local function free(p)
+		for _, r in ipairs(rects) do
+			local a, sz = r[1], r[2]
+			local m = 24 -- chừa lề cho chắc
+			if p.X >= a.X - m and p.X <= a.X + sz.X + m and p.Y >= a.Y - m and p.Y <= a.Y + sz.Y + m then return false end
+		end
+		return true
+	end
+	local spots = { {0.5, 0.5}, {0.62, 0.45}, {0.72, 0.4}, {0.5, 0.32}, {0.82, 0.35}, {0.38, 0.32}, {0.9, 0.5} }
+	for _, sp in ipairs(spots) do
+		local p = Vector2.new(vp.X * sp[1], vp.Y * sp[2])
+		if free(p) then return p end
+	end
+	return Vector2.new(vp.X * 0.5, vp.Y * 0.5)
+end
+
 local function attackBurst()
 	if attacking then return end
 	attacking = true
 	task.spawn(function()
+		-- Auto phá nhà / auto mob tự đánh, KHÔNG cần bật Auto skill: bấm các skill đang chọn rồi đánh thường
 		for i = 1, #X.skills do
 			if not (F.farm or F.build) then break end
 			if X.skillOn[i] then pcall(X.cast, i) task.wait(0.08) end
 		end
-		if VIM then -- đánh thường: click giữa màn hình
+		if VIM then -- đánh thường: click chỗ trống (không trúng bảng script)
 			pcall(function()
-				local cam = workspace.CurrentCamera
-				local c = cam and cam.ViewportSize / 2 or Vector2.new(400, 200)
+				local c = attackClickPoint()
 				VIM:SendMouseButtonEvent(c.X, c.Y, 0, true, game, 0)
 				task.wait(0.03)
 				VIM:SendMouseButtonEvent(c.X, c.Y, 0, false, game, 0)
