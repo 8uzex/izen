@@ -7,6 +7,9 @@ local TweenService = game:GetService("TweenService")
 local VIM = nil
 pcall(function() VIM = game:GetService("VirtualInputManager") end)
 local player = Players.LocalPlayer
+-- Điện thoại / máy cảm ứng không có chuột. Trên máy này TUYỆT ĐỐI không gửi chuột/phím ảo:
+-- game thấy "đang dùng chuột" sẽ chuyển sang điều khiển PC và ẨN joystick + nút nhảy.
+local function isTouchOnly() return UserInputService.TouchEnabled and not UserInputService.MouseEnabled end
 
 -- ===== CẤU HÌNH =====
 local FOLLOW_OFFSET = CFrame.new(0, 0, 3)          -- vị trí so với người được bám (đứng sau lưng 3 stud)
@@ -831,9 +834,15 @@ local function vimClick(obj)
 	local inset = (sg and sg.IgnoreGuiInset) and Vector2.zero or GuiService:GetGuiInset()
 	local pos = obj.AbsolutePosition + obj.AbsoluteSize / 2 + inset
 	pcall(function()
-		VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
-		task.wait(0.05)
-		VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
+		if isTouchOnly() then -- điện thoại: cảm ứng ảo, không dùng chuột ảo (tránh mất nút di chuyển)
+			VIM:SendTouchEvent(1, 0, pos.X, pos.Y)
+			task.wait(0.05)
+			VIM:SendTouchEvent(1, 2, pos.X, pos.Y)
+		else
+			VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+			task.wait(0.05)
+			VIM:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
+		end
 	end)
 end
 
@@ -1125,7 +1134,7 @@ end
 
 -- ===== PHẦN MỚI: Auto skill + Fix lag + Tab =====
 local X = {
-	tab = 1, auto = false, mode = 1, interval = 0.3, lag = false,
+	tab = 1, auto = false, silent = true, mode = 1, interval = 0.3, lag = false,
 	skillOn = { true, true, true, true, true, true, true },
 	skills = {
 		{ "1", Enum.KeyCode.One }, { "2", Enum.KeyCode.Two }, { "3", Enum.KeyCode.Three },
@@ -1175,10 +1184,22 @@ end
 
 -- Điện thoại / máy không có bàn phím: gửi phím ảo không ăn => tự dùng bấm nút skill trên màn hình
 local function effectiveMode()
-	if X.mode == 1 and UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then return 2 end
+	if X.mode == 1 and (isTouchOnly() or (UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled)) then return 2 end
 	return X.mode
 end
+-- Chế độ ẨN click ảo: bắn thẳng signal của nút skill trên màn hình, KHÔNG có chuột/phím/chạm ảo nào
+local function canSignal() return (firesignal ~= nil) or (getconnections ~= nil) end
+local function castSilent(i)
+	if not canSignal() then return false end
+	local b = X.findBtn(i)
+	if b and b:IsA("GuiButton") and b.Parent and isShown(b) then
+		fireSignals(b)
+		return true
+	end
+	return false
+end
 function X.cast(i)
+	if X.silent and castSilent(i) then return end
 	local kc = X.skills[i][2]
 	if effectiveMode() == 1 and VIM then
 		pcall(function()
@@ -1604,6 +1625,20 @@ local function buildSig(m)
 	return n, string.format("%d|%.2f|%s|%s", n, tr, sz, hp)
 end
 
+-- Điện thoại: ẩn mũi tên chuột ảo khi farm, trả lại khi tắt farm
+local iconOrig = nil
+local function setFarmCursor(hide)
+	if not isTouchOnly() then return end
+	pcall(function()
+		if hide then
+			if iconOrig == nil then iconOrig = UserInputService.MouseIconEnabled end
+			UserInputService.MouseIconEnabled = false
+		elseif iconOrig ~= nil then
+			UserInputService.MouseIconEnabled = iconOrig
+			iconOrig = nil
+		end
+	end)
+end
 -- Bật lại nút di chuyển (joystick / nhảy) của game nếu bị tắt
 local function ensureControls()
 	pcall(function() GuiService.TouchControlsEnabled = true end)
@@ -1643,6 +1678,9 @@ local function attackClickPoint()
 		return true
 	end
 	local spots = { {0.5, 0.5}, {0.62, 0.45}, {0.72, 0.4}, {0.5, 0.32}, {0.82, 0.35}, {0.38, 0.32}, {0.9, 0.5} }
+	if isTouchOnly() then -- joystick động nằm ở nửa trái, nút skill ở dưới phải => chạm vùng phải-trên
+		spots = { {0.62, 0.38}, {0.72, 0.34}, {0.55, 0.3}, {0.8, 0.4}, {0.66, 0.46} }
+	end
 	for _, sp in ipairs(spots) do
 		local p = Vector2.new(vp.X * sp[1], vp.Y * sp[2])
 		if free(p) then return p end
@@ -1659,12 +1697,18 @@ local function attackBurst()
 			if not (F.farm or F.build) then break end
 			if X.skillOn[i] then pcall(X.cast, i) task.wait(0.08) end
 		end
-		if VIM then -- đánh thường: click chỗ trống (không trúng bảng script)
+		if VIM and not (X.silent and canSignal()) then -- đánh thường: click chỗ trống (không trúng bảng script). Chế độ ẨN: bỏ qua
 			pcall(function()
 				local c = attackClickPoint()
-				VIM:SendMouseButtonEvent(c.X, c.Y, 0, true, game, 0)
-				task.wait(0.03)
-				VIM:SendMouseButtonEvent(c.X, c.Y, 0, false, game, 0)
+				if isTouchOnly() then
+					VIM:SendTouchEvent(5, 0, c.X, c.Y)
+					task.wait(0.03)
+					VIM:SendTouchEvent(5, 2, c.X, c.Y)
+				else
+					VIM:SendMouseButtonEvent(c.X, c.Y, 0, true, game, 0)
+					task.wait(0.03)
+					VIM:SendMouseButtonEvent(c.X, c.Y, 0, false, game, 0)
+				end
 			end)
 		end
 		attacking = false
@@ -1677,6 +1721,7 @@ task.spawn(function()
 		local dt = math.min(RunService.Heartbeat:Wait(), 0.1)
 		if not (F.farm or F.build) then
 			F.active, F.cur = false, nil
+			setFarmCursor(false)
 			task.wait(0.2)
 		else
 			local char = player.Character
@@ -1686,6 +1731,7 @@ task.spawn(function()
 			else
 				-- giữ nút di chuyển (joystick / nhảy) luôn bật khi đang farm
 				if os.clock() - (F.ctrlT or 0) > 3 then F.ctrlT = os.clock(); ensureControls() end
+				setFarmCursor(true)
 				-- kiểm tra mục tiêu hiện tại còn hợp lệ
 				local hadCur = F.cur
 				local m = F.cur
@@ -1793,6 +1839,7 @@ function F.refreshUI()
 	if not w then return end
 	if w.farmBtn then w.farmBtn.set(F.farm) end
 	if w.buildBtn then w.buildBtn.set(F.build) end
+	if w.silentBtn then w.silentBtn.set(X.silent) end
 end
 local function farmPrep()
 	ensureControls()
@@ -1844,7 +1891,7 @@ function setVisible(v)
 	uiVisible = v
 	if not ui then return end
 	-- Modal chỉ cần cho máy có chuột; trên điện thoại Modal làm MẤT nút di chuyển nên không bật
-	ui.modal.Modal = v and not (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
+	ui.modal.Modal = v and not isTouchOnly()
 	UI.visToken = UI.visToken + 1
 	local token, frame, scale = UI.visToken, ui.frame, ui.scale
 	if v then
@@ -2310,6 +2357,7 @@ function buildUI()
 
 	-- ===== TAB 4: Farm =====
 	ctrl = mkCtrl(pages[4], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
+	local silentRow, silentBtn = mkToggle(0, "Ẩn click ảo (chỉ dùng signal)", nil)
 	mkSection(1, "AUTO FARM MOB")
 	local farmRow, farmBtn = mkToggle(2, "Auto Farm Mob", "F")
 	mkSliderRow(3, "Target Distance", 5, 150, F.mobDist, function(v) F.mobDist = v end)
@@ -2328,14 +2376,15 @@ function buildUI()
 	}, ctrl)
 
 	-- Nút ẩn dùng để bật Modal (mở khoá con trỏ chuột khi bảng đang hiện)
-	local modal = make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = uiVisible and not (UserInputService.TouchEnabled and not UserInputService.MouseEnabled) }, frame)
+	local modal = make("TextButton", { Size = UDim2.fromOffset(1, 1), BackgroundTransparency = 1, Text = "", Modal = uiVisible and not isTouchOnly() }, frame)
 
 	ui = { gui = gui, frame = frame, scale = scale, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
 		noclipBtn = noclipBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, mapBtn = mapBtn,
 		sub = sub, modal = modal, rows = {}, rowMap = {} }
 	X.w = { autoBtn = skillAutoBtn, lagBtn = lagBtn, modePill = modePill, chips = chips }
 
-	F.w = { farmBtn = farmBtn, buildBtn = buildBtn }
+	F.w = { farmBtn = farmBtn, buildBtn = buildBtn, silentBtn = silentBtn }
+	tap(silentRow, function() X.silent = not X.silent; F.refreshUI() end)
 	tap(farmRow, function() F.toggleFarm() end)
 	tap(buildRow, function() F.toggleBuild() end)
 	distBox.FocusLost:Connect(function()
