@@ -419,7 +419,7 @@ local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện tr�
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
 local F = { farm = false, build = false, dist = 30, buildKw = "", range = 180, densityR = 250,
-	mobRange = 350, retreatPct = 0 } -- auto farm / Auto Farm City
+	mobRange = 800, retreatPct = 0 } -- auto farm / Auto Farm City
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
 local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
@@ -1438,12 +1438,31 @@ function F.matchSelectedMob(name)
 	end
 	return false
 end
+-- tên phụ của mob: tên thư mục chứa nó (tối đa 2 cấp) + các attribute dạng chữ (nhiều game đặt tên mob ở đó, model chỉ tên chung chung)
+function F.altNames(m)
+	local t, p = {}, m and m.Parent
+	for _ = 1, 2 do
+		if p and p ~= workspace and p ~= game then t[#t + 1] = p.Name; p = p.Parent else break end
+	end
+	pcall(function()
+		for _, v in pairs(m:GetAttributes()) do
+			if type(v) == "string" then t[#t + 1] = v end
+		end
+	end)
+	return t
+end
 -- mob CÓ Humanoid: có được đánh không
-function F.mobWanted(name, disp)
+function F.mobWanted(name, disp, m)
 	if not F.mobSelected() then
 		return not nameHas(name, EXCLUDE_ENEMY) and not nameHas(disp, EXCLUDE_ENEMY)
 	end
-	return F.matchSelectedMob(name) or F.matchSelectedMob(disp)
+	if F.matchSelectedMob(name) or F.matchSelectedMob(disp) then return true end
+	if m then
+		for _, n in ipairs(F.altNames(m)) do
+			if F.matchSelectedMob(n) then return true end
+		end
+	end
+	return false
 end
 -- mob KHÔNG có Humanoid (Wyrmite...): có được đánh không
 function F.noHumWanted(name)
@@ -1861,16 +1880,20 @@ end
 
 -- quét toàn bộ workspace tìm mob hợp lệ
 function M.scan()
-	local list, seen, n = {}, {}, 0
+	local list, seen, n, npcs = {}, {}, 0, {}
 	for _, d in ipairs(workspace:GetDescendants()) do
 		n += 1
 		if n % 1500 == 0 then task.wait() end
 		pcall(function()
 			if d:IsA("Humanoid") then
 				local m = d.Parent
+				if d.Health > 0 and m and m:IsA("Model") and not isMine(m) and not Players:GetPlayerFromCharacter(m) then
+					local r0 = rootOf(m)
+					if r0 then npcs[#npcs + 1] = { m.Name, r0.Position } end
+				end
 				if d.Health > 0 and m and m:IsA("Model") and not seen[m] and not isMine(m)
 					and not Players:GetPlayerFromCharacter(m) and rootOf(m)
-					and F.mobWanted(m.Name, d.DisplayName) then
+					and F.mobWanted(m.Name, d.DisplayName, m) then
 					seen[m] = true
 					list[#list + 1] = { m = m, h = d }
 				end
@@ -1883,6 +1906,20 @@ function M.scan()
 		end)
 	end
 	M.list = list
+	-- tên mob thật gần nhất (để biết tên trong game có khớp bảng chọn không)
+	local me = rootOf(player.Character)
+	if me then
+		for _, e in ipairs(npcs) do e[3] = (e[2] - me.Position).Magnitude end
+		table.sort(npcs, function(a, b) return a[3] < b[3] end)
+		local names, used = {}, {}
+		for _, e in ipairs(npcs) do
+			if not used[e[1]] and #names < 4 and e[3] <= 800 then
+				used[e[1]] = true
+				names[#names + 1] = e[1] .. " " .. math.floor(e[3])
+			end
+		end
+		M.nearby = table.concat(names, ", ")
+	end
 	for _, e in ipairs(list) do
 		local p = targetPos(e.m, true)
 		if p then
@@ -2014,14 +2051,14 @@ function M.step(dt)
 	if tgt and tpos then
 		M.active, M.searching = true, false
 		if M.mobRetreat(root, hum) then
-			if not userActive(hum) then
+			if true then
 				root.CFrame = CFrame.new(root.Position.X, M.retreatY, root.Position.Z)
 				root.AssemblyLinearVelocity = Vector3.zero
 			end
 			return
 		end
 		local stand = M.curStand or M.stand
-		if not userActive(hum) then
+		if true then
 			local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
 			local hd = flat.Magnitude
 			local dir = hd > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
@@ -2035,7 +2072,7 @@ function M.step(dt)
 			end
 			root.AssemblyLinearVelocity = Vector3.zero
 		end
-		if M.near and os.clock() - M.lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then -- chỉ đánh khi đã tới gần mob
+		if os.clock() - M.lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
 			M.lastAtk = os.clock()
 			attackBurst()
 		end
@@ -2049,7 +2086,7 @@ function M.step(dt)
 			if (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude <= 60 then
 				M.memBad[key] = os.clock() + 90 -- tới nơi mà không có mob: tạm bỏ chỗ này
 				M.scanNow = true
-			elseif not userActive(hum) then
+			elseif true then
 				M.flyTo(root, spot, dt, pos)
 				root.AssemblyLinearVelocity = Vector3.zero
 			end
@@ -2695,7 +2732,7 @@ function buildUI()
 	local _, distBox, distStroke = mkInputRow(13, "Khoảng cách đứng City", tostring(F.dist), "30")
 	make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 14, TextWrapped = true,
-		Text = "Farm Mob: chỉ đánh mob Ở GẦN (trong 350 stud quanh bạn), tween (bay) tới mob gần nhất trong số mob đã chọn, đứng sát và đánh tới khi mob chết rồi sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
+		Text = "Farm Mob: chỉ đánh mob trên ĐẢO bạn đang đứng (trong 800 stud quanh bạn), tween (bay) tới mob gần nhất trong số mob đã chọn, đứng sát và đánh tới khi mob chết rồi sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
 
@@ -2890,7 +2927,7 @@ task.spawn(function()
 			elseif F.farm and not F.build then
 				local nsel = 0
 				for _ in pairs(F.mobSel) do nsel = nsel + 1 end
-				msg = "Không có mob" .. (nsel > 0 and " đã chọn" or "") .. " ở gần (trong " .. F.mobRange .. " stud, quét được " .. (mobM and #mobM.list or 0) .. " mob), đang tìm..."
+				msg = "Không có mob" .. (nsel > 0 and " đã chọn" or "") .. " ở gần (trong " .. F.mobRange .. " stud, khớp " .. (mobM and #mobM.list or 0) .. "). Quanh bạn: " .. ((mobM and mobM.nearby ~= "" and mobM.nearby) or "không thấy mob nào")
 			else
 				msg = (F.build and F.noIsland and not F.farm) and "Không có City nào ở đảo này" or "Đang tìm mục tiêu..."
 			end
