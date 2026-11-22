@@ -418,8 +418,8 @@ local mapIdx = 0            -- 0 = mặc định (bấm nút RESPAWN), 1.. = ch�
 local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện trên nút)
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
-local F = { farm = false, build = false, active = false, dist = 30, enemyKw = "", buildKw = "", range = 180, densityR = 250,
-	mobDist = 28, mobSpeed = 150, orbitSpeed = 1.8, retargetDelay = 0.35, mobRange = 800, retreatPct = 35 } -- auto farm / Auto Farm City
+local F = { farm = false, build = false, dist = 30, buildKw = "", range = 180, densityR = 250,
+	mobRange = 800, retreatPct = 35 } -- auto farm / Auto Farm City
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
 local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
@@ -601,7 +601,7 @@ do
 	RunService.Stepped:Connect(function()
 		local char = player.Character
 		if not char then return end
-		if noclipOn or tweening or F.active then
+		if noclipOn or tweening or F.activeCity or (F.M and F.M.active) then
 			if char ~= ncChar or os.clock() - ncT > 0.7 then
 				ncChar, ncT = char, os.clock()
 				ncParts = {}
@@ -1375,10 +1375,9 @@ function X.toggleLag() X.setLag(not X.lag) end
 local BUILD_DEFAULT = { "city" } -- tên model toà nhà trong game Kaiju Universe là "City"
 local FARM_TIMEOUT_BUILD = 120 -- toà nhà: giới hạn cứng, quá lâu vẫn chưa xong thì bỏ qua (mob thì KHÔNG có giới hạn: phải hạ xong con đó mới đổi)
 local STALL_BUILD = 4          -- toà nhà: đang ở sát mà không thay đổi chừng này giây -> coi như xong, đổi toà khác
-F.cacheE, F.cacheB = {}, {}
+F.cacheB = {}
 F.bad = setmetatable({}, { __mode = "k" }) -- [model] = thời điểm hết hạn bỏ qua
 local BAD_DONE, BAD_STUCK = 240, 30              -- nhà đã phá: bỏ qua 240s (game xây lại sau vài phút); kẹt/timeout: chỉ 30s rồi thử lại
-local MOB_PRIORITY_RANGE = 300                   -- bật cả farm lẫn phá nhà: mob chỉ được ưu tiên khi ở trong tầm này, xa hơn thì phá nhà gần trước
 local function markBad(m, secs) F.bad[m] = os.clock() + secs end
 local function isBad(m) local t = F.bad[m]; return t ~= nil and t > os.clock() end
 -- yêu cầu quét lại danh sách mục tiêu (giới hạn tần suất để không quét toàn map liên tục)
@@ -1421,13 +1420,6 @@ local function isPlainWyrmite(name)
 	return n:match("^%s*wyrmite[%s%d_%-]*$") ~= nil
 end
 local function anyPart(m) return m:FindFirstChildWhichIsA("BasePart", true) end
--- Còn sống? Có Humanoid: theo máu. Không có: theo thuộc tính Health (nếu có), không thì coi như còn sống khi model còn tồn tại
-local function enemyAlive(m, h)
-	if h then return h.Health > 0 end
-	local a = m:GetAttribute("Health")
-	if type(a) == "number" then return a > 0 end
-	return m.Parent ~= nil
-end
 local function isMine(m)
 	local ch = player.Character
 	return ch and (m == ch or m:IsDescendantOf(ch))
@@ -1502,46 +1494,28 @@ task.spawn(function()
 		local waited = 0
 		while waited < 3 and not F.scanNow do task.wait(0.25) waited += 0.25 end
 		F.scanNow = false
-		if F.farm or F.build then
+		if F.build then
 			local bK = splitKw(F.buildKw)
 			if #bK == 0 then bK = BUILD_DEFAULT end
-			local eK = splitKw(F.enemyKw)
-			local E, B, seen, n = {}, {}, {}, 0
+			local B, seen, n = {}, {}, 0
 			for _, d in ipairs(workspace:GetDescendants()) do
 				n += 1
 				if n % 1500 == 0 then task.wait() end
 				pcall(function()
-					if F.farm and d:IsA("Model") and not seen[d] and isPlainWyrmite(d.Name)
-						and (#eK == 0 or matchKw(d.Name, eK)) and not d:FindFirstChildOfClass("Humanoid")
-						and not isMine(d) and not Players:GetPlayerFromCharacter(d)
-						and not (d.Parent and d.Parent:IsA("Model") and isPlainWyrmite(d.Parent.Name))
-						and anyPart(d) then
+					if d:IsA("Model") and not d:FindFirstChildOfClass("Humanoid") and not isMine(d)
+						and matchKw(d.Name, bK) and not seen[d]
+						and not (d.Parent and d.Parent:IsA("Model") and matchKw(d.Parent.Name, bK)) then
 						seen[d] = true
-						E[#E + 1] = { m = d, h = nil }
-					end
-					if F.farm and d:IsA("Humanoid") and d.Health > 0 then
-						local m = d.Parent
-						if m and m:IsA("Model") and not isMine(m) and not Players:GetPlayerFromCharacter(m)
-							and rootOf(m) and matchKw(m.Name, eK)
-							and not nameHas(m.Name, EXCLUDE_ENEMY) and not nameHas(d.DisplayName, EXCLUDE_ENEMY) then
-							E[#E + 1] = { m = m, h = d }
-						end
-					elseif F.build then
-						if d:IsA("Model") and not d:FindFirstChildOfClass("Humanoid") and not isMine(d)
-							and matchKw(d.Name, bK) and not seen[d]
-							and not (d.Parent and d.Parent:IsA("Model") and matchKw(d.Parent.Name, bK)) then
-							seen[d] = true
-							B[#B + 1] = d
-						elseif d:IsA("Folder") and matchKw(d.Name, bK) then -- thư mục "Buildings": mỗi model con là 1 toà nhà
-							for _, c in ipairs(d:GetChildren()) do
-								if c:IsA("Model") and not seen[c] then seen[c] = true; B[#B + 1] = c end
-							end
+						B[#B + 1] = d
+					elseif d:IsA("Folder") and matchKw(d.Name, bK) then -- thư mục "Buildings": mỗi model con là 1 toà nhà
+						for _, c in ipairs(d:GetChildren()) do
+							if c:IsA("Model") and not seen[c] then seen[c] = true; B[#B + 1] = c end
 						end
 					end
 				end)
 			end
-			local islandOf = F.build and clusterBuildings(B) or {}
-			F.cacheE, F.cacheB, F.islandOf = E, B, islandOf
+			local islandOf = clusterBuildings(B)
+			F.cacheB, F.islandOf = B, islandOf
 		end
 	end
 end)
@@ -1591,31 +1565,6 @@ local function nearestOnIsland(root)
 		if not bestN or n > bestN or (n == bestN and c.d < bestD) then best, bestN, bestD = c.m, n, c.d end
 	end
 	return best
-end
-
-local function pickTarget(root)
-	local function nearest(list, enemy)
-		local best, bd
-		for _, e in ipairs(list) do
-			local m = enemy and e.m or e
-			if m.Parent and not isBad(m) and (not enemy or enemyAlive(m, e.h)) then
-				local p = targetPos(m, enemy)
-				if p and enemy and math.abs(p.Y - root.Position.Y) > SKY_DIFF then p = nil end
-				if p then
-					local d = (p - root.Position).Magnitude
-					if (not enemy or d <= F.mobRange) and (not bd or d < bd) then best, bd = e, d end
-				end
-			end
-		end
-		return best, bd
-	end
-	local e, ed, b
-	if F.farm then e, ed = nearest(F.cacheE, true) end
-	if F.build then b = nearestOnIsland(root) end
-	if e and (not b or ed <= MOB_PRIORITY_RANGE) then return e.m, "enemy", e.h end
-	if b then return b, "build", nil end
-	if e then return e.m, "enemy", e.h end
-	return nil
 end
 
 -- Chữ ký trạng thái toà nhà: đổi khi bị phá (part bị xoá / mờ đi / thu nhỏ / máu giảm). n = số part còn lại
@@ -1768,135 +1717,225 @@ local function attackBurst()
 	end)
 end
 
+-- ===== AUTO FARM CITY: teleport tới City trên đảo đang đứng và phá =====
 task.spawn(function()
 	local lastAtk = 0
 	while true do
-		local dt = math.min(RunService.Heartbeat:Wait(), 0.1)
-		if not (F.farm or F.build) then
-			F.active, F.cur = false, nil
-			setFarmCursor(false)
+		RunService.Heartbeat:Wait()
+		if not F.build then
+			F.cur, F.activeCity = nil, false
+			if not F.farm then setFarmCursor(false) end
 			task.wait(0.2)
 		else
 			local char = player.Character
 			local root, hum = rootOf(char), char and char:FindFirstChildOfClass("Humanoid")
 			if not root or (hum and hum.Health <= 0) then
-				F.active, F.cur = false, nil
+				F.cur, F.activeCity = nil, false
 			else
-				-- giữ nút di chuyển (joystick / nhảy) luôn bật khi đang farm
 				if os.clock() - (F.ctrlT or 0) > 3 then F.ctrlT = os.clock(); ensureControls() end
 				setFarmCursor(true)
-				-- kiểm tra mục tiêu hiện tại còn hợp lệ
-				local hadCur = F.cur
+				-- kiểm tra City hiện tại còn hợp lệ
 				local m = F.cur
 				if m then
-					local dead = not m.Parent or (F.curKind == "enemy" and not enemyAlive(m, F.curHum))
-					local timeout = F.curKind ~= "enemy" and os.clock() - F.curT > FARM_TIMEOUT_BUILD -- mob: không bao giờ bỏ giữa chừng, phải hạ xong mới đổi
-					if dead then
-						if F.curKind ~= "enemy" then markBad(m, BAD_DONE) end
-						F.cur = nil
-					elseif timeout then markBad(m, BAD_STUCK); F.cur = nil
+					if not m.Parent or os.clock() - F.curT > FARM_TIMEOUT_BUILD then
+						markBad(m, m.Parent and BAD_STUCK or BAD_DONE); F.cur = nil
 					elseif os.clock() - (F.sigT or 0) >= 1 then
-						-- mỗi giây kiểm tra tiến triển: xong rồi (hết part) hoặc không thay đổi gì khi đã đứng sát -> đổi mục tiêu
+						-- mỗi giây kiểm tra tiến triển: hết part = đã phá xong; đứng sát mà không đổi gì = coi như xong
 						F.sigT = os.clock()
-						local sig, empty
-						if F.curKind == "enemy" and F.curHum then
-							sig = tostring(F.curHum.Health)
-						else
-							local ok, n, s = pcall(buildSig, m)
-							if ok then sig, empty = s, (n == 0) end
-						end
-						local mp = targetPos(m, F.curKind == "enemy")
-						local near = mp and (root.Position - mp).Magnitude <= (F.curKind == "enemy" and F.mobDist or F.dist) + 30
-						if F.curKind == "enemy" then
-							if near then F.farSince = nil
-							else
-								F.farSince = F.farSince or os.clock()
-								if os.clock() - F.farSince > 12 then -- 12s vẫn chưa lại gần được = mục tiêu không tới được
-									markBad(m, 60); F.cur = nil; F.farSince = nil
-									empty = nil
-								end
-							end
-						end
-						if not F.cur then
-							-- đã bỏ mục tiêu không tới được
-						elseif empty then
-							markBad(m, F.curKind == "enemy" and BAD_STUCK or BAD_DONE); F.cur = nil
-						elseif sig ~= F.curSig or not near then
+						local ok, n, sig = pcall(buildSig, m)
+						local mp = pivotPos(m)
+						local near = mp and (root.Position - mp).Magnitude <= F.dist + 30
+						if ok and n == 0 then
+							markBad(m, BAD_DONE); F.cur = nil
+						elseif ok and (sig ~= F.curSig or not near) then
 							F.curSig = sig; F.curChg = os.clock()
-						elseif (F.curKind ~= "enemy" or not F.curHum) and os.clock() - (F.curChg or os.clock()) > (F.curKind == "enemy" and STALL_BUILD * 2 or STALL_BUILD) then
-							markBad(m, F.curKind == "enemy" and BAD_STUCK or BAD_DONE); F.cur = nil
+						elseif ok and os.clock() - (F.curChg or os.clock()) > STALL_BUILD then
+							markBad(m, BAD_DONE); F.cur = nil
 						end
 					end
 				end
-				if hadCur and not F.cur then -- vừa xong 1 mục tiêu: mob thì nghỉ Retarget Delay rồi mới đổi con khác
-					F.pickAfter = os.clock() + (F.curKind == "enemy" and F.retargetDelay or 0)
-				end
-				if not F.cur and os.clock() >= (F.pickAfter or 0) then
-					F.cur, F.curKind, F.curHum = pickTarget(root)
+				if not F.cur then
+					F.cur = nearestOnIsland(root)
 					F.curT = os.clock()
-					F.curSig, F.curChg, F.sigT, F.farSince = nil, os.clock(), 0, nil
-					if not F.cur then requestScan() end -- hết mục tiêu: quét lại tìm cái mới
+					F.curSig, F.curChg, F.sigT = nil, os.clock(), 0
+					if not F.cur then requestScan() end
 				end
 				local tgt = F.cur
-				local tpos = tgt and targetPos(tgt, F.curKind == "enemy")
+				local tpos = tgt and pivotPos(tgt)
 				if tgt and tpos then
-					-- Retreat HP: máu thấp hơn mức đặt thì bay lên cao (mob đất không với tới) hồi máu, đủ 85% mới đánh tiếp
-					if F.retreatPct > 0 and F.curKind == "enemy" then
-						local frac = hum.Health / math.max(1, hum.MaxHealth)
-						if F.retreating then
-							if frac >= 0.85 then F.retreating = false end
-						elseif frac * 100 < F.retreatPct then
-							F.retreating = true
-							F.retreatY = root.Position.Y + 250
-						end
-					else
-						F.retreating = false
-					end
-					-- di chuyển tới điểm đứng (nhường khi người chơi tự đi/nhảy)
-					if F.retreating then
-						F.active = true
-						if not userActive(hum) then
-							root.CFrame = CFrame.new(root.Position.X, F.retreatY, root.Position.Z)
-							root.AssemblyLinearVelocity = Vector3.zero
-						end
-					elseif not userActive(hum) then
+					if not userActive(hum) then
 						local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
 						local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
-						local goal
-						if F.curKind == "enemy" then -- Auto Farm Mob: đứng cách mob Target Distance và quay quanh mob theo Orbit Speed
-							if F.orbitTgt ~= tgt or F.orbitAng == nil then
-								F.orbitTgt = tgt
-								F.orbitAng = math.atan2(root.Position.Z - tpos.Z, root.Position.X - tpos.X)
-							end
-							if F.orbitSpeed > 0 then F.orbitAng += F.orbitSpeed * dt end
-							if os.clock() - (F.standT or 0) > 0.5 then F.standT = os.clock(); measureStandH(root) end
-							local gp = tpos + Vector3.new(math.cos(F.orbitAng), 0, math.sin(F.orbitAng)) * F.mobDist
-							goal = Vector3.new(gp.X, standY(gp, tgt, tpos.Y), gp.Z)
-						else
-							goal = tpos + dir * F.dist + Vector3.new(0, 8, 0)
-						end
-						local off = goal - root.Position
-						local d = off.Magnitude
-						F.active = true
-						if d > ((F.curKind == "enemy" and F.orbitSpeed > 0) and 0.5 or 4) then
-							if F.curKind == "build" then -- phá nhà: teleport thẳng tới nhà (cùng đảo)
-								pcall(requestStream, goal)
-								root.CFrame = CFrame.lookAt(goal, Vector3.new(tpos.X, goal.Y, tpos.Z))
-								root.AssemblyLinearVelocity = Vector3.zero
-							else
-								local speed = math.clamp(d * TWEEN_FAR_FACTOR, F.mobSpeed, TWEEN_MAX_SPEED)
-								local np = root.Position + off.Unit * math.min(d, speed * dt)
-								root.CFrame = CFrame.lookAt(np, Vector3.new(tpos.X, np.Y, tpos.Z))
-								root.AssemblyLinearVelocity = Vector3.zero
-							end
+						local goal = tpos + dir * F.dist + Vector3.new(0, 8, 0)
+						F.activeCity = true
+						if (goal - root.Position).Magnitude > 4 then
+							pcall(requestStream, goal)
+							root.CFrame = CFrame.lookAt(goal, Vector3.new(tpos.X, goal.Y, tpos.Z))
+							root.AssemblyLinearVelocity = Vector3.zero
 						end
 					end
-					if not F.retreating and os.clock() - lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
+					if os.clock() - lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
 						lastAtk = os.clock()
 						attackBurst()
 					end
 				else
-					F.active = false
+					F.activeCity = false
+				end
+			end
+		end
+	end
+end)
+
+-- ===== AUTO FARM MOB (bản mới, viết lại từ đầu) =====
+-- Ý tưởng: tìm mob gần nhất trong tầm -> TELEPORT xuống đứng sát mob (chân chạm đất, mặt hướng mob) -> đánh tới khi mob chết -> mob kế.
+-- Không bay, không quay vòng: đứng yên sát mob nên đòn trúng. Không bỏ giữa chừng trừ khi mob miễn nhiễm / không mất máu.
+local M = { cur = nil, hum = nil, active = false, list = {}, bad = setmetatable({}, { __mode = "k" }), stand = 14, immuneSec = 15 }
+F.M = M
+local function mobBad(m, secs) M.bad[m] = os.clock() + secs end
+local function mobIsBad(m) local t = M.bad[m]; return t ~= nil and t > os.clock() end
+
+-- quét mob (mỗi 2 giây khi đang bật)
+task.spawn(function()
+	while true do
+		local waited = 0
+		while waited < 2 and not M.scanNow do task.wait(0.25) waited += 0.25 end
+		M.scanNow = false
+		if F.farm then
+			local list, seen, n = {}, {}, 0
+			for _, d in ipairs(workspace:GetDescendants()) do
+				n += 1
+				if n % 1500 == 0 then task.wait() end
+				pcall(function()
+					if d:IsA("Humanoid") then
+						local m = d.Parent
+						if d.Health > 0 and m and m:IsA("Model") and not seen[m] and not isMine(m)
+							and not Players:GetPlayerFromCharacter(m) and rootOf(m)
+							and not nameHas(m.Name, EXCLUDE_ENEMY) and not nameHas(d.DisplayName, EXCLUDE_ENEMY) then
+							seen[m] = true
+							list[#list + 1] = { m = m, h = d }
+						end
+					elseif d:IsA("Model") and not seen[d] and isPlainWyrmite(d.Name) and not d:FindFirstChildOfClass("Humanoid")
+						and not isMine(d) and not Players:GetPlayerFromCharacter(d) and anyPart(d)
+						and not (d.Parent and d.Parent:IsA("Model") and isPlainWyrmite(d.Parent.Name)) then
+						seen[d] = true
+						list[#list + 1] = { m = d, h = nil }
+					end
+				end)
+			end
+			M.list = list
+		end
+	end
+end)
+
+local function mobAlive(m, h)
+	if not m.Parent then return false end
+	if h then return h.Health > 0 and h.Parent ~= nil end
+	local a = m:GetAttribute("Health")
+	if type(a) == "number" then return a > 0 end
+	return anyPart(m) ~= nil
+end
+
+local function mobPick(root)
+	local best, bh, bd
+	for _, e in ipairs(M.list) do
+		if mobAlive(e.m, e.h) and not mobIsBad(e.m) then
+			local p = targetPos(e.m, true)
+			if p and math.abs(p.Y - root.Position.Y) <= SKY_DIFF then
+				local d = (p - root.Position).Magnitude
+				if d <= F.mobRange and (not bd or d < bd) then best, bh, bd = e.m, e.h, d end
+			end
+		end
+	end
+	return best, bh
+end
+
+task.spawn(function()
+	local lastAtk = 0
+	while true do
+		RunService.Heartbeat:Wait()
+		if not F.farm then
+			M.cur, M.hum, M.active, M.retreating = nil, nil, false, false
+			if not F.build then setFarmCursor(false) end
+			task.wait(0.2)
+		else
+			local char = player.Character
+			local root, hum = rootOf(char), char and char:FindFirstChildOfClass("Humanoid")
+			if not root or (hum and hum.Health <= 0) then
+				M.cur, M.hum, M.active = nil, nil, false
+			else
+				if os.clock() - (F.ctrlT or 0) > 3 then F.ctrlT = os.clock(); ensureControls() end
+				setFarmCursor(true)
+				if os.clock() - (M.standT or 0) > 0.5 then M.standT = os.clock(); measureStandH(root) end
+
+				-- 1) mob hiện tại còn sống không? Mob chết / biến mất -> chọn con kế. Miễn nhiễm (máu không đổi) -> bỏ 60s.
+				local m = M.cur
+				if m then
+					if not mobAlive(m, M.hum) then
+						M.cur, M.hum = nil, nil
+						M.pickAfter = os.clock() + 0.3
+					elseif M.hum then
+						local hp = M.hum.Health
+						if hp ~= M.lastHp then
+							M.lastHp, M.hpChg = hp, os.clock()
+						elseif M.near and os.clock() - (M.hpChg or os.clock()) > M.immuneSec then
+							mobBad(m, 60); M.cur, M.hum = nil, nil
+						end
+					end
+				end
+				-- 2) chọn mob mới
+				if not M.cur and os.clock() >= (M.pickAfter or 0) then
+					M.cur, M.hum = mobPick(root)
+					M.lastHp, M.hpChg, M.near = nil, os.clock(), false
+					if not M.cur then M.scanNow = true; M.pickAfter = os.clock() + 1 end
+				end
+
+				local tgt = M.cur
+				local tpos = tgt and targetPos(tgt, true)
+				if tgt and tpos then
+					-- 3) Retreat HP: máu thấp -> lên cao hồi máu, đủ 85% mới quay lại
+					local retreat = false
+					if F.retreatPct > 0 and hum then
+						local frac = hum.Health / math.max(1, hum.MaxHealth)
+						if M.retreating then
+							if frac >= 0.85 then M.retreating = false end
+						elseif frac * 100 < F.retreatPct then
+							M.retreating = true
+							M.retreatY = root.Position.Y + 250
+						end
+						retreat = M.retreating
+					else
+						M.retreating = false
+					end
+					M.active = true
+					if retreat then
+						if not userActive(hum) then
+							root.CFrame = CFrame.new(root.Position.X, M.retreatY, root.Position.Z)
+							root.AssemblyLinearVelocity = Vector3.zero
+						end
+					else
+						-- 4) đứng sát mob: phía mình đang đứng, cách mob M.stand stud, chân chạm đất, mặt hướng mob
+						if not userActive(hum) then
+							local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
+							local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
+							local gp = tpos + dir * M.stand
+							local goal = Vector3.new(gp.X, standY(gp, tgt, tpos.Y), gp.Z)
+							local hd = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z).Magnitude
+							M.near = hd <= M.stand + 10
+							if hd > M.stand + 6 or math.abs(root.Position.Y - goal.Y) > 14 then
+								pcall(requestStream, goal)
+								root.CFrame = CFrame.lookAt(goal, Vector3.new(tpos.X, goal.Y, tpos.Z))
+							else
+								root.CFrame = CFrame.lookAt(root.Position, Vector3.new(tpos.X, root.Position.Y, tpos.Z))
+							end
+							root.AssemblyLinearVelocity = Vector3.zero
+						end
+						if os.clock() - lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
+							lastAtk = os.clock()
+							attackBurst()
+						end
+					end
+				else
+					M.active = false
 				end
 			end
 		end
@@ -1928,7 +1967,7 @@ end
 local function farmPrep()
 	ensureControls()
 	F.standH = nil
-	F.retreating = false
+	if F.M then F.M.retreating = false; F.M.scanNow = true end
 	if followOn then stopFollow(); setFollowUI() end
 	if tweenMode then tweenMode = false; stopTween(); setTweenUI() end
 	F.scanNow = true
@@ -1936,13 +1975,11 @@ end
 function F.toggleFarm()
 	F.farm = not F.farm
 	if F.farm then farmPrep() end
-	if not (F.farm or F.build) then F.cur = nil end
 	F.refreshUI()
 end
 function F.toggleBuild()
 	F.build = not F.build
 	if F.build then farmPrep() end
-	if not (F.farm or F.build) then F.cur = nil end
 	F.refreshUI()
 end
 
@@ -2445,10 +2482,6 @@ function buildUI()
 	ctrl = mkCtrl(pages[4], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
 	mkSection(1, "AUTO FARM MOB")
 	local farmRow, farmBtn = mkToggle(2, "Auto Farm Mob", "F")
-	mkSliderRow(3, "Target Distance", 5, 100, F.mobDist, function(v) F.mobDist = v end)
-	mkSliderRow(4, "Tween Speed", 20, 400, F.mobSpeed, function(v) F.mobSpeed = v end)
-	mkSliderRow(5, "Orbit Speed", 0, 5, F.orbitSpeed, function(v) F.orbitSpeed = v end, 0.01)
-	mkSliderRow(6, "Retarget Delay", 0, 2, F.retargetDelay, function(v) F.retargetDelay = v end, 0.05)
 	mkSliderRow(7, "Mob Search Range", 100, 2000, F.mobRange, function(v) F.mobRange = v end)
 	mkSliderRow(8, "Retreat HP % (0 = tắt)", 0, 80, F.retreatPct, function(v) F.retreatPct = v end)
 	mkSection(9, "AUTO FARM CITY")
@@ -2458,7 +2491,7 @@ function buildUI()
 	local _, distBox, distStroke = mkInputRow(13, "Khoảng cách đứng City", tostring(F.dist), "30")
 	make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 14, TextWrapped = true,
-		Text = "Farm Mob: bay tới mob, quay quanh mob (Orbit). Mob Search Range = chỉ đánh mob trong tầm này (tránh bay sang đảo khác). Retreat HP = máu thấp hơn mức này thì bay lên cao hồi máu rồi đánh tiếp. Retarget Delay = nghỉ bao lâu trước khi đổi mob. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
+		Text = "Farm Mob: teleport xuống đứng sát mob gần nhất, đánh tới khi mob chết rồi sang con kế. Mob Search Range = chỉ đánh mob trong tầm này (tránh bay sang đảo khác). Retreat HP = máu thấp hơn mức này thì bay lên cao hồi máu rồi đánh tiếp. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
 
@@ -2636,11 +2669,18 @@ task.spawn(function()
 			end
 		end
 		if not msg and (F.farm or F.build) and rootOf(player.Character) then
-			if F.cur and F.cur.Parent then
-				local rt = rootOf(player.Character)
-				local tp = targetPos(F.cur, F.curKind == "enemy")
+			local rt = rootOf(player.Character)
+			local mobM = F.M
+			if F.farm and mobM and mobM.cur and mobM.cur.Parent then
+				local tp = targetPos(mobM.cur, true)
 				local dd = (rt and tp) and math.floor((rt.Position - tp).Magnitude) or 0
-				msg = (F.curKind == "enemy" and "Đang đánh mob: " or "Đang farm City: ") .. F.cur.Name .. " (" .. dd .. " stud)"
+				msg = (mobM.retreating and "Máu thấp, đang hồi: " or "Đang đánh mob: ") .. mobM.cur.Name .. " (" .. dd .. " stud)"
+			elseif F.build and F.cur and F.cur.Parent then
+				local tp = pivotPos(F.cur)
+				local dd = (rt and tp) and math.floor((rt.Position - tp).Magnitude) or 0
+				msg = "Đang farm City: " .. F.cur.Name .. " (" .. dd .. " stud)"
+			elseif F.farm and not F.build then
+				msg = "Không có mob trong tầm, đang tìm..."
 			else
 				msg = (F.build and F.noIsland and not F.farm) and "Không có City nào ở đảo này" or "Đang tìm mục tiêu..."
 			end
