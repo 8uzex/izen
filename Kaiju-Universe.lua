@@ -419,7 +419,7 @@ local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện tr�
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
 local F = { farm = false, build = false, active = false, dist = 30, enemyKw = "", buildKw = "", range = 180, densityR = 250,
-	mobDist = 16, mobSpeed = 150, orbitSpeed = 0.6, retargetDelay = 0.35, aim = true } -- auto farm / Auto Farm City
+	mobDist = 28, mobSpeed = 150, orbitSpeed = 1.8, retargetDelay = 0.35, aim = true } -- auto farm / Auto Farm City
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
 local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
@@ -1659,6 +1659,45 @@ local function ensureControls()
 		if pm then require(pm):GetControls():Enable() end
 	end)
 end
+-- Chiều cao thân kaiju: khoảng cách từ RootPart xuống chân (lấy số nhỏ nhất đo được = lúc đang đứng trên đất)
+local function measureStandH(root)
+	local cands = {}
+	pcall(function()
+		local p = RaycastParams.new()
+		p.FilterType = Enum.RaycastFilterType.Exclude
+		p.FilterDescendantsInstances = { player.Character }
+		local r = workspace:Raycast(root.Position, Vector3.new(0, -300, 0), p)
+		if r then cands[#cands + 1] = root.Position.Y - r.Position.Y end
+	end)
+	pcall(function()
+		local cf, size = player.Character:GetBoundingBox()
+		cands[#cands + 1] = root.Position.Y - (cf.Position.Y - size.Y / 2)
+	end)
+	local best
+	for _, h in ipairs(cands) do
+		if h >= 2 and (not best or h < best) then best = h end
+	end
+	if best then
+		best = math.min(best, 80)
+		F.standH = F.standH and math.min(F.standH, best) or best
+	end
+end
+-- Độ cao RootPart để chân đứng đúng trên mặt đất tại vị trí pos (bắn tia từ ngay trên mob xuống)
+local function standY(pos, ignoreModel, mobY)
+	local ok, y = pcall(function()
+		local p = RaycastParams.new()
+		p.FilterType = Enum.RaycastFilterType.Exclude
+		p.FilterDescendantsInstances = { player.Character, ignoreModel }
+		local r = workspace:Raycast(Vector3.new(pos.X, mobY + 15, pos.Z), Vector3.new(0, -400, 0), p)
+		if r then
+			local ground = math.clamp(r.Position.Y, mobY - 40, mobY + 40)
+			return ground + (F.standH or 6) + 1
+		end
+	end)
+	if ok and y then return y end
+	return mobY + 4
+end
+
 -- Khoá camera vào mob: nhiều skill của game bắn theo hướng camera, nên xoay camera (giữ nguyên vị trí) nhìn thẳng vào mob đang farm
 pcall(function() RunService:UnbindFromRenderStep("UZEXAim") end)
 RunService:BindToRenderStep("UZEXAim", Enum.RenderPriority.Camera.Value + 1, function()
@@ -1822,7 +1861,9 @@ task.spawn(function()
 								F.orbitAng = math.atan2(root.Position.Z - tpos.Z, root.Position.X - tpos.X)
 							end
 							if F.orbitSpeed > 0 then F.orbitAng += F.orbitSpeed * dt end
-							goal = tpos + Vector3.new(math.cos(F.orbitAng), 0, math.sin(F.orbitAng)) * F.mobDist + Vector3.new(0, 4, 0)
+							if os.clock() - (F.standT or 0) > 0.5 then F.standT = os.clock(); measureStandH(root) end
+							local gp = tpos + Vector3.new(math.cos(F.orbitAng), 0, math.sin(F.orbitAng)) * F.mobDist
+							goal = Vector3.new(gp.X, standY(gp, tgt, tpos.Y), gp.Z)
 						else
 							goal = tpos + dir * F.dist + Vector3.new(0, 8, 0)
 						end
@@ -1879,6 +1920,7 @@ function F.refreshUI()
 end
 local function farmPrep()
 	ensureControls()
+	F.standH = nil
 	if followOn then stopFollow(); setFollowUI() end
 	if tweenMode then tweenMode = false; stopTween(); setTweenUI() end
 	F.scanNow = true
@@ -2396,10 +2438,10 @@ function buildUI()
 	local aimRow, aimBtn = mkToggle(0, "Khoá camera vào mob", nil)
 	mkSection(1, "AUTO FARM MOB")
 	local farmRow, farmBtn = mkToggle(2, "Auto Farm Mob", "F")
-	mkSliderRow(3, "Target Distance", 5, 150, F.mobDist, function(v) F.mobDist = v end)
-	mkSliderRow(4, "Tween Speed", 20, 500, F.mobSpeed, function(v) F.mobSpeed = v end)
-	mkSliderRow(5, "Orbit Speed", 0, 6, F.orbitSpeed, function(v) F.orbitSpeed = v end, 0.01)
-	mkSliderRow(6, "Retarget Delay", 0, 3, F.retargetDelay, function(v) F.retargetDelay = v end, 0.05)
+	mkSliderRow(3, "Target Distance", 5, 100, F.mobDist, function(v) F.mobDist = v end)
+	mkSliderRow(4, "Tween Speed", 20, 400, F.mobSpeed, function(v) F.mobSpeed = v end)
+	mkSliderRow(5, "Orbit Speed", 0, 5, F.orbitSpeed, function(v) F.orbitSpeed = v end, 0.01)
+	mkSliderRow(6, "Retarget Delay", 0, 2, F.retargetDelay, function(v) F.retargetDelay = v end, 0.05)
 	mkSection(7, "AUTO FARM CITY")
 	local buildRow, buildBtn = mkToggle(8, "Auto Farm City", "B")
 	mkSliderRow(9, "Building Search Range", 50, 1000, F.range, function(v) F.range = v end)
