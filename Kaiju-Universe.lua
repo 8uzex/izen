@@ -419,7 +419,7 @@ local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện tr�
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
 local F = { farm = false, build = false, dist = 30, buildKw = "", range = 180, densityR = 250,
-	mobRange = 5000, retreatPct = 0 } -- auto farm / Auto Farm City
+	mobRange = 350, retreatPct = 0 } -- auto farm / Auto Farm City
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
 local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
@@ -1907,7 +1907,7 @@ local function mobPick(root)
 	for _, e in ipairs(M.list) do
 		if mobAlive(e.m, e.h) and not mobIsBad(e.m) then
 			local p = targetPos(e.m, true)
-			if p and math.abs(p.Y - root.Position.Y) <= SKY_DIFF then
+			if p and math.abs(p.Y - root.Position.Y) <= 120 then -- chỉ lấy mob ở gần, không chênh độ cao quá 120 stud
 				local d = (p - root.Position).Magnitude
 				if d <= F.mobRange and (not bd or d < bd) then best, bh, bd = e.m, e.h, d end
 			end
@@ -1977,7 +1977,8 @@ end
 function M.searchSpot(root)
 	local bk, bp, bd
 	for key, e in pairs(M.mem) do
-		if (M.memBad[key] or 0) < os.clock() and (F.mobWanted(e.name, "") or F.noHumWanted(e.name)) then
+		if (M.memBad[key] or 0) < os.clock() and (e.pos - root.Position).Magnitude <= F.mobRange
+			and (F.mobWanted(e.name, "") or F.noHumWanted(e.name)) then
 			local d = (e.pos - root.Position).Magnitude
 			if not bd or d < bd then bk, bp, bd = key, e.pos, d end
 		end
@@ -2034,7 +2035,7 @@ function M.step(dt)
 			end
 			root.AssemblyLinearVelocity = Vector3.zero
 		end
-		if os.clock() - M.lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
+		if M.near and os.clock() - M.lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then -- chỉ đánh khi đã tới gần mob
 			M.lastAtk = os.clock()
 			attackBurst()
 		end
@@ -2694,7 +2695,7 @@ function buildUI()
 	local _, distBox, distStroke = mkInputRow(13, "Khoảng cách đứng City", tostring(F.dist), "30")
 	make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 14, TextWrapped = true,
-		Text = "Farm Mob: tween (bay) tới mob gần nhất trong số mob đã chọn, đứng sát và đánh tới khi mob chết rồi sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
+		Text = "Farm Mob: chỉ đánh mob Ở GẦN (trong 350 stud quanh bạn), tween (bay) tới mob gần nhất trong số mob đã chọn, đứng sát và đánh tới khi mob chết rồi sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
 
@@ -2885,11 +2886,11 @@ task.spawn(function()
 			elseif F.farm and mobM and mobM.err then
 				msg = "Lỗi farm mob: " .. string.sub(mobM.err, 1, 80)
 			elseif F.farm and mobM and mobM.searching then
-				msg = "Mob ở xa: đang bay tới chỗ từng thấy để tải lại"
+				msg = "Mob gần nhưng chưa tải: đang bay tới chỗ từng thấy"
 			elseif F.farm and not F.build then
 				local nsel = 0
 				for _ in pairs(F.mobSel) do nsel = nsel + 1 end
-				msg = "Không thấy mob" .. (nsel > 0 and " đã chọn" or "") .. " (quét được " .. (mobM and #mobM.list or 0) .. " mob), đang tìm..."
+				msg = "Không có mob" .. (nsel > 0 and " đã chọn" or "") .. " ở gần (trong " .. F.mobRange .. " stud, quét được " .. (mobM and #mobM.list or 0) .. " mob), đang tìm..."
 			else
 				msg = (F.build and F.noIsland and not F.farm) and "Không có City nào ở đảo này" or "Đang tìm mục tiêu..."
 			end
