@@ -419,7 +419,7 @@ local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện tr�
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
 local F = { farm = false, build = false, dist = 30, buildKw = "", range = 180, densityR = 250,
-	mobRange = 800, retreatPct = 35 } -- auto farm / Auto Farm City
+	mobRange = 5000, retreatPct = 0 } -- auto farm / Auto Farm City
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
 local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
@@ -1949,7 +1949,7 @@ end
 M.lastAtk = 0
 task.spawn(function()
 	while true do
-		RunService.Heartbeat:Wait()
+		local dt = RunService.Heartbeat:Wait()
 		if not F.farm then
 			M.cur, M.hum, M.active, M.retreating = nil, nil, false, false
 			if not F.build then setFarmCursor(false) end
@@ -1995,8 +1995,15 @@ task.spawn(function()
 							local goal = Vector3.new(gp.X, standY(gp, tgt, tpos.Y), gp.Z)
 							M.near = hd <= stand + 10
 							if hd > stand + 6 or math.abs(root.Position.Y - goal.Y) > 14 then
+								-- TWEEN tới mob: mỗi frame tính lại điểm tới, càng xa bay càng nhanh
 								pcall(requestStream, goal)
-								root.CFrame = CFrame.lookAt(goal, Vector3.new(tpos.X, goal.Y, tpos.Z))
+								local diff = goal - root.Position
+								local dist = diff.Magnitude
+								if dist > 0.05 then
+									local speed = math.clamp(dist * TWEEN_FAR_FACTOR, TWEEN_SPEED, TWEEN_MAX_SPEED)
+									local np = root.Position + diff.Unit * math.min(dist, speed * math.min(dt, 0.1))
+									root.CFrame = CFrame.lookAt(np, Vector3.new(tpos.X, np.Y, tpos.Z))
+								end
 							else
 								root.CFrame = CFrame.lookAt(root.Position, Vector3.new(tpos.X, root.Position.Y, tpos.Z))
 							end
@@ -2599,8 +2606,6 @@ function buildUI()
 		Text = "Không chọn mob nào (hoặc chọn \"Tất cả\") = đánh mọi mob như cũ. Chọn một hay nhiều mob = chỉ đánh đúng những mob đó.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
-	mkSliderRow(7, "Mob Search Range", 100, 2000, F.mobRange, function(v) F.mobRange = v end)
-	mkSliderRow(8, "Retreat HP % (0 = tắt)", 0, 80, F.retreatPct, function(v) F.retreatPct = v end)
 	mkSection(9, "AUTO FARM CITY")
 	local buildRow, buildBtn = mkToggle(10, "Auto Farm City", "B")
 	mkSliderRow(11, "Building Search Range", 50, 1000, F.range, function(v) F.range = v end)
@@ -2608,7 +2613,7 @@ function buildUI()
 	local _, distBox, distStroke = mkInputRow(13, "Khoảng cách đứng City", tostring(F.dist), "30")
 	make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 14, TextWrapped = true,
-		Text = "Farm Mob: teleport xuống đứng sát mob gần nhất, đánh tới khi mob chết rồi sang con kế. Mob Search Range = chỉ đánh mob trong tầm này (tránh bay sang đảo khác). Retreat HP = máu thấp hơn mức này thì bay lên cao hồi máu rồi đánh tiếp. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
+		Text = "Farm Mob: tween (bay) tới mob gần nhất trong số mob đã chọn, đứng sát và đánh tới khi mob chết rồi sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
 
