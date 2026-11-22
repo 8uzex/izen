@@ -2545,7 +2545,7 @@ function buildUI()
 	local _, distBox, distStroke = mkInputRow(13, "Khoảng cách đứng City", tostring(F.dist), "30")
 	make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 14, TextWrapped = true,
-		Text = "Farm Mob: tự tìm mob (NPC) gần nhất, tween tới mob, không tự bấm skill (dùng "Auto skill" ở tab Skill nếu cần), mob chết thì sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Farm City dùng skill đã chọn ở tab Skill + đánh thường.",
+		Text = "Farm Mob: tự tìm mob (NPC) gần nhất, tween tới mob, không tự bấm skill (dùng nút Auto skill ở tab Skill nếu cần), mob chết thì sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Farm City dùng skill đã chọn ở tab Skill + đánh thường.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
 
