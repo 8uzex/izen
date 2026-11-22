@@ -1831,6 +1831,7 @@ end)
 local M = {
 	cur = nil, hum = nil, active = false, list = {}, bad = setmetatable({}, { __mode = "k" }),
 	stand = 14, curStand = 14, immuneSec = 12, badSec = 45, retreating = false, near = false,
+	mem = {}, memBad = {}, searching = false,
 }
 F.M = M
 local function mobBad(m, secs) M.bad[m] = os.clock() + (secs or M.badSec) end
@@ -1882,6 +1883,13 @@ function M.scan()
 		end)
 	end
 	M.list = list
+	for _, e in ipairs(list) do
+		local p = targetPos(e.m, true)
+		if p then
+			local key = e.m.Name .. ":" .. math.floor(p.X / 250) .. ":" .. math.floor(p.Z / 250)
+			M.mem[key] = { name = e.m.Name, pos = p }
+		end
+	end
 end
 
 task.spawn(function()
@@ -1947,76 +1955,123 @@ function M.mobRetreat(root, hum)
 end
 
 M.lastAtk = 0
+
+-- bay (tween) một bước về phía goal, mặt hướng look. Gọi MỖI FRAME nên tự đuổi theo mục tiêu đang di chuyển.
+function M.flyTo(root, goal, dt, look)
+	local diff = goal - root.Position
+	local dist = diff.Magnitude
+	if dist <= 0.05 then return end
+	pcall(requestStream, goal)
+	local speed = math.clamp(dist * TWEEN_FAR_FACTOR, TWEEN_SPEED, TWEEN_MAX_SPEED)
+	local np = root.Position + diff.Unit * math.min(dist, speed * math.min(dt, 0.1))
+	local lk = Vector3.new(look.X, np.Y, look.Z)
+	if (lk - np).Magnitude > 0.1 then
+		root.CFrame = CFrame.lookAt(np, lk)
+	else
+		root.CFrame = root.CFrame.Rotation + np
+	end
+	root.AssemblyAngularVelocity = Vector3.zero
+end
+
+-- chỗ từng thấy mob đã chọn (mob ở xa bị game unload thì không quét được -> bay tới đó cho game tải lại)
+function M.searchSpot(root)
+	local bk, bp, bd
+	for key, e in pairs(M.mem) do
+		if (M.memBad[key] or 0) < os.clock() and (F.mobWanted(e.name, "") or F.noHumWanted(e.name)) then
+			local d = (e.pos - root.Position).Magnitude
+			if not bd or d < bd then bk, bp, bd = key, e.pos, d end
+		end
+	end
+	return bk, bp
+end
+
+function M.step(dt)
+	local char = player.Character
+	local root, hum = rootOf(char), char and char:FindFirstChildOfClass("Humanoid")
+	if not root or (hum and hum.Health <= 0) then
+		M.cur, M.hum, M.active, M.searching = nil, nil, false, false
+		return
+	end
+	if os.clock() - (F.ctrlT or 0) > 3 then F.ctrlT = os.clock(); ensureControls() end
+	setFarmCursor(true)
+	if os.clock() - (M.standT or 0) > 0.5 then M.standT = os.clock(); measureStandH(root) end
+
+	M.mobWatch()
+	if not M.cur and os.clock() >= (M.pickAfter or 0) then
+		M.cur, M.hum = mobPick(root)
+		M.lastHp, M.hpChg, M.near = nil, os.clock(), false
+		if M.cur then
+			M.curStand = M.standFor(M.cur)
+		else
+			M.scanNow = true
+			M.pickAfter = os.clock() + 1
+		end
+	end
+
+	local tgt = M.cur
+	local tpos = tgt and targetPos(tgt, true)
+	if tgt and tpos then
+		M.active, M.searching = true, false
+		if M.mobRetreat(root, hum) then
+			if not userActive(hum) then
+				root.CFrame = CFrame.new(root.Position.X, M.retreatY, root.Position.Z)
+				root.AssemblyLinearVelocity = Vector3.zero
+			end
+			return
+		end
+		local stand = M.curStand or M.stand
+		if not userActive(hum) then
+			local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
+			local hd = flat.Magnitude
+			local dir = hd > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
+			local gp = tpos + dir * stand
+			local goal = Vector3.new(gp.X, standY(gp, tgt, tpos.Y), gp.Z)
+			M.near = hd <= stand + 10
+			if hd > stand + 6 or math.abs(root.Position.Y - goal.Y) > 14 then
+				M.flyTo(root, goal, dt, tpos) -- TWEEN tới mob
+			else
+				root.CFrame = CFrame.lookAt(root.Position, Vector3.new(tpos.X, root.Position.Y, tpos.Z))
+			end
+			root.AssemblyLinearVelocity = Vector3.zero
+		end
+		if os.clock() - M.lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
+			M.lastAtk = os.clock()
+			attackBurst()
+		end
+	else
+		-- không thấy mob nào: bay tới chỗ từng thấy mob đã chọn để game tải lại
+		M.active = false
+		local key, pos = M.searchSpot(root)
+		if key then
+			M.active, M.searching = true, true
+			local spot = pos + Vector3.new(0, 40, 0)
+			if (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude <= 60 then
+				M.memBad[key] = os.clock() + 90 -- tới nơi mà không có mob: tạm bỏ chỗ này
+				M.scanNow = true
+			elseif not userActive(hum) then
+				M.flyTo(root, spot, dt, pos)
+				root.AssemblyLinearVelocity = Vector3.zero
+			end
+		else
+			M.searching = false
+		end
+	end
+end
+
 task.spawn(function()
 	while true do
 		local dt = RunService.Heartbeat:Wait()
 		if not F.farm then
-			M.cur, M.hum, M.active, M.retreating = nil, nil, false, false
+			M.cur, M.hum, M.active, M.retreating, M.searching = nil, nil, false, false, false
 			if not F.build then setFarmCursor(false) end
 			task.wait(0.2)
 		else
-			local char = player.Character
-			local root, hum = rootOf(char), char and char:FindFirstChildOfClass("Humanoid")
-			if not root or (hum and hum.Health <= 0) then
-				M.cur, M.hum, M.active = nil, nil, false
+			local ok, err = pcall(M.step, dt)
+			if ok then
+				M.err = nil
 			else
-				if os.clock() - (F.ctrlT or 0) > 3 then F.ctrlT = os.clock(); ensureControls() end
-				setFarmCursor(true)
-				if os.clock() - (M.standT or 0) > 0.5 then M.standT = os.clock(); measureStandH(root) end
-
-				M.mobWatch()
-				if not M.cur and os.clock() >= (M.pickAfter or 0) then
-					M.cur, M.hum = mobPick(root)
-					M.lastHp, M.hpChg, M.near = nil, os.clock(), false
-					if M.cur then
-						M.curStand = M.standFor(M.cur)
-					else
-						M.scanNow = true
-						M.pickAfter = os.clock() + 1
-					end
-				end
-
-				local tgt = M.cur
-				local tpos = tgt and targetPos(tgt, true)
-				if tgt and tpos then
-					M.active = true
-					if M.mobRetreat(root, hum) then
-						if not userActive(hum) then
-							root.CFrame = CFrame.new(root.Position.X, M.retreatY, root.Position.Z)
-							root.AssemblyLinearVelocity = Vector3.zero
-						end
-					else
-						local stand = M.curStand or M.stand
-						if not userActive(hum) then
-							local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
-							local hd = flat.Magnitude
-							local dir = hd > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
-							local gp = tpos + dir * stand
-							local goal = Vector3.new(gp.X, standY(gp, tgt, tpos.Y), gp.Z)
-							M.near = hd <= stand + 10
-							if hd > stand + 6 or math.abs(root.Position.Y - goal.Y) > 14 then
-								-- TWEEN tới mob: mỗi frame tính lại điểm tới, càng xa bay càng nhanh
-								pcall(requestStream, goal)
-								local diff = goal - root.Position
-								local dist = diff.Magnitude
-								if dist > 0.05 then
-									local speed = math.clamp(dist * TWEEN_FAR_FACTOR, TWEEN_SPEED, TWEEN_MAX_SPEED)
-									local np = root.Position + diff.Unit * math.min(dist, speed * math.min(dt, 0.1))
-									root.CFrame = CFrame.lookAt(np, Vector3.new(tpos.X, np.Y, tpos.Z))
-								end
-							else
-								root.CFrame = CFrame.lookAt(root.Position, Vector3.new(tpos.X, root.Position.Y, tpos.Z))
-							end
-							root.AssemblyLinearVelocity = Vector3.zero
-						end
-						if os.clock() - M.lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
-							M.lastAtk = os.clock()
-							attackBurst()
-						end
-					end
-				else
-					M.active = false
-				end
+				M.err = tostring(err) -- hiện lỗi lên bảng thay vì làm chết vòng farm
+				task.wait(0.2)
 			end
 		end
 	end
@@ -2341,6 +2396,32 @@ function buildUI()
 		}, ctrl)
 	end
 
+	-- Tiêu đề bấm được để đóng / mở một nhóm (nhớ trạng thái khi dựng lại bảng)
+	local function mkFold(order, text, targets, id)
+		F.fold = F.fold or {}
+		if F.fold[id] == nil then F.fold[id] = true end
+		local btn = make("TextButton", {
+			Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.row, Text = "", AutoButtonColor = false, LayoutOrder = order,
+		}, ctrl)
+		round(btn, 8)
+		make("TextLabel", {
+			Size = UDim2.new(1, -44, 1, 0), Position = UDim2.fromOffset(10, 0), BackgroundTransparency = 1, Text = text,
+			Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
+		}, btn)
+		local mark = make("TextLabel", {
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0), Size = UDim2.fromOffset(28, 20),
+			BackgroundColor3 = C.panel, Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = C.accent2, Text = "",
+		}, btn)
+		round(mark, 6)
+		local function apply()
+			local open = F.fold[id]
+			for _, t in ipairs(targets) do t.Visible = open end
+			mark.Text = open and "-" or "+"
+		end
+		tap(btn, function() F.fold[id] = not F.fold[id]; apply() end)
+		apply()
+	end
+
 	local function mkRow(order, text, rightPad)
 		local row = make("TextButton", {
 			Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = C.row, Text = "", AutoButtonColor = false, LayoutOrder = order,
@@ -2509,7 +2590,6 @@ function buildUI()
 	local modePill = mkPill(modeRow, X.modes[X.mode])
 	modePill.TextColor3 = C.accent2
 	local _, ivBox, ivStroke = mkInputRow(4, "Chờ giữa các lượt (giây)", tostring(X.interval), "0.3")
-	mkSection(5, "CHỌN SKILL (bấm để chọn / bỏ)")
 	local grid = make("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = 6 }, ctrl)
 	make("UIGridLayout", {
 		CellSize = UDim2.new(0.25, -5, 0, 36), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder,
@@ -2529,6 +2609,7 @@ function buildUI()
 		tap(b, function() X.toggleSkill(i) end)
 	end
 	local allRow = mkRow(7, "Chọn tất cả / Bỏ chọn tất cả", 12)
+	mkFold(5, "CHỌN SKILL (bấm để đóng / mở)", { grid, allRow }, "skill")
 	make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 30), BackgroundTransparency = 1, LayoutOrder = 8, TextWrapped = true,
 		Text = "Kiểu \"Phím\": gửi phím 1-5, V, P. Nếu không ăn thì đổi sang \"Nút UI\" (bấm thẳng vào ô skill).",
@@ -2562,7 +2643,6 @@ function buildUI()
 	ctrl = mkCtrl(pages[4], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
 	mkSection(1, "AUTO FARM MOB")
 	local farmRow, farmBtn = mkToggle(2, "Auto Farm Mob", "F")
-	mkSection(3, "CHỌN MOB ĐỂ ĐÁNH (bấm để chọn / bỏ)")
 	local mobGrid = make("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = 4 }, ctrl)
 	make("UIGridLayout", {
 		CellSize = UDim2.new(1 / 3, -4, 0, 34), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder,
@@ -2601,11 +2681,12 @@ function buildUI()
 	addMobChip(0, "Tất cả", nil)
 	for i, t in ipairs(F.MOB_TARGETS) do addMobChip(i, t[1], t[2]) end
 	refreshMobChips()
-	make("TextLabel", {
+	local mobHint = make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, LayoutOrder = 5, TextWrapped = true,
 		Text = "Không chọn mob nào (hoặc chọn \"Tất cả\") = đánh mọi mob như cũ. Chọn một hay nhiều mob = chỉ đánh đúng những mob đó.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
+	mkFold(3, "CHỌN MOB ĐỂ ĐÁNH (bấm để đóng / mở)", { mobGrid, mobHint }, "mob")
 	mkSection(9, "AUTO FARM CITY")
 	local buildRow, buildBtn = mkToggle(10, "Auto Farm City", "B")
 	mkSliderRow(11, "Building Search Range", 50, 1000, F.range, function(v) F.range = v end)
@@ -2801,8 +2882,14 @@ task.spawn(function()
 				local tp = pivotPos(F.cur)
 				local dd = (rt and tp) and math.floor((rt.Position - tp).Magnitude) or 0
 				msg = "Đang farm City: " .. F.cur.Name .. " (" .. dd .. " stud)"
+			elseif F.farm and mobM and mobM.err then
+				msg = "Lỗi farm mob: " .. string.sub(mobM.err, 1, 80)
+			elseif F.farm and mobM and mobM.searching then
+				msg = "Mob ở xa: đang bay tới chỗ từng thấy để tải lại"
 			elseif F.farm and not F.build then
-				msg = "Không có mob trong tầm, đang tìm..."
+				local nsel = 0
+				for _ in pairs(F.mobSel) do nsel = nsel + 1 end
+				msg = "Không thấy mob" .. (nsel > 0 and " đã chọn" or "") .. " (quét được " .. (mobM and #mobM.list or 0) .. " mob), đang tìm..."
 			else
 				msg = (F.build and F.noIsland and not F.farm) and "Không có City nào ở đảo này" or "Đang tìm mục tiêu..."
 			end
