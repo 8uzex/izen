@@ -419,7 +419,7 @@ local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện tr�
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
 local F = { farm = false, build = false, active = false, dist = 30, enemyKw = "", buildKw = "", range = 180, densityR = 250,
-	mobDist = 28, mobSpeed = 150, orbitSpeed = 1.8, retargetDelay = 0.35 } -- auto farm / Auto Farm City
+	mobDist = 16, mobSpeed = 150, orbitSpeed = 0.6, retargetDelay = 0.35, aim = true } -- auto farm / Auto Farm City
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
 local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
@@ -1435,6 +1435,16 @@ local function pivotPos(m)
 	local ok, cf = pcall(function() return m:GetPivot() end)
 	return ok and cf.Position or nil
 end
+-- Vị trí để bay tới: mob lấy theo thân thật (RootPart), KHÔNG dùng pivot của model vì pivot NPC có thể lệch/nằm trên trời
+local function targetPos(m, enemy)
+	if enemy then
+		local hum = m:FindFirstChildOfClass("Humanoid")
+		local r = (hum and hum.RootPart) or rootOf(m)
+		if r then return r.Position end
+	end
+	return pivotPos(m)
+end
+local SKY_DIFF = 300 -- mob cao/thấp hơn mình quá chừng này stud = nghi là mục tiêu ảo/trên trời -> bỏ qua
 
 -- ===== Chia toà nhà theo ĐẢO =====
 -- Hai toà nhà cách nhau <= ISLAND_LINK stud (theo mặt phẳng ngang) cùng chuỗi liên kết => cùng 1 đảo.
@@ -1588,7 +1598,8 @@ local function pickTarget(root)
 		for _, e in ipairs(list) do
 			local m = enemy and e.m or e
 			if m.Parent and not isBad(m) and (not enemy or enemyAlive(m, e.h)) then
-				local p = pivotPos(m)
+				local p = targetPos(m, enemy)
+				if p and enemy and math.abs(p.Y - root.Position.Y) > SKY_DIFF then p = nil end
 				if p then
 					local d = (p - root.Position).Magnitude
 					if not bd or d < bd then best, bd = e, d end
@@ -1648,6 +1659,19 @@ local function ensureControls()
 		if pm then require(pm):GetControls():Enable() end
 	end)
 end
+-- Khoá camera vào mob: nhiều skill của game bắn theo hướng camera, nên xoay camera (giữ nguyên vị trí) nhìn thẳng vào mob đang farm
+pcall(function() RunService:UnbindFromRenderStep("UZEXAim") end)
+RunService:BindToRenderStep("UZEXAim", Enum.RenderPriority.Camera.Value + 1, function()
+	if F.aim and F.farm and F.cur and F.curKind == "enemy" and F.active then
+		local cam = workspace.CurrentCamera
+		local ok, tp = pcall(targetPos, F.cur, true)
+		if cam and ok and tp then
+			local from = cam.CFrame.Position
+			if (tp - from).Magnitude > 1 then cam.CFrame = CFrame.lookAt(from, tp) end
+		end
+	end
+end)
+
 local attacking = false
 
 -- Các khung của script đang hiện trên màn hình (bảng chính + logo): click giả phải tránh những vùng này
@@ -1697,7 +1721,7 @@ local function attackBurst()
 			if not (F.farm or F.build) then break end
 			if X.skillOn[i] then pcall(X.cast, i) task.wait(0.08) end
 		end
-		if VIM and not (X.silent and canSignal()) then -- đánh thường: click chỗ trống (không trúng bảng script). Chế độ ẨN: bỏ qua
+		if VIM then -- đánh thường: click chỗ trống (không trúng bảng script)
 			pcall(function()
 				local c = attackClickPoint()
 				if isTouchOnly() then
@@ -1752,9 +1776,21 @@ task.spawn(function()
 							local ok, n, s = pcall(buildSig, m)
 							if ok then sig, empty = s, (n == 0) end
 						end
-						local mp = pivotPos(m)
+						local mp = targetPos(m, F.curKind == "enemy")
 						local near = mp and (root.Position - mp).Magnitude <= (F.curKind == "enemy" and F.mobDist or F.dist) + 30
-						if empty then
+						if F.curKind == "enemy" then
+							if near then F.farSince = nil
+							else
+								F.farSince = F.farSince or os.clock()
+								if os.clock() - F.farSince > 12 then -- 12s vẫn chưa lại gần được = mục tiêu không tới được
+									markBad(m, 60); F.cur = nil; F.farSince = nil
+									empty = nil
+								end
+							end
+						end
+						if not F.cur then
+							-- đã bỏ mục tiêu không tới được
+						elseif empty then
 							markBad(m, F.curKind == "enemy" and BAD_STUCK or BAD_DONE); F.cur = nil
 						elseif sig ~= F.curSig or not near then
 							F.curSig = sig; F.curChg = os.clock()
@@ -1769,11 +1805,11 @@ task.spawn(function()
 				if not F.cur and os.clock() >= (F.pickAfter or 0) then
 					F.cur, F.curKind, F.curHum = pickTarget(root)
 					F.curT = os.clock()
-					F.curSig, F.curChg, F.sigT = nil, os.clock(), 0
+					F.curSig, F.curChg, F.sigT, F.farSince = nil, os.clock(), 0, nil
 					if not F.cur then requestScan() end -- hết mục tiêu: quét lại tìm cái mới
 				end
 				local tgt = F.cur
-				local tpos = tgt and pivotPos(tgt)
+				local tpos = tgt and targetPos(tgt, F.curKind == "enemy")
 				if tgt and tpos then
 					-- di chuyển tới điểm đứng (nhường khi người chơi tự đi/nhảy)
 					if not userActive(hum) then
@@ -1786,7 +1822,7 @@ task.spawn(function()
 								F.orbitAng = math.atan2(root.Position.Z - tpos.Z, root.Position.X - tpos.X)
 							end
 							if F.orbitSpeed > 0 then F.orbitAng += F.orbitSpeed * dt end
-							goal = tpos + Vector3.new(math.cos(F.orbitAng), 0, math.sin(F.orbitAng)) * F.mobDist + Vector3.new(0, 8, 0)
+							goal = tpos + Vector3.new(math.cos(F.orbitAng), 0, math.sin(F.orbitAng)) * F.mobDist + Vector3.new(0, 4, 0)
 						else
 							goal = tpos + dir * F.dist + Vector3.new(0, 8, 0)
 						end
@@ -1839,7 +1875,7 @@ function F.refreshUI()
 	if not w then return end
 	if w.farmBtn then w.farmBtn.set(F.farm) end
 	if w.buildBtn then w.buildBtn.set(F.build) end
-	if w.silentBtn then w.silentBtn.set(X.silent) end
+	if w.aimBtn then w.aimBtn.set(F.aim) end
 end
 local function farmPrep()
 	ensureControls()
@@ -2357,7 +2393,7 @@ function buildUI()
 
 	-- ===== TAB 4: Farm =====
 	ctrl = mkCtrl(pages[4], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
-	local silentRow, silentBtn = mkToggle(0, "Ẩn click ảo (chỉ dùng signal)", nil)
+	local aimRow, aimBtn = mkToggle(0, "Khoá camera vào mob", nil)
 	mkSection(1, "AUTO FARM MOB")
 	local farmRow, farmBtn = mkToggle(2, "Auto Farm Mob", "F")
 	mkSliderRow(3, "Target Distance", 5, 150, F.mobDist, function(v) F.mobDist = v end)
@@ -2383,8 +2419,8 @@ function buildUI()
 		sub = sub, modal = modal, rows = {}, rowMap = {} }
 	X.w = { autoBtn = skillAutoBtn, lagBtn = lagBtn, modePill = modePill, chips = chips }
 
-	F.w = { farmBtn = farmBtn, buildBtn = buildBtn, silentBtn = silentBtn }
-	tap(silentRow, function() X.silent = not X.silent; F.refreshUI() end)
+	F.w = { farmBtn = farmBtn, buildBtn = buildBtn, aimBtn = aimBtn }
+	tap(aimRow, function() F.aim = not F.aim; F.refreshUI() end)
 	tap(farmRow, function() F.toggleFarm() end)
 	tap(buildRow, function() F.toggleBuild() end)
 	distBox.FocusLost:Connect(function()
@@ -2551,7 +2587,10 @@ task.spawn(function()
 		end
 		if not msg and (F.farm or F.build) and rootOf(player.Character) then
 			if F.cur and F.cur.Parent then
-				msg = (F.curKind == "enemy" and "Đang đánh mob: " or "Đang farm City: ") .. F.cur.Name
+				local rt = rootOf(player.Character)
+				local tp = targetPos(F.cur, F.curKind == "enemy")
+				local dd = (rt and tp) and math.floor((rt.Position - tp).Magnitude) or 0
+				msg = (F.curKind == "enemy" and "Đang đánh mob: " or "Đang farm City: ") .. F.cur.Name .. " (" .. dd .. " stud)"
 			else
 				msg = (F.build and F.noIsland and not F.farm) and "Không có City nào ở đảo này" or "Đang tìm mục tiêu..."
 			end
