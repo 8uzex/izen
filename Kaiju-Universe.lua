@@ -1779,10 +1779,23 @@ end)
 	local function myRoot() return fRoot(myProxy()) end
 
 	local function ownerName(m) return tostring(m:GetAttribute("NametagName") or m.Name) end
-	local function isPlayerProxy(m) return Players:FindFirstChild(ownerName(m)) ~= nil end
+	-- Nhận diện người chơi (theo tên / DisplayName / UserId) để KHÔNG bao giờ đánh player
+	local function isPlayerProxy(m)
+		local n = ownerName(m)
+		if Players:FindFirstChild(n) or Players:GetPlayerFromCharacter(m) then return true end
+		local mn = m.Name
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.Name == n or p.DisplayName == n or p.Name == mn or p.DisplayName == mn or tostring(p.UserId) == mn then
+				return true
+			end
+		end
+		local uid = tonumber(m:GetAttribute("UserId") or m:GetAttribute("OwnerUserId") or m:GetAttribute("PlayerId"))
+		if uid and Players:GetPlayerByUserId(uid) then return true end
+		return false
+	end
 
 	local function isAlive(m)
-		return m and m.Parent and fRoot(m) ~= nil and m ~= myProxy()
+		return m and m.Parent and fRoot(m) ~= nil and m ~= myProxy() and not isPlayerProxy(m)
 	end
 
 	local function candidates(maxDistance)
