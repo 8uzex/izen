@@ -1419,6 +1419,42 @@ local function isPlainWyrmite(name)
 	local n = string.lower(name or "")
 	return n:match("^%s*wyrmite[%s%d_%-]*$") ~= nil
 end
+-- ===== BẢNG CHỌN MOB =====
+-- Để trống = đánh tất cả mob như cũ (trừ danh sách EXCLUDE_ENEMY). Chọn mob nào thì CHỈ đánh mob đó
+-- (chọn Glacialith thì được đánh dù nó nằm trong danh sách loại). Khớp theo tên model / DisplayName, không phân biệt hoa/thường.
+F.MOB_TARGETS = {
+	{ "Wyrmite", "wyrmite" }, { "Arctic Wyrmite", "arcticwyrmite" }, { "Typhorne", "typhorne" }, { "Glacialith", "glacialith" },
+	{ "Goliath", "goliath" }, { "Vulkaizen", "vulkaizen" }, { "Kumora", "kumora" },
+}
+F.mobSel = {}
+function F.mobSelected() return next(F.mobSel) ~= nil end
+function F.matchSelectedMob(name)
+	for kw in pairs(F.mobSel) do
+		if kw == "wyrmite" then
+			if isPlainWyrmite(name) then return true end -- đúng Wyrmite thường, không phải Arctic Wyrmite
+		elseif nameHas((name or ""):gsub("[%s_%-]", ""), { kw }) then -- bỏ khoảng trắng/_/- để "Arctic Wyrmite" = "ArcticWyrmite"
+			return true
+		end
+	end
+	return false
+end
+-- mob CÓ Humanoid: có được đánh không
+function F.mobWanted(name, disp)
+	if not F.mobSelected() then
+		return not nameHas(name, EXCLUDE_ENEMY) and not nameHas(disp, EXCLUDE_ENEMY)
+	end
+	return F.matchSelectedMob(name) or F.matchSelectedMob(disp)
+end
+-- mob KHÔNG có Humanoid (Wyrmite...): có được đánh không
+function F.noHumWanted(name)
+	if not F.mobSelected() then return isPlainWyrmite(name) end
+	return F.matchSelectedMob(name)
+end
+-- đổi lựa chọn: bỏ mục tiêu hiện tại, quét lại ngay
+function F.mobChange()
+	local m = F.M
+	if m then m.cur, m.hum, m.list, m.scanNow = nil, nil, {}, true end
+end
 local function anyPart(m) return m:FindFirstChildWhichIsA("BasePart", true) end
 local function isMine(m)
 	local ch = player.Character
@@ -1786,55 +1822,78 @@ task.spawn(function()
 	end
 end)
 
--- ===== AUTO FARM MOB (bản mới, viết lại từ đầu) =====
--- Ý tưởng: tìm mob gần nhất trong tầm -> TELEPORT xuống đứng sát mob (chân chạm đất, mặt hướng mob) -> đánh tới khi mob chết -> mob kế.
--- Không bay, không quay vòng: đứng yên sát mob nên đòn trúng. Không bỏ giữa chừng trừ khi mob miễn nhiễm / không mất máu.
-local M = { cur = nil, hum = nil, active = false, list = {}, bad = setmetatable({}, { __mode = "k" }), stand = 14, immuneSec = 15 }
+-- ===== AUTO FARM MOB V2 (viết mới hoàn toàn) =====
+-- 1) Quét mob mỗi ~1.5s (và quét ngay khi đổi bảng chọn mob), lọc theo bảng CHỌN MOB.
+-- 2) Chọn mục tiêu gần nhất trong tầm, bỏ qua mob đã đánh dấu "bad" (miễn nhiễm / kẹt / không tới được).
+-- 3) Khoảng đứng tự tính theo kích thước thân mob (kaiju to đứng xa hơn, mob nhỏ đứng gần), chân chạm đất, mặt hướng mob.
+-- 4) Chỉ teleport khi lệch vị trí; đứng đúng chỗ thì chỉ xoay mặt (không giật). Đánh liên tục bằng skill đã chọn + đánh thường.
+-- 5) Máu thấp (Retreat HP) -> bay lên cao hồi máu, đủ 85% thì quay lại. Mob không mất máu quá lâu -> bỏ 45s rồi sang con khác.
+local M = {
+	cur = nil, hum = nil, active = false, list = {}, bad = setmetatable({}, { __mode = "k" }),
+	stand = 14, curStand = 14, immuneSec = 12, badSec = 45, retreating = false, near = false,
+}
 F.M = M
-local function mobBad(m, secs) M.bad[m] = os.clock() + secs end
+local function mobBad(m, secs) M.bad[m] = os.clock() + (secs or M.badSec) end
 local function mobIsBad(m) local t = M.bad[m]; return t ~= nil and t > os.clock() end
 
--- quét mob (mỗi 2 giây khi đang bật)
-task.spawn(function()
-	while true do
-		local waited = 0
-		while waited < 2 and not M.scanNow do task.wait(0.25) waited += 0.25 end
-		M.scanNow = false
-		if F.farm then
-			local list, seen, n = {}, {}, 0
-			for _, d in ipairs(workspace:GetDescendants()) do
-				n += 1
-				if n % 1500 == 0 then task.wait() end
-				pcall(function()
-					if d:IsA("Humanoid") then
-						local m = d.Parent
-						if d.Health > 0 and m and m:IsA("Model") and not seen[m] and not isMine(m)
-							and not Players:GetPlayerFromCharacter(m) and rootOf(m)
-							and not nameHas(m.Name, EXCLUDE_ENEMY) and not nameHas(d.DisplayName, EXCLUDE_ENEMY) then
-							seen[m] = true
-							list[#list + 1] = { m = m, h = d }
-						end
-					elseif d:IsA("Model") and not seen[d] and isPlainWyrmite(d.Name) and not d:FindFirstChildOfClass("Humanoid")
-						and not isMine(d) and not Players:GetPlayerFromCharacter(d) and anyPart(d)
-						and not (d.Parent and d.Parent:IsA("Model") and isPlainWyrmite(d.Parent.Name)) then
-						seen[d] = true
-						list[#list + 1] = { m = d, h = nil }
-					end
-				end)
-			end
-			M.list = list
-		end
-	end
-end)
-
 local function mobAlive(m, h)
-	if not m.Parent then return false end
+	if not (m and m.Parent) then return false end
 	if h then return h.Health > 0 and h.Parent ~= nil end
 	local a = m:GetAttribute("Health")
 	if type(a) == "number" then return a > 0 end
 	return anyPart(m) ~= nil
 end
 
+-- máu hiện tại của mob (Humanoid hoặc attribute "Health"), không có thì trả nil
+function M.mobHealth(m, h)
+	if h then return h.Health end
+	local a = m and m:GetAttribute("Health")
+	return type(a) == "number" and a or nil
+end
+
+-- khoảng đứng cách mob: nửa bề ngang thân + 10 stud, kẹp 14..45
+function M.standFor(m)
+	local ok, sz = pcall(function() return m:GetExtentsSize() end)
+	if ok and sz then return math.clamp(math.max(sz.X, sz.Z) * 0.5 + 10, M.stand, 45) end
+	return M.stand
+end
+
+-- quét toàn bộ workspace tìm mob hợp lệ
+function M.scan()
+	local list, seen, n = {}, {}, 0
+	for _, d in ipairs(workspace:GetDescendants()) do
+		n += 1
+		if n % 1500 == 0 then task.wait() end
+		pcall(function()
+			if d:IsA("Humanoid") then
+				local m = d.Parent
+				if d.Health > 0 and m and m:IsA("Model") and not seen[m] and not isMine(m)
+					and not Players:GetPlayerFromCharacter(m) and rootOf(m)
+					and F.mobWanted(m.Name, d.DisplayName) then
+					seen[m] = true
+					list[#list + 1] = { m = m, h = d }
+				end
+			elseif d:IsA("Model") and not seen[d] and F.noHumWanted(d.Name) and not d:FindFirstChildOfClass("Humanoid")
+				and not isMine(d) and not Players:GetPlayerFromCharacter(d) and anyPart(d)
+				and not (d.Parent and d.Parent:IsA("Model") and F.noHumWanted(d.Parent.Name)) then
+				seen[d] = true
+				list[#list + 1] = { m = d, h = nil }
+			end
+		end)
+	end
+	M.list = list
+end
+
+task.spawn(function()
+	while true do
+		local waited = 0
+		while waited < 1.5 and not M.scanNow do task.wait(0.25) waited += 0.25 end
+		M.scanNow = false
+		if F.farm then pcall(M.scan) end
+	end
+end)
+
+-- chọn mob gần nhất còn sống, còn trong tầm, không bị đánh dấu bad
 local function mobPick(root)
 	local best, bh, bd
 	for _, e in ipairs(M.list) do
@@ -1849,8 +1908,46 @@ local function mobPick(root)
 	return best, bh
 end
 
+-- bỏ mục tiêu hiện tại
+function M.mobDrop(badSecs)
+	if M.cur and badSecs then mobBad(M.cur, badSecs) end
+	M.cur, M.hum, M.lastHp, M.near = nil, nil, nil, false
+	M.pickAfter = os.clock() + 0.25
+end
+
+-- theo dõi mục tiêu: chết/biến mất -> bỏ; máu không đổi quá lâu khi đã tới gần -> bỏ (miễn nhiễm/kẹt)
+function M.mobWatch()
+	local m = M.cur
+	if not m then return end
+	if not mobAlive(m, M.hum) then M.mobDrop(); return end
+	local hp = M.mobHealth(m, M.hum)
+	if hp then
+		if hp ~= M.lastHp then
+			M.lastHp, M.hpChg = hp, os.clock()
+		elseif M.near and os.clock() - (M.hpChg or os.clock()) > M.immuneSec then
+			M.mobDrop(M.badSec)
+		end
+	end
+end
+
+-- Retreat HP: trả về true nếu đang rút lui hồi máu
+function M.mobRetreat(root, hum)
+	if F.retreatPct > 0 and hum then
+		local frac = hum.Health / math.max(1, hum.MaxHealth)
+		if M.retreating then
+			if frac >= 0.85 then M.retreating = false end
+		elseif frac * 100 < F.retreatPct then
+			M.retreating = true
+			M.retreatY = root.Position.Y + 250
+		end
+	else
+		M.retreating = false
+	end
+	return M.retreating
+end
+
+M.lastAtk = 0
 task.spawn(function()
-	local lastAtk = 0
 	while true do
 		RunService.Heartbeat:Wait()
 		if not F.farm then
@@ -1867,61 +1964,37 @@ task.spawn(function()
 				setFarmCursor(true)
 				if os.clock() - (M.standT or 0) > 0.5 then M.standT = os.clock(); measureStandH(root) end
 
-				-- 1) mob hiện tại còn sống không? Mob chết / biến mất -> chọn con kế. Miễn nhiễm (máu không đổi) -> bỏ 60s.
-				local m = M.cur
-				if m then
-					if not mobAlive(m, M.hum) then
-						M.cur, M.hum = nil, nil
-						M.pickAfter = os.clock() + 0.3
-					elseif M.hum then
-						local hp = M.hum.Health
-						if hp ~= M.lastHp then
-							M.lastHp, M.hpChg = hp, os.clock()
-						elseif M.near and os.clock() - (M.hpChg or os.clock()) > M.immuneSec then
-							mobBad(m, 60); M.cur, M.hum = nil, nil
-						end
-					end
-				end
-				-- 2) chọn mob mới
+				M.mobWatch()
 				if not M.cur and os.clock() >= (M.pickAfter or 0) then
 					M.cur, M.hum = mobPick(root)
 					M.lastHp, M.hpChg, M.near = nil, os.clock(), false
-					if not M.cur then M.scanNow = true; M.pickAfter = os.clock() + 1 end
+					if M.cur then
+						M.curStand = M.standFor(M.cur)
+					else
+						M.scanNow = true
+						M.pickAfter = os.clock() + 1
+					end
 				end
 
 				local tgt = M.cur
 				local tpos = tgt and targetPos(tgt, true)
 				if tgt and tpos then
-					-- 3) Retreat HP: máu thấp -> lên cao hồi máu, đủ 85% mới quay lại
-					local retreat = false
-					if F.retreatPct > 0 and hum then
-						local frac = hum.Health / math.max(1, hum.MaxHealth)
-						if M.retreating then
-							if frac >= 0.85 then M.retreating = false end
-						elseif frac * 100 < F.retreatPct then
-							M.retreating = true
-							M.retreatY = root.Position.Y + 250
-						end
-						retreat = M.retreating
-					else
-						M.retreating = false
-					end
 					M.active = true
-					if retreat then
+					if M.mobRetreat(root, hum) then
 						if not userActive(hum) then
 							root.CFrame = CFrame.new(root.Position.X, M.retreatY, root.Position.Z)
 							root.AssemblyLinearVelocity = Vector3.zero
 						end
 					else
-						-- 4) đứng sát mob: phía mình đang đứng, cách mob M.stand stud, chân chạm đất, mặt hướng mob
+						local stand = M.curStand or M.stand
 						if not userActive(hum) then
 							local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
-							local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
-							local gp = tpos + dir * M.stand
+							local hd = flat.Magnitude
+							local dir = hd > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
+							local gp = tpos + dir * stand
 							local goal = Vector3.new(gp.X, standY(gp, tgt, tpos.Y), gp.Z)
-							local hd = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z).Magnitude
-							M.near = hd <= M.stand + 10
-							if hd > M.stand + 6 or math.abs(root.Position.Y - goal.Y) > 14 then
+							M.near = hd <= stand + 10
+							if hd > stand + 6 or math.abs(root.Position.Y - goal.Y) > 14 then
 								pcall(requestStream, goal)
 								root.CFrame = CFrame.lookAt(goal, Vector3.new(tpos.X, goal.Y, tpos.Z))
 							else
@@ -1929,8 +2002,8 @@ task.spawn(function()
 							end
 							root.AssemblyLinearVelocity = Vector3.zero
 						end
-						if os.clock() - lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
-							lastAtk = os.clock()
+						if os.clock() - M.lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
+							M.lastAtk = os.clock()
 							attackBurst()
 						end
 					end
@@ -2482,6 +2555,50 @@ function buildUI()
 	ctrl = mkCtrl(pages[4], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
 	mkSection(1, "AUTO FARM MOB")
 	local farmRow, farmBtn = mkToggle(2, "Auto Farm Mob", "F")
+	mkSection(3, "CHỌN MOB ĐỂ ĐÁNH (bấm để chọn / bỏ)")
+	local mobGrid = make("Frame", { Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y, BackgroundTransparency = 1, LayoutOrder = 4 }, ctrl)
+	make("UIGridLayout", {
+		CellSize = UDim2.new(1 / 3, -4, 0, 34), CellPadding = UDim2.fromOffset(6, 6), SortOrder = Enum.SortOrder.LayoutOrder,
+	}, mobGrid)
+	local mobChips = {}
+	local function refreshMobChips()
+		for _, c in ipairs(mobChips) do
+			if c.kw then c.set(F.mobSel[c.kw] == true) else c.set(not F.mobSelected()) end
+		end
+	end
+	local function addMobChip(order, label, kw)
+		local b = make("TextButton", {
+			BackgroundColor3 = C.row, Text = label, Font = Enum.Font.GothamBold, TextSize = 13, TextScaled = true,
+			TextColor3 = C.muted, AutoButtonColor = false, LayoutOrder = order,
+		}, mobGrid)
+		round(b, 9)
+		make("UITextSizeConstraint", { MaxTextSize = 13, MinTextSize = 8 }, b)
+		make("UIPadding", { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) }, b)
+		local st = make("UIStroke", { Color = C.accent, Thickness = 1.5, Transparency = 1 }, b)
+		local chip = { kw = kw }
+		function chip.set(on)
+			tw(b, 0.15, { BackgroundColor3 = on and C.sel or C.row, TextColor3 = on and C.white or C.muted })
+			tw(st, 0.15, { Transparency = on and 0 or 1 })
+		end
+		tap(b, function()
+			if kw then
+				F.mobSel[kw] = (not F.mobSel[kw]) or nil
+			else
+				F.mobSel = {} -- "Tất cả": bỏ mọi lựa chọn
+			end
+			F.mobChange()
+			refreshMobChips()
+		end)
+		mobChips[#mobChips + 1] = chip
+	end
+	addMobChip(0, "Tất cả", nil)
+	for i, t in ipairs(F.MOB_TARGETS) do addMobChip(i, t[1], t[2]) end
+	refreshMobChips()
+	make("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 28), BackgroundTransparency = 1, LayoutOrder = 5, TextWrapped = true,
+		Text = "Không chọn mob nào (hoặc chọn \"Tất cả\") = đánh mọi mob như cũ. Chọn một hay nhiều mob = chỉ đánh đúng những mob đó.",
+		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
+	}, ctrl)
 	mkSliderRow(7, "Mob Search Range", 100, 2000, F.mobRange, function(v) F.mobRange = v end)
 	mkSliderRow(8, "Retreat HP % (0 = tắt)", 0, 80, F.retreatPct, function(v) F.retreatPct = v end)
 	mkSection(9, "AUTO FARM CITY")
