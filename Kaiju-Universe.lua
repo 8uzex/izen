@@ -419,7 +419,7 @@ local respawnMap = nil      -- tên map đã chọn để hồi sinh (hiện tr�
 local respawnNames = nil    -- tập các tên (đã chuẩn hoá) để nhận diện map trên màn hình game
 local noclipChanged = {}    -- các part do script này tắt va chạm (để trả lại khi tắt noclip)
 local F = { farm = false, build = false, active = false, dist = 30, enemyKw = "", buildKw = "", range = 180, densityR = 250,
-	mobDist = 28, mobSpeed = 150, orbitSpeed = 1.8, retargetDelay = 0.35, aim = true } -- auto farm / Auto Farm City
+	mobDist = 28, mobSpeed = 150, orbitSpeed = 1.8, retargetDelay = 0.35, mobRange = 800, retreatPct = 35 } -- auto farm / Auto Farm City
 
 local dragConn = nil         -- kết nối kéo bảng (huỷ khi dựng lại UI)
 local savedLauncherPos = nil -- nhớ vị trí logo khi bị kéo
@@ -1406,7 +1406,8 @@ end
 -- Mob thêm sẵn vào auto farm dù KHÔNG có Humanoid (Wyrmite...). Khớp theo tên model, không phân biệt hoa/thường.
 local EXTRA_ENEMY = { "wyrmite" }
 -- Mob bị LOẠI khỏi auto farm (tên chứa từ này): Arctic Wyrmite level cao, đánh không lại
-local EXCLUDE_ENEMY = { "arctic" }
+-- Theo wiki: Arctic (đánh từ xa, level 75+), Glacialith (~8000 HP), Incineros/Ramthor NPC ở Costa Sierpe (hội đồng solo) => bỏ qua
+local EXCLUDE_ENEMY = { "arctic", "glacialith", "incineros", "ramthor" }
 local function nameHas(name, list)
 	local n = string.lower(name or "")
 	for _, k in ipairs(list) do
@@ -1602,7 +1603,7 @@ local function pickTarget(root)
 				if p and enemy and math.abs(p.Y - root.Position.Y) > SKY_DIFF then p = nil end
 				if p then
 					local d = (p - root.Position).Magnitude
-					if not bd or d < bd then best, bd = e, d end
+					if (not enemy or d <= F.mobRange) and (not bd or d < bd) then best, bd = e, d end
 				end
 			end
 		end
@@ -1698,18 +1699,7 @@ local function standY(pos, ignoreModel, mobY)
 	return mobY + 4
 end
 
--- Khoá camera vào mob: nhiều skill của game bắn theo hướng camera, nên xoay camera (giữ nguyên vị trí) nhìn thẳng vào mob đang farm
-pcall(function() RunService:UnbindFromRenderStep("UZEXAim") end)
-RunService:BindToRenderStep("UZEXAim", Enum.RenderPriority.Camera.Value + 1, function()
-	if F.aim and F.farm and F.cur and F.curKind == "enemy" and F.active then
-		local cam = workspace.CurrentCamera
-		local ok, tp = pcall(targetPos, F.cur, true)
-		if cam and ok and tp then
-			local from = cam.CFrame.Position
-			if (tp - from).Magnitude > 1 then cam.CFrame = CFrame.lookAt(from, tp) end
-		end
-	end
-end)
+pcall(function() RunService:UnbindFromRenderStep("UZEXAim") end) -- dọn bản cũ nếu còn
 
 local attacking = false
 
@@ -1850,8 +1840,26 @@ task.spawn(function()
 				local tgt = F.cur
 				local tpos = tgt and targetPos(tgt, F.curKind == "enemy")
 				if tgt and tpos then
+					-- Retreat HP: máu thấp hơn mức đặt thì bay lên cao (mob đất không với tới) hồi máu, đủ 85% mới đánh tiếp
+					if F.retreatPct > 0 and F.curKind == "enemy" then
+						local frac = hum.Health / math.max(1, hum.MaxHealth)
+						if F.retreating then
+							if frac >= 0.85 then F.retreating = false end
+						elseif frac * 100 < F.retreatPct then
+							F.retreating = true
+							F.retreatY = root.Position.Y + 250
+						end
+					else
+						F.retreating = false
+					end
 					-- di chuyển tới điểm đứng (nhường khi người chơi tự đi/nhảy)
-					if not userActive(hum) then
+					if F.retreating then
+						F.active = true
+						if not userActive(hum) then
+							root.CFrame = CFrame.new(root.Position.X, F.retreatY, root.Position.Z)
+							root.AssemblyLinearVelocity = Vector3.zero
+						end
+					elseif not userActive(hum) then
 						local flat = Vector3.new(root.Position.X - tpos.X, 0, root.Position.Z - tpos.Z)
 						local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
 						local goal
@@ -1883,7 +1891,7 @@ task.spawn(function()
 							end
 						end
 					end
-					if os.clock() - lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
+					if not F.retreating and os.clock() - lastAtk >= math.max(0.1, X.interval) and not UserInputService:GetFocusedTextBox() then
 						lastAtk = os.clock()
 						attackBurst()
 					end
@@ -1916,11 +1924,11 @@ function F.refreshUI()
 	if not w then return end
 	if w.farmBtn then w.farmBtn.set(F.farm) end
 	if w.buildBtn then w.buildBtn.set(F.build) end
-	if w.aimBtn then w.aimBtn.set(F.aim) end
 end
 local function farmPrep()
 	ensureControls()
 	F.standH = nil
+	F.retreating = false
 	if followOn then stopFollow(); setFollowUI() end
 	if tweenMode then tweenMode = false; stopTween(); setTweenUI() end
 	F.scanNow = true
@@ -2435,21 +2443,22 @@ function buildUI()
 
 	-- ===== TAB 4: Farm =====
 	ctrl = mkCtrl(pages[4], UDim2.fromOffset(10, 4), UDim2.new(1, -20, 1, -4))
-	local aimRow, aimBtn = mkToggle(0, "Khoá camera vào mob", nil)
 	mkSection(1, "AUTO FARM MOB")
 	local farmRow, farmBtn = mkToggle(2, "Auto Farm Mob", "F")
 	mkSliderRow(3, "Target Distance", 5, 100, F.mobDist, function(v) F.mobDist = v end)
 	mkSliderRow(4, "Tween Speed", 20, 400, F.mobSpeed, function(v) F.mobSpeed = v end)
 	mkSliderRow(5, "Orbit Speed", 0, 5, F.orbitSpeed, function(v) F.orbitSpeed = v end, 0.01)
 	mkSliderRow(6, "Retarget Delay", 0, 2, F.retargetDelay, function(v) F.retargetDelay = v end, 0.05)
-	mkSection(7, "AUTO FARM CITY")
-	local buildRow, buildBtn = mkToggle(8, "Auto Farm City", "B")
-	mkSliderRow(9, "Building Search Range", 50, 1000, F.range, function(v) F.range = v end)
-	mkSliderRow(10, "Density Area Size", 50, 600, F.densityR, function(v) F.densityR = v end)
-	local _, distBox, distStroke = mkInputRow(11, "Khoảng cách đứng City", tostring(F.dist), "30")
+	mkSliderRow(7, "Mob Search Range", 100, 2000, F.mobRange, function(v) F.mobRange = v end)
+	mkSliderRow(8, "Retreat HP % (0 = tắt)", 0, 80, F.retreatPct, function(v) F.retreatPct = v end)
+	mkSection(9, "AUTO FARM CITY")
+	local buildRow, buildBtn = mkToggle(10, "Auto Farm City", "B")
+	mkSliderRow(11, "Building Search Range", 50, 1000, F.range, function(v) F.range = v end)
+	mkSliderRow(12, "Density Area Size", 50, 600, F.densityR, function(v) F.densityR = v end)
+	local _, distBox, distStroke = mkInputRow(13, "Khoảng cách đứng City", tostring(F.dist), "30")
 	make("TextLabel", {
-		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 12, TextWrapped = true,
-		Text = "Farm Mob: bay tới mob, quay quanh mob (Orbit), Retarget Delay = nghỉ bao lâu trước khi đổi mob. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
+		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 14, TextWrapped = true,
+		Text = "Farm Mob: bay tới mob, quay quanh mob (Orbit). Mob Search Range = chỉ đánh mob trong tầm này (tránh bay sang đảo khác). Retreat HP = máu thấp hơn mức này thì bay lên cao hồi máu rồi đánh tiếp. Retarget Delay = nghỉ bao lâu trước khi đổi mob. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Cả hai dùng skill đã chọn ở tab Skill + đánh thường.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
 
@@ -2461,8 +2470,7 @@ function buildUI()
 		sub = sub, modal = modal, rows = {}, rowMap = {} }
 	X.w = { autoBtn = skillAutoBtn, lagBtn = lagBtn, modePill = modePill, chips = chips }
 
-	F.w = { farmBtn = farmBtn, buildBtn = buildBtn, aimBtn = aimBtn }
-	tap(aimRow, function() F.aim = not F.aim; F.refreshUI() end)
+	F.w = { farmBtn = farmBtn, buildBtn = buildBtn }
 	tap(farmRow, function() F.toggleFarm() end)
 	tap(buildRow, function() F.toggleBuild() end)
 	distBox.FocusLost:Connect(function()
