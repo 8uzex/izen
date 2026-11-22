@@ -1733,7 +1733,7 @@ end)
 -- ===== AUTO FARM MOB (bản mới) =====
 -- Quét mob trong Workspace.Characters (bỏ qua người chơi), tween tới mob gần nhất (skill tự động đang TẮT, bật bằng FarmSettings.AutoSkills = true).
 -- Bật/tắt bằng nút "Auto Farm Mob" (phím F) hoặc getgenv().AutoFarmMobs(true/false). Chỉnh setting: getgenv().FarmSettings
-do
+;(function() -- bọc trong hàm riêng để không tốn thêm biến local của file chính (giới hạn 200)
 	local LP = player
 	local S = {
 		FarmMovement = "Front",       -- "Front" | "Above" | "Orbit"
@@ -1971,7 +1971,7 @@ do
 		if F.farm ~= state then F.toggleFarm() end
 	end
 	genv.FarmSettings = S
-end
+end)()
 
 -- Luôn cho phép nhảy/đi khi đang dùng các chức năng (một số game đặt JumpPower = 0 hoặc để PlatformStand)
 RunService.Heartbeat:Connect(function()
