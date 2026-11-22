@@ -1731,7 +1731,7 @@ task.spawn(function()
 end)
 
 -- ===== AUTO FARM MOB (bản mới) =====
--- Quét mob trong Workspace.Characters (bỏ qua người chơi), tween tới mob gần nhất, tự bấm skill trên GUI Backpack.
+-- Quét mob trong Workspace.Characters (bỏ qua người chơi), tween tới mob gần nhất (skill tự động đang TẮT, bật bằng FarmSettings.AutoSkills = true).
 -- Bật/tắt bằng nút "Auto Farm Mob" (phím F) hoặc getgenv().AutoFarmMobs(true/false). Chỉnh setting: getgenv().FarmSettings
 do
 	local LP = player
@@ -1742,7 +1742,7 @@ do
 		FarmRetargetDelay = 0.35,
 		OrbitSpeed = 1.8,
 		AttackDelay = 0.32,
-		AutoSkills = true,
+		AutoSkills = false,           -- false = Farm Mob KHÔNG tự bấm skill (dùng nút "Auto skill" ở tab Skill nếu cần)
 	}
 	local G = {
 		Target = nil, FarmTween = nil, FarmGoal = nil,
@@ -1877,7 +1877,7 @@ do
 	end
 
 	local function attackTick(now)
-		if not F.farm or now - G.LastAttack < S.AttackDelay then return end
+		if not (F.farm and S.AutoSkills) or now - G.LastAttack < S.AttackDelay then return end
 		local skills = scanSkillButtons(false)
 		if #skills == 0 then return end
 		for offset = 1, #skills do
@@ -2294,7 +2294,7 @@ function buildUI()
 	-- Tiêu đề bấm được để đóng / mở một nhóm (nhớ trạng thái khi dựng lại bảng)
 	local function mkFold(order, text, targets, id)
 		F.fold = F.fold or {}
-		if F.fold[id] == nil then F.fold[id] = true end
+		if F.fold[id] == nil then F.fold[id] = false end -- mặc định ĐÓNG
 		local btn = make("TextButton", {
 			Size = UDim2.new(1, 0, 0, 28), BackgroundColor3 = C.row, Text = "", AutoButtonColor = false, LayoutOrder = order,
 		}, ctrl)
@@ -2311,7 +2311,7 @@ function buildUI()
 		local function apply()
 			local open = F.fold[id]
 			for _, t in ipairs(targets) do t.Visible = open end
-			mark.Text = open and "-" or "+"
+			mark.Text = open and "^" or "v"
 		end
 		tap(btn, function() F.fold[id] = not F.fold[id]; apply() end)
 		apply()
@@ -2545,7 +2545,7 @@ function buildUI()
 	local _, distBox, distStroke = mkInputRow(13, "Khoảng cách đứng City", tostring(F.dist), "30")
 	make("TextLabel", {
 		Size = UDim2.new(1, 0, 0, 72), BackgroundTransparency = 1, LayoutOrder = 14, TextWrapped = true,
-		Text = "Farm Mob: tự tìm mob (NPC) gần nhất, tween tới và tự bấm skill trong Backpack, mob chết thì sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Farm City dùng skill đã chọn ở tab Skill + đánh thường.",
+		Text = "Farm Mob: tự tìm mob (NPC) gần nhất, tween tới mob, không tự bấm skill (dùng "Auto skill" ở tab Skill nếu cần), mob chết thì sang con kế. Farm City: teleport tới City trên đảo đang đứng; Search Range = tầm tìm City, Density Area Size = chọn khu nhiều City nhất. Farm City dùng skill đã chọn ở tab Skill + đánh thường.",
 		Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, TextXAlignment = Enum.TextXAlignment.Left,
 	}, ctrl)
 
