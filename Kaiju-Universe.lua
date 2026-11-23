@@ -1749,14 +1749,14 @@ task.spawn(function()
 	while true do
 		RunService.Heartbeat:Wait()
 		if not F.build then
-			F.cur, F.activeCity = nil, false
+			F.cur, F.activeCity, F.tpCity = nil, false, nil
 			if not F.farm then setFarmCursor(false) end
 			task.wait(0.2)
 		else
 			local char = player.Character
 			local root, hum = rootOf(char), char and char:FindFirstChildOfClass("Humanoid")
 			if not root or (hum and hum.Health <= 0) then
-				F.cur, F.activeCity = nil, false
+				F.cur, F.activeCity, F.tpCity = nil, false, nil
 			else
 				if os.clock() - (F.ctrlT or 0) > 3 then F.ctrlT = os.clock(); ensureControls() end
 				setFarmCursor(true)
@@ -1794,7 +1794,9 @@ task.spawn(function()
 						local dir = flat.Magnitude > 0.1 and flat.Unit or Vector3.new(0, 0, 1)
 						local goal = tpos + dir * F.dist + Vector3.new(0, 8, 0)
 						F.activeCity = true
-						if (goal - root.Position).Magnitude > 4 then
+						-- chỉ tele 1 lần cho mỗi City (tele lại chỉ khi bị đẩy rất xa > F.dist + 150 stud)
+						if F.tpCity ~= tgt or (root.Position - tpos).Magnitude > F.dist + 150 then
+							F.tpCity = tgt
 							pcall(requestStream, goal)
 							root.CFrame = CFrame.lookAt(goal, Vector3.new(tpos.X, goal.Y, tpos.Z))
 							root.AssemblyLinearVelocity = Vector3.zero
