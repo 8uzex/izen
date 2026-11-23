@@ -1236,6 +1236,8 @@ function X.refreshUI()
 	if not w then return end
 	if w.autoBtn then w.autoBtn.set(X.auto) end
 	if w.lagBtn then w.lagBtn.set(X.lag) end
+	if w.qPill then w.qPill.Text = "Mức " .. X.quality end
+	if w.hopPill then w.hopPill.Text = X.hopMsg or "Tìm" end
 	if w.modePill then w.modePill.Text = X.modes[X.mode] end
 	for i, c in ipairs(w.chips or {}) do c.set(X.skillOn[i]) end
 end
@@ -1313,6 +1315,7 @@ function X.setLag(on)
 		X.lagG = X.lagG or {}
 		X.lagSA = X.lagSA or {}
 		-- Bóng đổ + đồ hoạ thấp nhất
+		X.applyFps(true) -- mở khoá FPS (trên 60)
 		lagGlobal(Lighting, "GlobalShadows", false)
 		lagGlobal(Lighting, "ShadowSoftness", 0)
 		lagGlobal(Lighting, "EnvironmentDiffuseScale", 0)
@@ -1322,7 +1325,7 @@ function X.setLag(on)
 		-- Chất lượng (texture/mesh) thấp nhất
 		pcall(function()
 			local r = settings().Rendering
-			lagGlobal(r, "QualityLevel", Enum.QualityLevel.Level01)
+			lagGlobal(r, "QualityLevel", X.qualityEnum())
 			lagGlobal(r, "MeshPartDetailLevel", Enum.MeshPartDetailLevel.Level04)
 		end)
 		-- Material mới 2022 + nước + cỏ
@@ -1364,10 +1367,89 @@ function X.setLag(on)
 			setHidden(e[1], e[2], e[3])
 		end
 		X.lagG = {}
+		X.applyFps(false) -- trả FPS về 60
 	end
 	X.refreshUI()
 end
 function X.toggleLag() X.setLag(not X.lag) end
+
+-- ===== Fast Mode mở rộng: mở khoá FPS, mức đồ hoạ, đổi server ping thấp =====
+X.fpsCap = 240                    -- FPS tối đa khi Fast Mode bật (ô nhập ở tab Khác)
+X.quality = 1                     -- mức đồ hoạ khi Fast Mode bật: 1 / 3 / 5 / 8
+X.qualityList = { 1, 3, 5, 8 }
+
+function X.qualityEnum()
+	local ok, e = pcall(function() return Enum.QualityLevel:FromValue(X.quality) end)
+	return (ok and e) or Enum.QualityLevel.Level01
+end
+
+-- Cần executor có setfpscap. Tắt Fast Mode thì trả về 60.
+function X.applyFps(on)
+	if not setfpscap then return false end
+	return (pcall(setfpscap, on and X.fpsCap or 60))
+end
+
+function X.cycleQuality()
+	local idx = 1
+	for i, q in ipairs(X.qualityList) do if q == X.quality then idx = i end end
+	X.quality = X.qualityList[idx % #X.qualityList + 1]
+	if X.lag then
+		pcall(function() lagGlobal(settings().Rendering, "QualityLevel", X.qualityEnum()) end)
+	end
+	X.refreshUI()
+end
+
+-- Tìm server công khai có ping thấp nhất (API Roblox có trường ping) rồi dịch sang đó.
+-- Lưu ý: sau khi dịch server thì script phải chạy lại bằng executor.
+function X.hopLowPing()
+	if X.hopBusy then return end
+	X.hopBusy = true
+	local function say(t) X.hopMsg = t; X.refreshUI() end
+	say("Đang tìm...")
+	task.spawn(function()
+		local HttpService = game:GetService("HttpService")
+		local TeleportService = game:GetService("TeleportService")
+		local best, cursor, err = nil, nil, nil
+		for _ = 1, 3 do
+			local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(game.PlaceId)
+			if cursor then url = url .. "&cursor=" .. cursor end
+			local ok, body = pcall(function()
+				local req = request or http_request or (syn and syn.request)
+				if req then
+					local r = req({ Url = url, Method = "GET" })
+					if r and r.StatusCode == 429 then error("429") end
+					return r and r.Body
+				end
+				return game:HttpGet(url)
+			end)
+			if not ok or not body then
+				err = tostring(body):find("429") and "Bị giới hạn" or "Lỗi mạng"
+				break
+			end
+			local ok2, data = pcall(function() return HttpService:JSONDecode(body) end)
+			if not ok2 or type(data) ~= "table" or type(data.data) ~= "table" then err = "Lỗi dữ liệu"; break end
+			for _, sv in ipairs(data.data) do
+				if sv.id ~= game.JobId and type(sv.ping) == "number"
+					and (sv.playing or 0) < (sv.maxPlayers or 0) - 1 then
+					if not best or sv.ping < best.ping then best = sv end
+				end
+			end
+			cursor = data.nextPageCursor
+			if not cursor then break end
+		end
+		if not best then
+			say(err or "Không có server")
+			task.wait(3); X.hopBusy = false; say(nil)
+			return
+		end
+		say(math.floor(best.ping) .. "ms...")
+		task.wait(0.8)
+		if not pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, best.id, player) end) then
+			say("Lỗi dịch")
+		end
+		task.wait(4); X.hopBusy = false; say(nil)
+	end)
+end
 
 
 -- ===== AUTO FARM + AUTO PHÁ NHÀ =====
@@ -1779,23 +1861,10 @@ end)
 	local function myRoot() return fRoot(myProxy()) end
 
 	local function ownerName(m) return tostring(m:GetAttribute("NametagName") or m.Name) end
-	-- Nhận diện người chơi (theo tên / DisplayName / UserId) để KHÔNG bao giờ đánh player
-	local function isPlayerProxy(m)
-		local n = ownerName(m)
-		if Players:FindFirstChild(n) or Players:GetPlayerFromCharacter(m) then return true end
-		local mn = m.Name
-		for _, p in ipairs(Players:GetPlayers()) do
-			if p.Name == n or p.DisplayName == n or p.Name == mn or p.DisplayName == mn or tostring(p.UserId) == mn then
-				return true
-			end
-		end
-		local uid = tonumber(m:GetAttribute("UserId") or m:GetAttribute("OwnerUserId") or m:GetAttribute("PlayerId"))
-		if uid and Players:GetPlayerByUserId(uid) then return true end
-		return false
-	end
+	local function isPlayerProxy(m) return Players:FindFirstChild(ownerName(m)) ~= nil end
 
 	local function isAlive(m)
-		return m and m.Parent and fRoot(m) ~= nil and m ~= myProxy() and not isPlayerProxy(m)
+		return m and m.Parent and fRoot(m) ~= nil and m ~= myProxy()
 	end
 
 	local function candidates(maxDistance)
@@ -2538,12 +2607,19 @@ function buildUI()
 	local noclipRow, noclipBtn = mkToggle(5, "Noclip", "N")
 	local afkRow, afkBtn = mkToggle(6, "Anti AFK", "U")
 	local lagRow, lagBtn = mkToggle(7, "Fast Mode", nil)
-	local _, speedBox, speedStroke = mkInputRow(8, "Tốc độ chạy", customSpeed > 0 and tostring(customSpeed) or "", "mặc định")
+	local _, fpsBox, fpsStroke = mkInputRow(8, "FPS tối đa (Fast Mode)", tostring(X.fpsCap), "240")
+	local qRow = mkRow(9, "Mức đồ hoạ (Fast Mode)", 110)
+	local qPill = mkPill(qRow, "Mức " .. X.quality)
+	qPill.TextColor3 = C.accent2
+	local hopRow = mkRow(10, "Đổi server ping thấp", 110)
+	local hopPill = mkPill(hopRow, "Tìm")
+	hopPill.TextColor3 = C.accent2
+	local _, speedBox, speedStroke = mkInputRow(11, "Tốc độ chạy", customSpeed > 0 and tostring(customSpeed) or "", "mặc định")
 
 	if hasKeys then
 		make("TextLabel", {
 			Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1, Text = "RightShift: ẩn / hiện bảng",
-			Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, LayoutOrder = 9,
+			Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = C.muted, LayoutOrder = 12,
 		}, ctrl)
 	end
 
@@ -2568,7 +2644,7 @@ function buildUI()
 	ui = { gui = gui, frame = frame, scale = scale, list = list, autoBtn = autoBtn, respawnBtn = respawnBtn,
 		noclipBtn = noclipBtn, tweenBtn = tweenBtn, afkBtn = afkBtn, mapBtn = mapBtn,
 		sub = sub, modal = modal, rows = {}, rowMap = {} }
-	X.w = { autoBtn = skillAutoBtn, lagBtn = lagBtn, modePill = modePill, chips = chips }
+	X.w = { autoBtn = skillAutoBtn, lagBtn = lagBtn, modePill = modePill, chips = chips, qPill = qPill, hopPill = hopPill }
 
 	F.w = { farmBtn = farmBtn, buildBtn = buildBtn }
 	tap(farmRow, function() F.toggleFarm() end)
@@ -2582,6 +2658,15 @@ function buildUI()
 	tap(modeRow, X.cycleMode)
 	tap(allRow, X.allSkills)
 	tap(lagRow, X.toggleLag)
+	tap(qRow, X.cycleQuality)
+	tap(hopRow, X.hopLowPing)
+	fpsBox.FocusLost:Connect(function()
+		tw(fpsStroke, 0.2, { Color = C.panel })
+		local n = tonumber(fpsBox.Text)
+		if n then X.fpsCap = math.clamp(math.floor(n), 30, 1000) end
+		fpsBox.Text = tostring(X.fpsCap)
+		if X.lag then X.applyFps(true) end
+	end)
 	ivBox.FocusLost:Connect(function()
 		tw(ivStroke, 0.2, { Color = C.panel })
 		local n = tonumber(ivBox.Text)
