@@ -2,7 +2,7 @@ local ProtectionConfig = {
     SecretKey = "2009",
     
     -- The name of your Hub (shown in the kick message if they try to bypass)
-    HubName = "Uzex Hub"
+    HubName = "UZEX Hub"
 }
 
 -------------------------------------------------------------------------------
@@ -89,7 +89,7 @@ local Assets = Library.Assets
 Library.Language = "Tiếng Việt"
 Library._TextObjects = setmetatable({}, { __mode = "k" })
 local EN_TRANSLATIONS = {
-    ["Uzex Hub"] = "Uzex Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
+    ["UZEX Hub"] = "UZEX Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
     ["Dịch chuyển"] = "Teleport", ["Cửa hàng"] = "Shop", ["Nâng cấp"] = "Upgrade",
     ["Khác"] = "Misc", ["Cài đặt"] = "Settings", ["Bán cá"] = "Sell Fish",
     ["Tự động bán cá"] = "Auto Sell Fish", ["Cách bán cá #1"] = "Sell Method #1",
@@ -112,7 +112,7 @@ local EN_TRANSLATIONS = {
     ["Tăng sáng tối đa"] = "Full Bright", ["Tắt sương mù"] = "Disable Fog", ["Chế độ hiệu năng"] = "Performance Mode",
     ["Bật thông báo"] = "Enable Notifications", ["Thông báo"] = "Notification", ["Đã bật thông báo"] = "Notifications enabled",
     ["Câu cá"] = "Fishing", ["Khóa thanh bắt cá"] = "Lock Catch Bar", ["Tự động thả câu"] = "Auto Cast",
-    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss",
+    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss", ["Kích hoạt Secret Boss"] = "Secret Boss Activation", ["Chuyển server"] = "Server Hop", ["Tự động kiểm tra trạng thái"] = "Auto Check Status", ["Tự động chuyển server tìm God Spirit"] = "Auto Hop to God Spirit Server", ["Tự động chuyển server tìm Maoshan"] = "Auto Hop to Maoshan Server", ["Tự động chuyển server tìm Taoist"] = "Auto Hop to Taoist Server", ["Chuyển server ngay (God Spirit)"] = "Hop Now (God Spirit)", ["Chuyển server ngay (Maoshan)"] = "Hop Now (Maoshan)", ["Chuyển server ngay (Taoist)"] = "Hop Now (Taoist)", ["Cá yêu thích"] = "Favourite Fish", ["Chọn cá"] = "Select Fish", ["Tự động yêu thích cá đã chọn"] = "Auto Favourite Selected Fish", ["Tự động bỏ qua cá"] = "Auto Skip Fish", ["Cá cần bỏ qua"] = "Fishes to Skip", ["Tự động bỏ qua cá đã chọn"] = "Auto Skip Selected Fish", ["Black Tortoise Bloodline - vùng an toàn"] = "Black Tortoise Bloodline - Safe Band",
     ["Cách thả câu"] = "Cast Method", ["Độ trễ thả câu"] = "Cast Delay", ["Tự trang bị mồi tốt nhất"] = "Auto Equip Best Bait",
     ["Tự trang bị cần câu"] = "Auto Equip Rod", ["Kỹ năng"] = "Skills", ["Tự động dùng kỹ năng"] = "Auto Use Skills",
     ["Chọn kỹ năng"] = "Select Skills", ["Boss"] = "Boss", ["Chọn chế độ Boss"] = "Select Boss Mode",
@@ -212,11 +212,11 @@ pcall(function()
     if type(writefile) ~= "function" or typeof(getcustomasset) ~= "function" then
         return
     end
-    local folder = "UzexHubAssets"
+    local folder = "UZEXHubAssets"
     if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(folder) then
         makefolder(folder)
     end
-    local path = folder .. "/UzexHubLogo.png"
+    local path = folder .. "/UZEXHubLogo.png"
     local png = decodeBase64(EMBEDDED_LOGO)
     local fresh = type(isfile) == "function" and type(readfile) == "function" and isfile(path) and readfile(path) == png
     if not fresh then
@@ -235,11 +235,11 @@ pcall(function()
     if type(writefile) ~= "function" or typeof(getcustomasset) ~= "function" then
         return
     end
-    local folder = "UzexHubAssets"
+    local folder = "UZEXHubAssets"
     if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(folder) then
         makefolder(folder)
     end
-    local path = folder .. "/UzexHubBackground.png"
+    local path = folder .. "/UZEXHubBackground.png"
     local data = decodeBase64(EMBEDDED_BACKGROUND)
     local fresh = type(isfile) == "function" and type(readfile) == "function" and isfile(path) and readfile(path) == data
     if not fresh then
@@ -370,7 +370,7 @@ local function safe(fn, ...)
     end
     local ok, err = pcall(fn, ...)
     if not ok then
-        warn("[Uzex Hub] callback error: " .. tostring(err))
+        warn("[UZEX Hub] callback error: " .. tostring(err))
     end
 end
 
@@ -443,7 +443,7 @@ local function getGui()
         return gui
     end
     gui = new("ScreenGui", {
-        Name = "UzexHubUI",
+        Name = "UZEXHubUI",
         ResetOnSpawn = false,
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
         DisplayOrder = 9999,
@@ -513,7 +513,7 @@ function Library:Notify(o)
         Font = FONT_BOLD,
         TextSize = 13,
         TextColor3 = color,
-        Text = tostring(o.Title or "Uzex Hub"),
+        Text = tostring(o.Title or "UZEX Hub"),
         LayoutOrder = 1,
     })
     local content = tostring(o.Content or o.Text or "")
@@ -1591,7 +1591,7 @@ function Library:CreateWindow(o)
         Position = UDim2.new(0, textX, 0, subtitle ~= "" and 7 or 14),
         Font = FONT_BOLD,
         TextSize = 15,
-        Text = tostring(o.Name or o.Title or "Uzex Hub"),
+        Text = tostring(o.Name or o.Title or "UZEX Hub"),
     })
     if subtitle ~= "" then
         text(top, {
@@ -1740,7 +1740,7 @@ return Library
 end)()
 
 --------------------------------------------------------------------------------
--- Uzex Hub application
+-- UZEX Hub application
 --------------------------------------------------------------------------------
 
 local Players = game:GetService("Players")
@@ -1781,7 +1781,19 @@ local Config = {
     UpgradeMethod = "Instant",
     AutoRebirth = false,
     FilterBossFish = false,
-    FilterSecretFish = false,
+    AutoFarmSecretBoss = false,
+    AutoSecretBossMode = "Always Active",
+    FavoriteFish = "",
+    AutoFavoriteFish = false,
+    SkipFishList = {},
+    AutoSkipFish = false,
+    BlackTortoiseBand = 0.12,
+    DumpGuyHotbarSlot = 4,
+    AutoGiveFish = false,
+    HopAutoCheck = false,
+    AutoHopGodSpirit = false,
+    AutoHopMaoshan = false,
+    AutoHopTaoist = false,
     CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
@@ -1842,7 +1854,7 @@ local Config = {
     AutoEquipRod = false
 }
 
-local SAVE_FOLDER = "UzexHub"
+local SAVE_FOLDER = "UZEXHub"
 local SAVE_FILE = SAVE_FOLDER .. "/HeavyweighFishingConfig.json"
 
 local function SaveConfig()
@@ -1902,12 +1914,12 @@ task.spawn(function()
     pcall(function()
         if isfile then
             allow = false
-            if isfile("UzexHub/rejoin.flag") and delfile then
-                pcall(delfile, "UzexHub/rejoin.flag")
+            if isfile("UZEXHub/rejoin.flag") and delfile then
+                pcall(delfile, "UZEXHub/rejoin.flag")
             end
             -- only run when Auto Execute is ON in the saved config
-            if isfile("UzexHub/HeavyweighFishingConfig.json") then
-                local dec = HttpService:JSONDecode(readfile("UzexHub/HeavyweighFishingConfig.json"))
+            if isfile("UZEXHub/HeavyweighFishingConfig.json") then
+                local dec = HttpService:JSONDecode(readfile("UZEXHub/HeavyweighFishingConfig.json"))
                 allow = (type(dec) == "table" and dec.AutoExecute == true)
             end
         end
@@ -2598,10 +2610,12 @@ local boundBar = nil
 
 -- Fish filter: Auto Cast keeps casting until a Boss / Secret Boss fish bites
 UzexFilter = { Skip = false, Cache = {}, LastNotify = 0, AntiChecked = {} }
+UzexFilter.SecretFarmAllowed = function() return false end
 
 local function LockFishingBar()
     if isLockingBar then return end
     if UzexFilter.Skip then return end
+    if UzexFilter.SecretFarmAllowed() then return end
     if not FishingGui or not FishingGui.Visible or not FishingBar then return end
     if not (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) then return end
     isLockingBar = true
@@ -2882,7 +2896,9 @@ RunService.Heartbeat:Connect(function()
     LockFishingBar()
     if Config.AutoMiniGame then
         StepPhase2MiniGame()
-        StepRhythmMiniGame()
+        if not UzexFilter.BTActive then
+            StepRhythmMiniGame()
+        end
     end
 end)
 
@@ -3684,6 +3700,573 @@ local function StepAutoBoss(char, isMinigame)
     end
 end
 
+-------------------------------------------------------------------------------
+-- Auto Farm Secret Boss (ported from NNVN)
+-- Casts the rod, drops every fish that is not a Secret Boss, and auto-reels the
+-- Secret Boss once it is hooked. Mode: "Always Active" / "Only When Weather".
+-------------------------------------------------------------------------------
+do
+local SecretFarmAllowed
+local SecretFarm = {
+    CurrentTarget = nil,
+    CurrentToken = nil,
+    CurrentRunId = 0,
+    HasHooked = false,
+    PendingCancel = false,
+    LastCast = 0,
+    LastCancel = 0,
+    LastFastCancel = 0,
+    LastProgress = 0,
+    LastNotify = "",
+}
+
+local SecretFarmKeywords = { "secret", "hidden", "mythic", "event", "rare" }
+local SecretFarmWeather = {
+    foggy = true,
+    ["blazing sun"] = true,
+    snowy = true,
+    windy = true,
+    rainy = true,
+    thunderstorm = true,
+}
+local SecretFarmNames = {}
+
+local function SecretFarmHasKeyword(text)
+    text = string.lower(tostring(text or ""))
+    for _, kw in ipairs(SecretFarmKeywords) do
+        if string.find(text, kw, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function SecretFarmLoadNames()
+    local set = {}
+    pcall(function()
+        local rarity = Info:FindFirstChild("FishingAreaRarity")
+        if rarity then
+            local data = require(rarity)
+            if type(data) == "table" and type(data["Secret Boss"]) == "table" then
+                for key in pairs(data["Secret Boss"]) do
+                    set[string.lower(tostring(key))] = true
+                end
+            end
+        end
+    end)
+    pcall(function()
+        local inventory = Info:FindFirstChild("Inventory")
+        if inventory then
+            for _, entry in ipairs(inventory:GetChildren()) do
+                if entry:IsA("ModuleScript") then
+                    local ok, data = pcall(require, entry)
+                    if ok and type(data) == "table" and data.SecretBoss == true then
+                        set[string.lower(tostring(data.FishName or entry.Name))] = true
+                    end
+                end
+            end
+        end
+    end)
+    SecretFarmNames = set
+end
+
+task.spawn(function()
+    while true do
+        SecretFarmLoadNames()
+        task.wait(30)
+    end
+end)
+
+local function SecretFarmGetWeather()
+    local weather = "Clear"
+    pcall(function()
+        local gui = MainGui and MainGui.Parent and MainGui
+            or LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+        local i1 = gui and gui:FindFirstChild("Info")
+        local i2 = i1 and i1:FindFirstChild("Info")
+        local w = i2 and i2:FindFirstChild("Weather")
+        local v = w and w:FindFirstChild("Value")
+        if v then
+            local raw = v:IsA("TextLabel") and v.Text or v.Value
+            weather = tostring(raw):gsub("Weather:%s*", "")
+        end
+    end)
+    return weather
+end
+
+SecretFarmAllowed = function()
+    if not Config.AutoFarmSecretBoss then
+        return false
+    end
+    -- the summon based boss modes drive the rod themselves
+    if Config.AutoBoss or Config.AutoSecretBoss then
+        return false
+    end
+    if Config.AutoSecretBossMode ~= "Only When Weather" then
+        return true
+    end
+    local name = string.lower(SecretFarmGetWeather())
+    name = name:gsub("^weather:%s*", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return SecretFarmWeather[name] == true
+end
+
+UzexFilter.SecretFarmAllowed = SecretFarmAllowed
+
+local function SecretFarmCurrentTarget()
+    local current = SecretFarm.CurrentTarget
+    local info = { Name = nil, SecretBoss = false }
+    if type(current) == "table" then
+        info.Name = current.FishName or current.Name or current.fishName
+        info.SecretBoss = current.SecretBoss == true
+    elseif typeof(current) == "Instance" then
+        info.Name = current:GetAttribute("FishName") or current.Name
+        info.SecretBoss = current:GetAttribute("SecretBoss") == true
+    elseif type(current) == "string" then
+        info.Name = current
+    end
+    local fishId = LocalPlayer:GetAttribute("FishID")
+    local fishes = workspace:FindFirstChild("Fishes")
+    local entry = fishId and fishes and fishes:FindFirstChild(tostring(fishId))
+    if entry then
+        info.Name = info.Name or entry:GetAttribute("FishName") or entry.Name
+        info.SecretBoss = info.SecretBoss or entry:GetAttribute("SecretBoss") == true
+    end
+    local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+    local bar = fishing and fishing:FindFirstChild("ProgressionBar")
+    local label = bar and bar:FindFirstChild("FishName")
+    if (not info.Name or info.Name == "" or info.Name == "???") and label and label.Text ~= "" then
+        info.Name = label.Text
+    end
+    return info
+end
+
+local function SecretFarmIsSecret(info)
+    info = info or SecretFarmCurrentTarget()
+    local lower = string.lower(tostring(info.Name or ""))
+    return info.SecretBoss == true or SecretFarmNames[lower] == true or SecretFarmHasKeyword(lower)
+end
+
+local function SecretFarmReset()
+    SecretFarm.CurrentTarget = nil
+    SecretFarm.CurrentToken = nil
+    SecretFarm.HasHooked = false
+    SecretFarm.PendingCancel = false
+end
+
+local function SecretFarmCast()
+    if not SecretFarmAllowed() or os.clock() - SecretFarm.LastCast < 0.35 then
+        return false
+    end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    if char:GetAttribute("Fishing") and not char:GetAttribute("Retractable") then
+        return false
+    end
+    SecretFarm.LastCast = os.clock()
+    SecretFarmReset()
+    pcall(function()
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            FishingEvent:FireServer(hrp.CFrame)
+        else
+            FishingEvent:FireServer()
+        end
+    end)
+    return true
+end
+
+local function SecretFarmDropFish()
+    if not SecretFarmAllowed() then return false end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    if not char:GetAttribute("Fishing") then
+        SecretFarmReset()
+        return true
+    end
+    SecretFarm.PendingCancel = true
+    pcall(function()
+        local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+        local frame = fishing and fishing:FindFirstChild("BarFrame")
+        local bar = frame and frame:FindFirstChild("Bar")
+        if bar then
+            bar.Position = UDim2.new(-0.15, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
+        end
+    end)
+    if SecretFarm.CurrentToken and os.clock() - SecretFarm.LastFastCancel > 0.5 then
+        SecretFarm.LastFastCancel = os.clock()
+        pcall(function()
+            Events.FishingMinigame:FireServer(false, SecretFarm.CurrentToken)
+        end)
+    end
+    if not char:GetAttribute("Retractable") then return false end
+    if os.clock() - SecretFarm.LastCancel < 0.35 then return false end
+    SecretFarm.LastCancel = os.clock()
+    pcall(function()
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            FishingEvent:FireServer(hrp.CFrame)
+        else
+            FishingEvent:FireServer()
+        end
+    end)
+    return false
+end
+
+local function SecretFarmReel(info)
+    if not SecretFarmAllowed() or not SecretFarmIsSecret(info) then return end
+    local key = "Secret Boss" .. tostring(info.Name)
+    if SecretFarm.LastNotify ~= key then
+        SecretFarm.LastNotify = key
+        pcall(function()
+            Library:Notify({
+                Title = "Secret Boss",
+                Content = "Đang farm Secret Boss: " .. tostring(info.Name or "Unknown"),
+                Duration = 3,
+            })
+        end)
+    end
+    if os.clock() - SecretFarm.LastProgress > 0.04 then
+        SecretFarm.LastProgress = os.clock()
+        pcall(function()
+            UpdateFishProgression:FireServer()
+        end)
+    end
+end
+
+task.spawn(function()
+    while true do
+        if not SecretFarmAllowed() then
+            task.wait(1.5)
+        else
+            task.wait(0.2)
+            pcall(function()
+                local char = LocalPlayer.Character
+                local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+                if char and char:GetAttribute("Fishing") then
+                    if SecretFarm.PendingCancel then
+                        SecretFarmDropFish()
+                    elseif SecretFarm.HasHooked and fishing and fishing.Visible then
+                        local info = SecretFarmCurrentTarget()
+                        if SecretFarmIsSecret(info) then
+                            SecretFarm.PendingCancel = false
+                            SecretFarmReel(info)
+                        elseif info.Name and info.Name ~= "???" then
+                            SecretFarm.PendingCancel = true
+                            SecretFarmDropFish()
+                        end
+                    end
+                else
+                    SecretFarmReset()
+                    if not UzexFilter.HoldingRod() then
+                        pcall(function()
+                            ToggleHotbar:InvokeServer("1")
+                        end)
+                        task.wait(0.15)
+                    end
+                    SecretFarmCast()
+                end
+            end)
+        end
+    end
+end)
+
+pcall(function()
+    local minigame = Events:FindFirstChild("FishingMinigame")
+    if not minigame then return end
+    minigame.OnClientEvent:Connect(function(target, second, token)
+        if not target or not second then return end
+        SecretFarm.CurrentTarget = target
+        SecretFarm.CurrentToken = token
+        SecretFarm.HasHooked = true
+        SecretFarm.PendingCancel = false
+        SecretFarm.CurrentRunId = SecretFarm.CurrentRunId + 1
+        local runId = SecretFarm.CurrentRunId
+        if not SecretFarmAllowed() then return end
+        local info = SecretFarmCurrentTarget()
+        if not SecretFarmIsSecret(info) then
+            SecretFarm.PendingCancel = true
+            task.delay(0.15, SecretFarmDropFish)
+            return
+        end
+        task.spawn(function()
+            local active = true
+            local conn
+            local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+            if fishing then
+                conn = fishing:GetPropertyChangedSignal("Visible"):Connect(function()
+                    if not fishing.Visible then
+                        active = false
+                        if conn then conn:Disconnect() end
+                    end
+                end)
+            end
+            while active do
+                if not SecretFarmAllowed() or runId ~= SecretFarm.CurrentRunId then
+                    break
+                end
+                local now = SecretFarmCurrentTarget()
+                if not SecretFarmIsSecret(now) then
+                    SecretFarm.PendingCancel = true
+                    SecretFarmDropFish()
+                    break
+                end
+                SecretFarmReel(now)
+                task.wait(0.05)
+            end
+            if conn then conn:Disconnect() end
+            if SecretFarmAllowed() and runId == SecretFarm.CurrentRunId then
+                SecretFarmReset()
+            end
+        end)
+    end)
+end)
+end
+
+-------------------------------------------------------------------------------
+-- Favourite Fish / Auto Skip Fish / Black Tortoise Bloodline minigame
+-- (ported from NNVN)
+-------------------------------------------------------------------------------
+do
+    -- fish name list used by the Favourite / Skip dropdowns
+    function UzexFilter.FishNames()
+        local list, seen = {}, {}
+        pcall(function()
+            local inventory = Info:FindFirstChild("Inventory")
+            if inventory then
+                for _, entry in ipairs(inventory:GetChildren()) do
+                    if entry:IsA("ModuleScript") and not seen[entry.Name] then
+                        seen[entry.Name] = true
+                        table.insert(list, entry.Name)
+                    end
+                end
+            end
+        end)
+        if #list == 0 then
+            pcall(function()
+                local index = PlayerData:FindFirstChild("Index")
+                if index then
+                    for _, entry in ipairs(index:GetChildren()) do
+                        if not seen[entry.Name] then
+                            seen[entry.Name] = true
+                            table.insert(list, entry.Name)
+                        end
+                    end
+                end
+            end)
+        end
+        if #list == 0 then
+            list = {
+                "Rainbow Dragonfish", "Frost Queenfish", "Nameless Octoparasite", "Colossal Tigerfish",
+                "Heavenpiercer Turtle", "Golden Guardian Fish", "Crimson Electric Eel", "Frost Kingfish",
+                "Ascended Perch", "Primordial Kunfish Overlord", "Warbringer Shark", "Flying Fish Emperor",
+                "Flying Fish Empress", "Sanguine Fish", "Draconic Koi", "Reborn Puffer Beast",
+            }
+        end
+        table.sort(list)
+        return list
+    end
+
+    ---------------------------------------------------------------------------
+    -- Favourite Fish: favourites every inventory item of the selected fish
+    ---------------------------------------------------------------------------
+    local function FavoriteSelectedFish()
+        local selected = Config.FavoriteFish
+        if type(selected) ~= "string" or selected == "" or selected == "No Selection" then
+            return 0
+        end
+        local inventory = PlayerData:FindFirstChild("Inventory")
+        local favoriteItem = Events:FindFirstChild("FavoriteItem")
+        if not inventory or not favoriteItem then
+            return 0
+        end
+        local prefix = selected .. " | "
+        local count = 0
+        for _, entry in ipairs(inventory:GetChildren()) do
+            if not Config.AutoFavoriteFish then break end
+            if entry.Name:sub(1, #prefix) == prefix and not entry.Name:match(" | Favorite$") then
+                favoriteItem:FireServer(entry.Name)
+                count = count + 1
+                task.wait(0.12)
+            end
+        end
+        return count
+    end
+
+    task.spawn(function()
+        while true do
+            if Config.AutoFavoriteFish then
+                pcall(FavoriteSelectedFish)
+            end
+            task.wait(1)
+        end
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Auto Skip Fish: gives up a hooked fish that is in the skip list
+    ---------------------------------------------------------------------------
+    local skipRequestId = 0
+    local lastHookedName = ""
+
+    pcall(function()
+        local minigame = Events:FindFirstChild("FishingMinigame")
+        if not minigame then return end
+        minigame.OnClientEvent:Connect(function(data, _, token)
+            local fishName = type(data) == "table" and data.FishName or nil
+            lastHookedName = tostring(fishName or "")
+            if not Config.AutoSkipFish or not fishName then return end
+            local skipSet = {}
+            if type(Config.SkipFishList) == "table" then
+                for _, name in ipairs(Config.SkipFishList) do
+                    skipSet[name] = true
+                end
+            end
+            if not skipSet[fishName] then return end
+            skipRequestId = skipRequestId + 1
+            local myId = skipRequestId
+            task.delay(3, function()
+                if Config.AutoSkipFish and myId == skipRequestId and token ~= nil then
+                    pcall(function()
+                        minigame:FireServer(false, token)
+                    end)
+                end
+            end)
+        end)
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Black Tortoise Bloodline rhythm (Hard mode) - runs inside Auto Mini Game.
+    -- Hits the good notes only and never presses the red "Bad" notes.
+    ---------------------------------------------------------------------------
+    local NOTE_SPEED = 1.15 / 1.4
+    local HIT_WINDOW = 0.22
+    local lanes = { "A", "S", "D" }
+    local keyMap = { A = Enum.KeyCode.A, S = Enum.KeyCode.S, D = Enum.KeyCode.D }
+    local bt = {
+        active = false,
+        generation = 0,
+        seen = setmetatable({}, { __mode = "k" }),
+        lastPress = { A = 0, S = 0, D = 0 },
+        pressBusy = { A = false, S = false, D = false },
+        connections = {},
+    }
+
+    local function IsBlackTortoise(name)
+        return string.find(string.lower(tostring(name or "")), "black tortoise", 1, true) ~= nil
+    end
+
+    local function IsBadNote(note)
+        local c = note.BackgroundColor3
+        return c.R > 0.65 and c.G * 1.5 < c.R and c.B * 1.5 < c.R
+    end
+
+    local function PressLane(lane)
+        if bt.pressBusy[lane] then return false end
+        local key = keyMap[lane]
+        if not key then return false end
+        bt.pressBusy[lane] = true
+        local ok = pcall(function()
+            VirtualInputManager:SendKeyEvent(true, key, false, game)
+        end)
+        if not ok then
+            bt.pressBusy[lane] = false
+            return false
+        end
+        task.delay(0.025, function()
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(false, key, false, game)
+            end)
+            bt.pressBusy[lane] = false
+        end)
+        return true
+    end
+
+    local function ScheduleNote(laneFrame, barFrame, lane, note, generation)
+        if not note or note.Name ~= "Note_FX" or not note:IsA("GuiObject") then return end
+        if bt.seen[note] then return end
+        bt.seen[note] = true
+        if IsBadNote(note) then return end
+        local ok1, noteY = pcall(function() return note.Position.Y.Scale end)
+        local ok2, targetY = pcall(function() return barFrame.Position.Y.Scale end)
+        if not ok1 or not ok2 or type(noteY) ~= "number" or type(targetY) ~= "number" then return end
+        local band = math.clamp(tonumber(Config.BlackTortoiseBand) or 0.12, 0.03, 0.17)
+        local delay = math.clamp((targetY - math.min(0.04, band * 0.35) - noteY) / NOTE_SPEED, 0, 2)
+        local function try(retries)
+            if generation ~= bt.generation or not bt.active or not Config.AutoMiniGame then return end
+            if note.Parent ~= laneFrame or not note.Visible or not laneFrame.Parent then return end
+            if targetY + HIT_WINDOW < note.Position.Y.Scale then return end
+            local best, bestDist = nil, math.huge
+            for _, child in ipairs(laneFrame:GetChildren()) do
+                if child.Name == "Note_FX" and child:IsA("GuiObject") and child.Visible then
+                    local d = math.abs(child.Position.Y.Scale - targetY)
+                    if d <= HIT_WINDOW and d < bestDist then
+                        best, bestDist = child, d
+                    end
+                end
+            end
+            if best == note and not IsBadNote(best) then
+                local now = os.clock()
+                if now - (bt.lastPress[lane] or 0) >= 0.12 and PressLane(lane) then
+                    bt.lastPress[lane] = now
+                end
+            elseif retries > 0 then
+                task.delay(0.04, try, retries - 1)
+            end
+        end
+        task.delay(delay, try, 5)
+    end
+
+    local function StopBlackTortoise()
+        bt.active = false
+        UzexFilter.BTActive = false
+        bt.generation = bt.generation + 1
+        bt.seen = setmetatable({}, { __mode = "k" })
+        bt.pressBusy = { A = false, S = false, D = false }
+        for _, conn in ipairs(bt.connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        table.clear(bt.connections)
+    end
+
+    local function StartBlackTortoise(data)
+        StopBlackTortoise()
+        if type(data) ~= "table" or tostring(data.Mode):lower() ~= "hard" then return end
+        if not Config.AutoMiniGame then return end
+        local generation = bt.generation
+        task.defer(function()
+            if generation ~= bt.generation then return end
+            local isBT = IsBlackTortoise(lastHookedName)
+            if not isBT then
+                local ok, _, _, shown = pcall(UzexFilter.Classify)
+                isBT = ok and IsBlackTortoise(shown)
+            end
+            if not isBT then return end
+            local gui = FishingGui and FishingGui:FindFirstChild("Rhythm")
+            if not gui then return end
+            bt.active = true
+            UzexFilter.BTActive = true
+            for _, lane in ipairs(lanes) do
+                local laneFrame = gui:FindFirstChild("Progression" .. lane)
+                local barFrame = laneFrame and laneFrame:FindFirstChild("BarFrame")
+                if laneFrame and barFrame then
+                    table.insert(bt.connections, laneFrame.ChildAdded:Connect(function(child)
+                        pcall(ScheduleNote, laneFrame, barFrame, lane, child, generation)
+                    end))
+                    for _, child in ipairs(laneFrame:GetChildren()) do
+                        pcall(ScheduleNote, laneFrame, barFrame, lane, child, generation)
+                    end
+                end
+            end
+        end)
+    end
+
+    pcall(function()
+        local rhythmStart = Events:FindFirstChild("RhythmStart")
+        local rhythmStop = Events:FindFirstChild("RhythmStop")
+        if rhythmStart then rhythmStart.OnClientEvent:Connect(StartBlackTortoise) end
+        if rhythmStop then rhythmStop.OnClientEvent:Connect(StopBlackTortoise) end
+    end)
+end
+
 local lastMinigameEndTick = 0
 
 task.spawn(function()
@@ -3705,8 +4288,8 @@ task.spawn(function()
         end
         wasMinigameActive = isMinigame
         -- Fish filter: only fight Boss / Secret Boss fish, drop every other fish and recast
-        local filterOn = (Config.FilterBossFish or Config.FilterSecretFish)
-            and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
+        local filterOn = Config.FilterBossFish
+            and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland or UzexFilter.SecretFarmAllowed())
         local curFishId = LocalPlayer:GetAttribute("FishID")
         if filterOn and (isMinigame or curFishId ~= nil) then
             -- every new fish on the line starts a new decision (decided as soon as the fish is known)
@@ -3720,7 +4303,7 @@ task.spawn(function()
             if not fightAllowed and cancelStage == 0 then
                 local isBoss, isSecret, shown, known = UzexFilter.Classify()
                 local waited = now - fightStart
-                if (Config.FilterBossFish and isBoss and not isSecret) or (Config.FilterSecretFish and isSecret) then
+                if Config.FilterBossFish and isBoss and not isSecret then
                     fightAllowed = true
                     pcall(function()
                         Library:Notify({
@@ -3758,7 +4341,7 @@ task.spawn(function()
         end
         -- after a skipped fish the rod must end up in hand again (only for that case, never otherwise)
         if UzexFilter.NeedRod and not UzexFilter.Busy then
-            if not (Config.FilterBossFish or Config.FilterSecretFish) or UzexFilter.HoldingRod() then
+            if not Config.FilterBossFish or UzexFilter.HoldingRod() then
                 UzexFilter.NeedRod = false
             elseif now - (UzexFilter.LastEquip or 0) > 0.3 then
                 UzexFilter.LastEquip = now
@@ -3769,8 +4352,9 @@ task.spawn(function()
                 end)
             end
         end
-        local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
-        local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish or Config.FilterSecretFish
+        local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip and not secretFarmOn
+        local secretFarmOn = UzexFilter.SecretFarmAllowed()
+        local activeCast = (Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish) and not secretFarmOn
         local activeSkill = (Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
 
         if not isMinigame then
@@ -3915,7 +4499,7 @@ function clearPlayerESP()
         if char then
             local head = char:FindFirstChild("Head")
             if head then
-                local esp = head:FindFirstChild("UzexHubESP")
+                local esp = head:FindFirstChild("UZEXHubESP")
                 if esp then esp:Destroy() end
             end
         end
@@ -3932,11 +4516,11 @@ local function updateESP()
                 local head = char:FindFirstChild("Head")
                 local hum = char:FindFirstChildOfClass("Humanoid")
                 if head and hum then
-                    local esp = head:FindFirstChild("UzexHubESP")
+                    local esp = head:FindFirstChild("UZEXHubESP")
                     if hum.Health > 0 then
                         if not esp then
                             esp = Instance.new("BillboardGui")
-                            esp.Name = "UzexHubESP"
+                            esp.Name = "UZEXHubESP"
                             esp.Adornee = head
                             esp.Size = UDim2.new(0, 200, 0, 25)
                             esp.StudsOffset = Vector3.new(0, 2.5, 0)
@@ -5880,12 +6464,12 @@ ApplyLightingSettings()
 
 -- Window built on Uzex UI. The existing JSON config
 -- remains authoritative; Uzex UI keeps no settings of its own.
--- Replace this placeholder with the real Uzex Hub Discord invite when it is available.
+-- Replace this placeholder with the real UZEX Hub Discord invite when it is available.
 -- The Home tab exposes this URL and copies it when its link button is pressed.
 local DISCORD_INVITE = "https://discord.gg/pzVJV34AH8"
 
 local Window = Library:CreateWindow({
-    Name = "Uzex Hub",
+    Name = "UZEX Hub",
     Subtitle = "Heavyweigh Fishing",
     Icon = Library.Assets.Logo,
     Size = UDim2.fromOffset(640, 460),
@@ -5897,10 +6481,10 @@ local Window = Library:CreateWindow({
     SaveSize = false,
     Home = {
         Name = "Trang chủ",
-        Title = "Uzex Hub",
+        Title = "UZEX Hub",
         Desc = "Heavyweigh Fishing",
         Discord = DISCORD_INVITE,
-        DiscordTitle = "Uzex Hub Discord",
+        DiscordTitle = "UZEX Hub Discord",
         DiscordIcon = "message-circle",
         Features = false,
         Stats = {
@@ -5933,11 +6517,11 @@ local Window = Library:CreateWindow({
     OpenButton = false
 })
 
--- Keep the draggable Uzex Hub logo; all window visibility changes
+-- Keep the draggable UZEX Hub logo; all window visibility changes
 -- go through Uzex UI, including restoring a hidden window.
 do
     local LogoGui = Instance.new("ScreenGui")
-    LogoGui.Name = "UzexHubLogoGui"
+    LogoGui.Name = "UZEXHubLogoGui"
     LogoGui.ResetOnSpawn = false
     LogoGui.DisplayOrder = 10000
     pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
@@ -6073,11 +6657,325 @@ end
 local Tabs = {
     Main = Window:CreateTab({ Name = "Chính", Icon = "home" }),
     Teleport = Window:CreateTab({ Name = "Dịch chuyển", Icon = "map-pin" }),
+    Hop = Window:CreateTab({ Name = "Chuyển server", Icon = "server" }),
     Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
     Upgrade = Window:CreateTab({ Name = "Nâng cấp", Icon = "arrow-up" }),
     Misc = Window:CreateTab({ Name = "Khác", Icon = "layers" }),
     Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" })
 }
+
+-------------------------------------------------------------------------------
+-- Hop Server tab: God Spirit / Maoshan / Taoist (ported from NNVN Server Hop)
+-------------------------------------------------------------------------------
+do
+    local bootAt = os.clock()
+    local hopping = false
+    local lastHop = 0
+    local HOP_FILE = "UZEXHub/server-hop-visited.json"
+
+    local function Notify(title, content, duration)
+        pcall(function()
+            Library:Notify({ Title = title, Content = content, Duration = duration or 3 })
+        end)
+    end
+
+    local function Norm(text)
+        return (string.lower(tostring(text or "")):gsub("[_%-]+", " "):gsub("%s+", " "))
+    end
+
+    ---------------------------------------------------------------------------
+    -- detection
+    ---------------------------------------------------------------------------
+    local trackerPaths = {
+        taoist = { { "NPC", "Function", "Taoist" }, { "NPC", "Taoist" }, { "world", "NPC", "Taoist" } },
+        maoshan = { { "NPC", "Function", "Maoshan" }, { "NPC", "Maoshan" }, { "world", "NPC", "Maoshan" } },
+    }
+    local trackerNames = {
+        taoist = { taoist = true },
+        maoshan = { maoshan = true, ["mao shan"] = true },
+    }
+    local cache, cacheAt = {}, {}
+
+    local function FindAtPath(path)
+        local node = workspace
+        for _, name in ipairs(path) do
+            node = node and node:FindFirstChild(name)
+            if not node then return nil end
+        end
+        return node
+    end
+
+    local function FindTracker(kind)
+        local now = os.clock()
+        if cacheAt[kind] and now - cacheAt[kind] < 10 then
+            local hit = cache[kind]
+            if hit == false then return nil end
+            if hit and hit.Parent then return hit end
+        end
+        local found
+        for _, path in ipairs(trackerPaths[kind]) do
+            found = FindAtPath(path)
+            if found then break end
+        end
+        if not found then
+            local roots = {}
+            local npc = workspace:FindFirstChild("NPC")
+            if npc then table.insert(roots, npc) end
+            local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("World")
+            if map then table.insert(roots, map) end
+            if #roots == 0 then table.insert(roots, workspace) end
+            for _, root in ipairs(roots) do
+                for _, inst in ipairs(root:GetDescendants()) do
+                    if trackerNames[kind][Norm(inst.Name)] then
+                        found = inst
+                        break
+                    end
+                end
+                if found then break end
+            end
+        end
+        cache[kind] = found or false
+        cacheAt[kind] = now
+        return found
+    end
+
+    local godCount, godAt = 0, 0
+    local function GodSpiritCount()
+        local now = os.clock()
+        if now - godAt < 10 then return godCount end
+        local count = 0
+        local folders = { workspace:FindFirstChild("God") }
+        local npc = workspace:FindFirstChild("NPC")
+        if npc then table.insert(folders, npc:FindFirstChild("God")) end
+        for _, folder in pairs(folders) do
+            if folder then
+                count = math.max(count, #folder:GetChildren())
+            end
+        end
+        if count == 0 then
+            local roots = {}
+            if npc then table.insert(roots, npc) end
+            local chars = workspace:FindFirstChild("Characters")
+            if chars then table.insert(roots, chars) end
+            if #roots == 0 then table.insert(roots, workspace) end
+            for _, root in ipairs(roots) do
+                for _, inst in ipairs(root:GetDescendants()) do
+                    local n = Norm(inst.Name)
+                    if n == "god spirit" or n == "spirit god" then
+                        count = count + 1
+                    end
+                end
+            end
+        end
+        godCount, godAt = count, now
+        return count
+    end
+
+    local Checks = {
+        ["God Spirit"] = function() return GodSpiritCount() > 0 end,
+        ["Maoshan"] = function() return FindTracker("maoshan") ~= nil end,
+        ["Taoist"] = function() return FindTracker("taoist") ~= nil end,
+    }
+    local ConfigKey = {
+        ["God Spirit"] = "AutoHopGodSpirit",
+        ["Maoshan"] = "AutoHopMaoshan",
+        ["Taoist"] = "AutoHopTaoist",
+    }
+    local FlagName = {
+        ["God Spirit"] = "AutoHopGodSpiritToggle",
+        ["Maoshan"] = "AutoHopMaoshanToggle",
+        ["Taoist"] = "AutoHopTaoistToggle",
+    }
+    local Order = { "God Spirit", "Maoshan", "Taoist" }
+
+    ---------------------------------------------------------------------------
+    -- hop to a fresh public server (never the same one twice within the hour)
+    ---------------------------------------------------------------------------
+    local function LoadVisited()
+        local data = { hour = os.date("!*t").hour, ids = {} }
+        pcall(function()
+            if isfile and isfile(HOP_FILE) then
+                local dec = HttpService:JSONDecode(readfile(HOP_FILE))
+                if type(dec) == "table" and dec.hour == data.hour and type(dec.ids) == "table" then
+                    data = dec
+                end
+            end
+        end)
+        return data
+    end
+
+    local function SaveVisited(data)
+        pcall(function()
+            if writefile then
+                writefile(HOP_FILE, HttpService:JSONEncode(data))
+            end
+        end)
+    end
+
+    local function HopServer()
+        local placeId = game.PlaceId
+        local visited = LoadVisited()
+        local seen = {}
+        for _, id in ipairs(visited.ids) do seen[tostring(id)] = true end
+        local requestFn = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+        local cursor = ""
+        for _ = 1, 8 do
+            local url = "https://games.roblox.com/v1/games/" .. tostring(placeId) .. "/servers/Public?sortOrder=Asc&limit=100"
+            if cursor ~= "" then url = url .. "&cursor=" .. cursor end
+            local raw
+            if requestFn then
+                local ok, res = pcall(requestFn, { Url = url, Method = "GET" })
+                raw = ok and res and res.Body or nil
+            else
+                local ok, res = pcall(game.HttpGet, game, url)
+                raw = ok and res or nil
+            end
+            local data
+            if raw then pcall(function() data = HttpService:JSONDecode(raw) end) end
+            if type(data) ~= "table" or type(data.data) ~= "table" then
+                task.wait(1)
+            else
+                for _, server in ipairs(data.data) do
+                    local id = tostring(server.id)
+                    if id ~= game.JobId and not seen[id]
+                        and (tonumber(server.playing) or 0) < (tonumber(server.maxPlayers) or 0) then
+                        table.insert(visited.ids, id)
+                        SaveVisited(visited)
+                        pcall(function()
+                            TeleportService:TeleportToPlaceInstance(placeId, id, LocalPlayer)
+                        end)
+                        task.wait(4)
+                        return true
+                    end
+                end
+                if data.nextPageCursor and data.nextPageCursor ~= "" then
+                    cursor = data.nextPageCursor
+                else
+                    break
+                end
+            end
+        end
+        return false
+    end
+
+    ---------------------------------------------------------------------------
+    -- UI
+    ---------------------------------------------------------------------------
+    local status = Tabs.Hop:CreateStatGrid({
+        Columns = 3,
+        Items = {
+            { Key = "God Spirit", Label = "God Spirit", Value = "-" },
+            { Key = "Maoshan", Label = "Maoshan", Value = "-" },
+            { Key = "Taoist", Label = "Taoist", Value = "-" },
+        },
+    })
+
+    local function RefreshStatus()
+        for _, name in ipairs(Order) do
+            local ok, found = pcall(Checks[name])
+            status:Set(name, ok and (found and "🟢 Online" or "🔴 Offline") or "-")
+        end
+    end
+
+    Tabs.Hop:CreateToggle({
+        Flag = "HopAutoCheckToggle",
+        Name = "Tự động kiểm tra trạng thái",
+        CurrentValue = Config.HopAutoCheck,
+        Callback = function(Value)
+            Config.HopAutoCheck = Value
+            SaveConfig()
+        end
+    })
+
+    for _, name in ipairs(Order) do
+        Tabs.Hop:CreateSection(name)
+
+        Tabs.Hop:CreateToggle({
+            Flag = FlagName[name],
+            Name = "Tự động chuyển server tìm " .. name,
+            CurrentValue = Config[ConfigKey[name]],
+            Callback = function(Value)
+                Config[ConfigKey[name]] = Value
+                SaveConfig()
+            end
+        })
+
+        Tabs.Hop:CreateButton({
+            Name = "Chuyển server ngay (" .. name .. ")",
+            Callback = function()
+                task.spawn(function()
+                    local ok, found = pcall(Checks[name])
+                    if ok and found then
+                        Notify(name, name .. " đã có trong server này!", 3)
+                        return
+                    end
+                    Notify(name, "Không có " .. name .. ". Đang chuyển server...", 3)
+                    if not HopServer() then
+                        Notify(name, "Không tìm được server phù hợp, thử lại sau.", 4)
+                    end
+                end)
+            end
+        })
+    end
+
+    ---------------------------------------------------------------------------
+    -- background loops
+    ---------------------------------------------------------------------------
+    task.spawn(function()
+        while true do
+            task.wait(4)
+            if Config.HopAutoCheck then
+                pcall(RefreshStatus)
+            end
+        end
+    end)
+
+    -- Auto hop keeps going across servers (the saved flags + Auto Execute restart it)
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            local wanted = {}
+            for _, name in ipairs(Order) do
+                if Config[ConfigKey[name]] then
+                    table.insert(wanted, name)
+                end
+            end
+            if #wanted > 0 and not hopping and os.clock() - bootAt > 12
+                and LocalPlayer.Character and game:IsLoaded() then
+                local foundName
+                for _, name in ipairs(wanted) do
+                    local ok, found = pcall(Checks[name])
+                    if ok and found then
+                        foundName = name
+                        break
+                    end
+                end
+                if foundName then
+                    for _, name in ipairs(Order) do
+                        Config[ConfigKey[name]] = false
+                        local flag = Library.Flags[FlagName[name]]
+                        if flag and flag.Set then
+                            pcall(flag.Set, flag, false, true)
+                        end
+                    end
+                    SaveConfig()
+                    pcall(RefreshStatus)
+                    Notify(foundName .. " Found!", "Đã dừng tự động chuyển server - " .. foundName .. " đang ở đây!", 6)
+                elseif os.clock() - lastHop > 10 then
+                    lastHop = os.clock()
+                    hopping = true
+                    Notify("Hop Server", "Không thấy " .. table.concat(wanted, " / ") .. ". Đang chuyển server...", 2)
+                    task.spawn(function()
+                        pcall(HopServer)
+                        task.wait(8)
+                        hopping = false
+                    end)
+                end
+            end
+        end
+    end)
+end
+
 
 Tabs.Settings:CreateSection("Language / Ngôn ngữ")
 Tabs.Settings:CreateDropdown({
@@ -6190,6 +7088,282 @@ Tabs.Main:CreateDropdown({
         SaveConfig()
     end
 })
+
+-------------------------------------------------------------------------------
+-- Dump Guy (ported from NNVN): hand in a fish of at least 2,000,000 kg
+-------------------------------------------------------------------------------
+do
+    local MAX_LIMIT = 2000000
+    local DUMB_GUY = "Dumb guy"
+
+    local function Notify(content, duration)
+        pcall(function()
+            Library:Notify({ Title = "Dump Guy", Content = content, Duration = duration or 4 })
+        end)
+    end
+
+    local lastWarn = 0
+    local function Warn(content)
+        if os.clock() - lastWarn < 3 then return end
+        lastWarn = os.clock()
+        Notify(content, 4)
+    end
+
+    local function GetSlot()
+        return math.clamp(math.floor(tonumber(Config.DumpGuyHotbarSlot) or 4), 1, 10)
+    end
+
+    local function WeightOf(name)
+        local text = tostring(name or ""):match("|%s*([%d,.]+)%s*$")
+        if not text then return nil end
+        return tonumber((text:gsub(",", "")))
+    end
+
+    local function SlotState(slot)
+        local hotbar = PlayerData:FindFirstChild("Hotbar")
+        local entry = hotbar and hotbar:FindFirstChild(tostring(slot))
+        local valueName = entry and entry:FindFirstChild("ValueName")
+        local quantity = entry and entry:FindFirstChild("Quantity")
+        if not valueName or not quantity then return nil end
+        return {
+            Name = tostring(valueName.Value or ""),
+            Quantity = tonumber(quantity.Value) or 0,
+            Weight = WeightOf(valueName.Value),
+        }
+    end
+
+    local function FishOverWeight(limit)
+        local list = {}
+        local inventory = PlayerData:FindFirstChild("Inventory")
+        if not inventory then return list end
+        for _, entry in ipairs(inventory:GetChildren()) do
+            local weight = WeightOf(entry.Name)
+            if entry:IsA("NumberValue") and weight and limit < weight and entry.Value > 0 then
+                table.insert(list, { Name = entry.Name, Weight = weight })
+            end
+        end
+        table.sort(list, function(a, b) return a.Weight > b.Weight end)
+        return list
+    end
+
+    local function MoveFishToInventory(slot)
+        local moveItems = Events:FindFirstChild("MoveItems")
+        if not moveItems then return false end
+        if not pcall(function() moveItems:FireServer("Hotbar", tonumber(slot)) end) then
+            return false
+        end
+        for _ = 1, 20 do
+            task.wait(0.1)
+            local state = SlotState(slot)
+            if state and state.Quantity <= 0 and (state.Name == "" or state.Name == "Inventory") then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function MoveFishToHotbar(name, slot)
+        local moveItems = Events:FindFirstChild("MoveItems")
+        if not moveItems or not name or not slot then return false end
+        if not pcall(function() moveItems:FireServer("Inventory", name, slot) end) then
+            return false
+        end
+        for _ = 1, 10 do
+            task.wait(0.15)
+            local hotbar = PlayerData:FindFirstChild("Hotbar")
+            local entry = hotbar and hotbar:FindFirstChild(slot)
+            local valueName = entry and entry:FindFirstChild("ValueName")
+            local quantity = entry and entry:FindFirstChild("Quantity")
+            if valueName and quantity and tostring(valueName.Value) == tostring(name)
+                and (tonumber(quantity.Value) or 0) > 0 then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function HoldingFish()
+        local char = LocalPlayer.Character
+        return char ~= nil and char:GetAttribute("Type") == "Fish"
+    end
+
+    local function SelectSlot(slot, expectedName)
+        if not pcall(function() ToggleHotbar:InvokeServer(tonumber(slot), nil) end) then
+            return false
+        end
+        for _ = 1, 12 do
+            task.wait(0.1)
+            if HoldingFish() then
+                local char = LocalPlayer.Character
+                local tool = char and char:FindFirstChildOfClass("Tool")
+                if not tool or not expectedName or tool.Name == expectedName
+                    or tool:GetAttribute("ValueName") == expectedName
+                    or tostring(tool:GetAttribute("FishName") or "") == expectedName then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function FindDumbGuy()
+        local npc = workspace:FindFirstChild("NPC")
+        local functions = npc and npc:FindFirstChild("Function")
+        local direct = functions and functions:FindFirstChild(DUMB_GUY)
+        if direct then return direct end
+        local function norm(text)
+            return string.lower((tostring(text or ""):gsub("[%s_%-]+", "")))
+        end
+        local wanted = { dumbguy = true, dumpguy = true }
+        for _, root in ipairs({ npc, workspace }) do
+            if root then
+                for _, inst in ipairs(root:GetDescendants()) do
+                    if (inst:IsA("Model") or inst:IsA("BasePart")) and wanted[norm(inst.Name)] then
+                        return inst
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function TeleportToDumpGuy()
+        local npc = FindDumbGuy()
+        local part = npc and GetModelPart(npc)
+        local char = LocalPlayer.Character
+        local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+        if not part or not hrp then return false end
+        hrp.CFrame = part.CFrame + Vector3.new(0, 2, 0)
+        task.wait(0.4)
+        return true
+    end
+
+    local function InteractWithDumpGuy()
+        local choose = Events:FindFirstChild("ChooseDialogueOption")
+        if not choose then
+            Notify("Remote ChooseDialogueOption not found!", 3)
+            return false
+        end
+        local npc = FindDumbGuy()
+        if not npc then
+            Notify("Dumb guy not found in workspace!", 3)
+            return false
+        end
+        if pcall(function() choose:FireServer(DUMB_GUY, 1, "GiveFish", { npc }) end) then
+            return true
+        end
+        local prompt = npc:FindFirstChild("ProximityPrompt", true)
+        if prompt and fireproximityprompt then
+            pcall(fireproximityprompt, prompt)
+            return true
+        end
+        return false
+    end
+
+    -- returns ok, fishName | errorMessage
+    local function GiveFish()
+        local slot = GetSlot()
+        local slotText = tostring(slot)
+        local state = SlotState(slot)
+        if state and state.Weight and MAX_LIMIT <= state.Weight then
+            if not SelectSlot(slotText) then
+                return false, "Could not equip fish from hotbar slot " .. slotText
+            end
+            task.wait(0.3)
+            if not HoldingFish() then return false, "Not holding a fish!" end
+            if not TeleportToDumpGuy() then return false, "Could not reach Dump Guy." end
+            if not InteractWithDumpGuy() then return false, "Could not interact with Dump Guy." end
+            return true, state.Name ~= "" and state.Name or "Fish"
+        end
+        if state and state.Name ~= "" and state.Name ~= "Inventory" then
+            MoveFishToInventory(slot)
+            task.wait(0.3)
+        end
+        local list = FishOverWeight(MAX_LIMIT - 1)
+        if #list == 0 then
+            return false, "No fish at least 2,000,000 kg found."
+        end
+        local fish = list[1]
+        if not MoveFishToHotbar(fish.Name, slotText) then
+            return false, "Could not move " .. fish.Name .. " to hotbar"
+        end
+        task.wait(0.3)
+        if not SelectSlot(slotText, fish.Name) then
+            return false, "Could not equip " .. fish.Name
+        end
+        task.wait(0.3)
+        if not HoldingFish() then return false, "Not holding a fish!" end
+        if not TeleportToDumpGuy() then return false, "Could not reach Dump Guy." end
+        if not InteractWithDumpGuy() then return false, "Could not interact with Dump Guy." end
+        return true, fish.Name
+    end
+
+    task.spawn(function()
+        while true do
+            if Config.AutoGiveFish then
+                local ok, success, message = pcall(GiveFish)
+                if ok and success then
+                    task.wait(1)
+                elseif ok and message and not string.find(message, "No fish at least", 1, true) then
+                    Warn(message)
+                end
+            end
+            task.wait(1)
+        end
+    end)
+
+    Tabs.Main:CreateSection("Dump Guy")
+
+    Tabs.Main:CreateParagraph({
+        Title = "Give fish at least 2,000,000 kg",
+        Content = "Uses an eligible fish already in the selected slot, or moves a fish of at least 2M kg from the inventory. Default: slot 4."
+    })
+
+    Tabs.Main:CreateSlider({
+        Flag = "DumpGuyHotbarSlotSlider",
+        Name = "Hotbar slot for fish",
+        CurrentValue = GetSlot(),
+        Range = {1, 10},
+        Increment = 1,
+        Callback = function(Value)
+            Config.DumpGuyHotbarSlot = math.clamp(math.floor(tonumber(Value) or 4), 1, 10)
+            SaveConfig()
+        end
+    })
+
+    Tabs.Main:CreateButton({
+        Name = "Give 1 Fish >= 2M kg",
+        Callback = function()
+            task.spawn(function()
+                local ok, success, message = pcall(GiveFish)
+                if ok and success then
+                    Notify("Fish removed from hotbar: " .. tostring(message), 4)
+                else
+                    Notify(tostring(ok and message or "Could not give fish."), 4)
+                end
+            end)
+        end
+    })
+
+    Tabs.Main:CreateButton({
+        Name = "Teleport to Dump Guy",
+        Callback = function()
+            task.spawn(function()
+                Notify(TeleportToDumpGuy() and "Teleported to Dump Guy." or "Dump Guy NPC was not found.", 3)
+            end)
+        end
+    })
+
+    Tabs.Main:CreateToggle({
+        Flag = "AutoGiveFishToggle",
+        Name = "Auto Give Fish >= 2M kg",
+        CurrentValue = Config.AutoGiveFish,
+        Callback = function(Value)
+            Config.AutoGiveFish = Value
+            SaveConfig()
+        end
+    })
+end
 
 Tabs.Settings:CreateSection("Chung")
 
@@ -7190,11 +8364,27 @@ Tabs.Main:CreateToggle({
 })
 
 Tabs.Main:CreateToggle({
-    Flag = "FilterSecretFishToggle",
+    Flag = "AutoFarmSecretBossToggle",
     Name = "Tự động câu cá Secret Boss",
-    CurrentValue = Config.FilterSecretFish,
+    CurrentValue = Config.AutoFarmSecretBoss,
     Callback = function(Value)
-        Config.FilterSecretFish = Value
+        Config.AutoFarmSecretBoss = Value
+        if Value then
+            Config.AutoCast = false
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateDropdown({
+    Flag = "AutoSecretBossModeDropdown",
+    Name = "Kích hoạt Secret Boss",
+    Options = {"Always Active", "Only When Weather"},
+    CurrentOption = Config.AutoSecretBossMode == "Only When Weather" and "Only When Weather" or "Always Active",
+    MultipleOptions = false,
+    AllowNone = false,
+    Callback = function(Value)
+        Config.AutoSecretBossMode = Value == "Only When Weather" and Value or "Always Active"
         SaveConfig()
     end
 })
@@ -7281,6 +8471,66 @@ do
         end
     })
 end
+
+Tabs.Main:CreateSection("Cá yêu thích")
+
+Tabs.Main:CreateDropdown({
+    Flag = "FavoriteFishDropdown",
+    Name = "Chọn cá",
+    Options = (function()
+        local names = UzexFilter.FishNames()
+        table.insert(names, 1, "No Selection")
+        return names
+    end)(),
+    CurrentOption = (type(Config.FavoriteFish) == "string" and Config.FavoriteFish ~= "") and Config.FavoriteFish or "No Selection",
+    MultipleOptions = false,
+    AllowNone = false,
+    Callback = function(Value)
+        if type(Value) == "table" then Value = Value[1] end
+        Config.FavoriteFish = (Value == nil or Value == "No Selection") and "" or Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoFavoriteFishToggle",
+    Name = "Tự động yêu thích cá đã chọn",
+    CurrentValue = Config.AutoFavoriteFish,
+    Callback = function(Value)
+        Config.AutoFavoriteFish = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateSection("Tự động bỏ qua cá")
+
+Tabs.Main:CreateDropdown({
+    Flag = "SkipFishListDropdown",
+    Name = "Cá cần bỏ qua",
+    Options = UzexFilter.FishNames(),
+    CurrentOption = table.clone(type(Config.SkipFishList) == "table" and Config.SkipFishList or {}),
+    MultipleOptions = true,
+    Callback = function(Value)
+        local picked = {}
+        if type(Value) == "table" then
+            for _, v in ipairs(Value) do
+                table.insert(picked, v)
+            end
+        end
+        Config.SkipFishList = picked
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoSkipFishToggle",
+    Name = "Tự động bỏ qua cá đã chọn",
+    CurrentValue = Config.AutoSkipFish,
+    Callback = function(Value)
+        Config.AutoSkipFish = Value
+        SaveConfig()
+    end
+})
 
 Tabs.Main:CreateSection("Kỹ năng")
 
@@ -7403,6 +8653,18 @@ Tabs.Main:CreateToggle({
         if Value and LocalPlayer.Character then
             ApplyAntiConfuse(LocalPlayer.Character)
         end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateSlider({
+    Flag = "BlackTortoiseBandSlider",
+    Name = "Black Tortoise Bloodline - vùng an toàn",
+    CurrentValue = tonumber(Config.BlackTortoiseBand) or 0.12,
+    Range = {0.03, 0.17},
+    Increment = 0.01,
+    Callback = function(Value)
+        Config.BlackTortoiseBand = math.clamp(tonumber(Value) or 0.12, 0.03, 0.17)
         SaveConfig()
     end
 })
@@ -7790,14 +9052,14 @@ do
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = HttpService:JSONEncode({
-                    username = "Uzex Hub",
+                    username = "UZEX Hub",
                     embeds = {
                         {
                             title = title,
                             description = description,
                             color = color or COLOR_INFO,
                             fields = fields,
-                            footer = { text = "Uzex Hub" },
+                            footer = { text = "UZEX Hub" },
                             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
                         },
                     },
@@ -7834,7 +9096,7 @@ do
 
     task.spawn(function()
         task.wait(4)
-        sendWebhook("Uzex Hub", "The script is running.", COLOR_INFO, {})
+        sendWebhook("UZEX Hub", "The script is running.", COLOR_INFO, {})
     end)
 
     task.spawn(function()
@@ -8259,7 +9521,7 @@ do
     end
 
     local function isOurs(inst)
-        return inst:FindFirstAncestor("UzexHubUI") ~= nil or inst:FindFirstAncestor("UzexKeyPrompt") ~= nil
+        return inst:FindFirstAncestor("UZEXHubUI") ~= nil or inst:FindFirstAncestor("UzexKeyPrompt") ~= nil
     end
 
     local function watch(inst)
