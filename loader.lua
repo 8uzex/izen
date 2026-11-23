@@ -86,7 +86,7 @@ local Assets = Library.Assets
 
 -- Runtime UI language support. Internal game values (Normal/Nightmare, item IDs,
 -- remote arguments, etc.) are intentionally not translated.
-Library.Language = "Tiếng Việt"
+Library.Language = "English"
 Library._TextObjects = setmetatable({}, { __mode = "k" })
 local EN_TRANSLATIONS = {
     ["UZEX Hub"] = "UZEX Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
@@ -1828,7 +1828,8 @@ local Config = {
     AutoDailyQuest = false,
     TicketQuestMode = "Hard",
     AutoEquipBestBait = false,
-    AutoEquipRod = false
+    AutoEquipRod = false,
+    Language = "English"
 }
 
 local SAVE_FOLDER = "UZEXHub"
@@ -1857,6 +1858,7 @@ end
 LoadConfig()
 Config.AutoFarmIsland = false -- Auto Farm Fish was removed from the UI
 Library.NotificationsEnabled = Config.NotificationsEnabled ~= false
+Library.Language = (Config.Language == "Tiếng Việt") and "Tiếng Việt" or "English" -- saved language
 if type(Config.SkillOrder) ~= "table" then
     Config.SkillOrder = {"Z", "X", "C", "V"}
 else
@@ -3934,13 +3936,26 @@ task.spawn(function()
                     end
                 else
                     SecretFarmReset()
-                    if not UzexFilter.HoldingRod() then
-                        pcall(function()
-                            ToggleHotbar:InvokeServer("1")
-                        end)
-                        task.wait(0.15)
+                    -- the rod must be in hand before casting: equip it, wait until it is
+                    -- really held (retry), and only then cast
+                    if not UzexFilter.HoldingRod() and not UzexFilter.Busy then
+                        local tries = 0
+                        while not UzexFilter.HoldingRod() and tries < 4 and SecretFarmAllowed() do
+                            tries = tries + 1
+                            pcall(function()
+                                ToggleHotbar:InvokeServer("1")
+                            end)
+                            local waited = 0
+                            while not UzexFilter.HoldingRod() and waited < 0.6 do
+                                task.wait(0.05)
+                                waited = waited + 0.05
+                            end
+                        end
                     end
-                    SecretFarmCast()
+                    if UzexFilter.HoldingRod() then
+                        task.wait(0.1)
+                        SecretFarmCast()
+                    end
                 end
             end)
         end
@@ -6965,6 +6980,8 @@ Tabs.Settings:CreateDropdown({
     Callback = function(Value)
         if type(Value) == "table" then Value = Value[1] end
         Library:SetLanguage(Value)
+        Config.Language = Library.Language
+        SaveConfig()
     end
 })
 
@@ -8422,7 +8439,7 @@ do
     -- keeps the fishing rod in hand (waits while the fish filter is swapping the rod itself)
     task.spawn(function()
         while task.wait(0.5) do
-            if Config.AutoEquipRod and not UzexFilter.Busy and not UzexFilter.NeedRod then
+            if (Config.AutoEquipRod or UzexFilter.SecretFarmAllowed()) and not UzexFilter.Busy and not UzexFilter.NeedRod then
                 local char = LocalPlayer.Character
                 if char and char:FindFirstChild("HumanoidRootPart")
                     and char:GetAttribute("Type") ~= "Fishing Rod"
