@@ -2,8 +2,64 @@ local ProtectionConfig = {
     SecretKey = "2009",
     
     -- The name of your Hub (shown in the kick message if they try to bypass)
-    HubName = "Uzex Hub"
+    HubName = "UZEX Hub"
 }
+
+-------------------------------------------------------------------------------
+-- Arceus X compatibility layer (added). Fills in missing executor functions
+-- with safe fallbacks so the rest of the script never errors on them.
+-------------------------------------------------------------------------------
+pcall(function()
+    local G = (type(getgenv) == "function" and getgenv()) or getfenv(0)
+    local function def(name, value)
+        if G[name] == nil and value ~= nil then
+            G[name] = value
+        end
+    end
+
+    -- HTTP request: Arceus X usually exposes request / http_request
+    def("request", http_request or (syn and syn.request) or (fluxus and fluxus.request) or (http and http.request))
+    def("http_request", request)
+
+    -- Clipboard
+    def("setclipboard", toclipboard or (Clipboard and Clipboard.set) or set_clipboard)
+
+    -- Queue on teleport (script already handles it being nil)
+    def("queue_on_teleport", queueonteleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport))
+
+    -- firesignal fallback built on getconnections
+    if G.firesignal == nil and type(getconnections) == "function" then
+        G.firesignal = function(signal, ...)
+            for _, conn in ipairs(getconnections(signal)) do
+                if conn.Fire then
+                    conn:Fire(...)
+                elseif conn.Function then
+                    task.spawn(conn.Function, ...)
+                end
+            end
+        end
+    end
+
+    -- fireproximityprompt fallback
+    if G.fireproximityprompt == nil then
+        G.fireproximityprompt = function(prompt)
+            if prompt and prompt:IsA("ProximityPrompt") then
+                prompt:InputHoldBegin()
+                task.wait((prompt.HoldDuration or 0) + 0.05)
+                prompt:InputHoldEnd()
+            end
+        end
+    end
+
+    -- Tell the user which executor/features were detected
+    local name = (type(identifyexecutor) == "function" and select(1, identifyexecutor())) or "Unknown"
+    print(("[Uzex] Executor: %s | file=%s | getconnections=%s | request=%s"):format(
+        tostring(name),
+        tostring(type(writefile) == "function"),
+        tostring(type(getconnections) == "function"),
+        tostring(type(G.request) == "function")
+    ))
+end)
 
 -------------------------------------------------------------------------------
 -- 👇 YOUR MAIN SCRIPT CODE STARTS HERE 👇
@@ -12,28 +68,1394 @@ local ProtectionConfig = {
 print(ProtectionConfig.HubName .. " Loaded Successfully!")
 
 
+
 -------------------------------------------------------------------------------
--- Uzex UI: a small, smooth, dependency-free UI library.
--- Same Library / Window / Tab API the rest of this script already uses.
--- Colours live in Library.Theme below.
+-- UZEXUI (new UI library)
+-- The old UI library was removed. UZEXUI is embedded below and a thin adapter
+-- keeps the Library / Window / Tab API (CreateWindow, CreateTab, CreateToggle,
+-- CreateSlider, ...) the rest of the script already uses.
 -------------------------------------------------------------------------------
 local Library = (function()
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
 
+----------------------------------------------------------------- UZEXUI
+local UzexUI = (function()
+--[[
+    UzexUI - UI library nhẹ, đẹp, ít lag (PC + Mobile)
+    - Không dùng RenderStepped/Heartbeat loop
+    - Chỉ tween ngắn khi tương tác, kéo thả chỉ xử lý khi đang kéo
+    - Tab chỉ bật/tắt Visible, không tạo lại
+]]
+
+local UzexUI = {}
+
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Players = game:GetService("Players")
+
+local Theme = {
+    Bg = Color3.fromRGB(12, 12, 12),
+    Sidebar = Color3.fromRGB(8, 8, 8),
+    Element = Color3.fromRGB(24, 24, 24),
+    ElementHover = Color3.fromRGB(36, 36, 36),
+    Accent = Color3.fromRGB(255, 255, 255),
+    OnAccent = Color3.fromRGB(10, 10, 10),
+    Text = Color3.fromRGB(240, 240, 240),
+    SubText = Color3.fromRGB(140, 140, 140),
+    Stroke = Color3.fromRGB(50, 50, 50),
+}
+
+local TI = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+local function New(class, props, children)
+    local o = Instance.new(class)
+    local parent
+    for k, v in pairs(props or {}) do
+        if k == "Parent" then parent = v else o[k] = v end
+    end
+    for _, c in ipairs(children or {}) do c.Parent = o end
+    if parent then o.Parent = parent end
+    return o
+end
+
+local function Corner(o, r)
+    return New("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = o })
+end
+
+local function Stroke(o, color, t)
+    return New("UIStroke", {
+        Color = color or Theme.Stroke, Thickness = t or 1,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = o,
+    })
+end
+
+local HasBg = false -- bật khi có ảnh nền, để các hàng hơi trong suốt
+
+local function Card(o, r)
+    Corner(o, r or 9)
+    if HasBg then o.BackgroundTransparency = 0.25 end
+    local st = Stroke(o, Color3.fromRGB(255, 255, 255), 1)
+    st.Transparency = 0.93
+    return st
+end
+
+local function Tween(o, props, info)
+    TweenService:Create(o, info or TI, props):Play()
+end
+
+local function Label(props)
+    props.BackgroundTransparency = 1
+    props.Font = props.Font or Enum.Font.GothamMedium
+    props.TextSize = props.TextSize or 13
+    props.TextColor3 = props.TextColor3 or Theme.Text
+    props.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
+    return New("TextLabel", props)
+end
+
+local function IsPress(i)
+    return i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch
+end
+
+local function IsMove(i)
+    return i.UserInputType == Enum.UserInputType.MouseMovement
+        or i.UserInputType == Enum.UserInputType.Touch
+end
+
+local GlobalConns = {}
+local function UIS(signal, fn)
+    local c = signal:Connect(fn)
+    table.insert(GlobalConns, c)
+    return c
+end
+
+local function MakeDraggable(handle, target)
+    local dragging, startInput, startPos
+    handle.InputBegan:Connect(function(i)
+        if IsPress(i) then
+            dragging, startInput, startPos = true, i.Position, target.Position
+            i.Changed:Connect(function()
+                if i.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UIS(UserInputService.InputChanged, function(i)
+        if dragging and IsMove(i) then
+            local d = i.Position - startInput
+            target.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y
+            )
+        end
+    end)
+end
+
+local function GetGuiParent()
+    local ok, ui = pcall(function() return gethui and gethui() end)
+    if ok and ui then return ui end
+    ok, ui = pcall(function() return game:GetService("CoreGui") end)
+    if ok and ui then return ui end
+    return Players.LocalPlayer:WaitForChild("PlayerGui")
+end
+
+-- ========================= LOGO =========================
+-- Logo nhúng sẵn (PNG base64). Cần executor có writefile + getcustomasset.
+-- Nếu executor không hỗ trợ thì dùng opts.Logo = "rbxassetid://ID" hoặc tự về thanh trắng nhỏ.
+local LOGO_FILE = "uzex_logo_v2.png"
+local LOGO_B64 = [[
+iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAWfmNhQlgAABZ+anVtYgAAAB5qdW1kYzJwYQARABCAAACqADibcQNjMnBhAAAAFlhqdW1iAAAA
+R2p1bWRjMm1hABEAEIAAAKoAOJtxA3VybjpjMnBhOjhmZWQ0N2I4LTdhZmItNDc1MC1hNDI4LWQxMDY2ZDdiZWM4MQAAAAOTanVtYgAAAClqdW1kYzJhcwAR
+ABCAAACqADibcQNjMnBhLmFzc2VydGlvbnMAAAAAuGp1bWIAAABEanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5pbmdyZWRpZW50LnYzAAAAABhjMnNoSQLh
+yXJ0ToZ28cLCXQERyQAAAGxjYm9yo2lkYzpmb3JtYXRpaW1hZ2UvcG5namluc3RhbmNlSUR4LHhtcDppaWQ6MzNkMjc5ZmYtYzE0Yy00Zjc3LWExZTQtN2Iy
+YWM0ZWRmN2MzbHJlbGF0aW9uc2hpcGhwYXJlbnRPZgAAAeJqdW1iAAAAQWp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuYWN0aW9ucy52MgAAAAAYYzJzaPsm
+X+5oSSPOaCFV++gUa28AAAGZY2JvcqJnYWN0aW9uc4KiZmFjdGlvbmtjMnBhLm9wZW5lZGpwYXJhbWV0ZXJzoWtpbmdyZWRpZW50c4GiY3VybHgtc2VsZiNq
+dW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5pbmdyZWRpZW50LnYzZGhhc2hYINlLO1vOwpmzR1w3pWjqOdPdbjfpwWq+GX5THYbhTc9tpGZhY3Rpb254HWNv
+bS5hbnRocm9waWMuY2xhdWRlLnByb3ZpZGVkanBhcmFtZXRlcnOheB9jb20uYW50aHJvcGljLm9yaWdpbi1jb25maWRlbmNlZ3Vua25vd25rZGVzY3JpcHRp
+b254ZkNsYXVkZSBwcm92aWRlZCB0aGlzIGZpbGUgYXQgdGhlIHJlcXVlc3Qgb2YgYSB1c2VyIGFuZCBtYXkgaGF2ZSBjcmVhdGVkIG9yIG1vZGlmaWVkIHRo
+ZSBmaWxlIGNvbnRlbnRzLm1zb2Z0d2FyZUFnZW50oWRuYW1lZkNsYXVkZXJhbGxBY3Rpb25zSW5jbHVkZWT1AAAAyGp1bWIAAABAanVtZGNib3IAEQAQgAAA
+qgA4m3ETYzJwYS5oYXNoLmRhdGEAAAAAGGMyc2jgPYD1GREGdlX9K61Wl4k7AAAAgGNib3KlY2FsZ2ZzaGEyNTZjcGFkTQAAAAAAAAAAAAAAAABkaGFzaFgg
+u8qEz/eVIsqSVYj0ND0Dv6lmLBw+oARM2JdtBbH4NWxkbmFtZW5qdW1iZiBtYW5pZmVzdGpleGNsdXNpb25zgaJlc3RhcnQYIWZsZW5ndGgZFooAAAI+anVt
+YgAAACdqdW1kYzJjbAARABCAAACqADibcQNjMnBhLmNsYWltLnYyAAAAAg9jYm9ypWNhbGdmc2hhMjU2aXNpZ25hdHVyZXhNc2VsZiNqdW1iZj0vYzJwYS91
+cm46YzJwYTo4ZmVkNDdiOC03YWZiLTQ3NTAtYTQyOC1kMTA2NmQ3YmVjODEvYzJwYS5zaWduYXR1cmVqaW5zdGFuY2VJRHgseG1wOmlpZDowNDZhZjNhNS04
+MjFiLTQxMzktOWEwMC1lNDZjYWQ0YjU5OGFyY3JlYXRlZF9hc3NlcnRpb25zg6JjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3Jl
+ZGllbnQudjNkaGFzaFgg2Us7W87CmbNHXDelaOo5091uN+nBar4ZflMdhuFNz22iY3VybHgqc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5hY3Rp
+b25zLnYyZGhhc2hYINNpeLGAwPhH3mi4lxdjlQGFSuAjKXqU6SSAlVkssnBtomN1cmx4KXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaGFzaC5k
+YXRhZGhhc2hYIIf+H/StsJR3XaaLfCNNQfdTb05vmupSX8gCSs4z3PxBdGNsYWltX2dlbmVyYXRvcl9pbmZvo2RuYW1lb0FudGhyb3BpYyBGaWxlc2d2ZXJz
+aW9uZTEuMC4wa3NwZWNWZXJzaW9uZTIuNC4wAAAQOGp1bWIAAAAoanVtZGMyY3MAEQAQgAAAqgA4m3EDYzJwYS5zaWduYXR1cmUAAAAQCGNib3LShFkCEqIB
+JhghWQIKMIICBjCCAY2gAwIBAgIUQOWgCu7COdC+uIP6BkIFPWdVEwAwCgYIKoZIzj0EAwMwSTEXMBUGA1UEChMOQW50aHJvcGljLCBQQkMxLjAsBgNVBAMT
+JUFudGhyb3BpYyBDb250ZW50IENyZWRlbnRpYWxzIFJvb3QgQ0EwHhcNMjYwODA3MTg0MzU2WhcNMjgwODA2MTk0MzU2WjBEMRcwFQYDVQQKEw5BbnRocm9w
+aWMsIFBCQzEpMCcGA1UEAxMgQW50aHJvcGljIENsYXVkZSBDb250ZW50IFNpZ25pbmcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASYegpry1AYBRTVNL1C
+pTlbROnY3dey+UrsF9C3phYrATN3ZHf93Mo8RQN0KOUuOn19P4oWNFWe5n2/She9N7eTo1gwVjAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lBA4wDAYKKwYBBAGD
+6F4CATAMBgNVHRMBAf8EAjAAMB8GA1UdIwQYMBaAFM5R4gSBTmRbI/jjxM+aPpzB11zCMAoGCCqGSM49BAMDA2cAMGQCMDFzHRSeAXrSy1WOzkbhPZ6Km2wG
+TmZ/2gK18k8BQGXyqz88Rdrz6CTX9flAnYNVxgIwcF9c3fVhqmJKpi+UhasNUMko69cyX6STPfta3Q8EjyzDjzoyrol46FP6VFHhvUcJoWNwYWRZDZ4AAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+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
+]]
+
+local B64CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local function B64Decode(data)
+    data = data:gsub("[^%w%+/=]", "")
+    local lookup = {}
+    for i = 1, #B64CHARS do lookup[B64CHARS:sub(i, i)] = i - 1 end
+    local out, n = {}, 0
+    for i = 1, #data, 4 do
+        local a, b = data:sub(i, i), data:sub(i + 1, i + 1)
+        local c, d = data:sub(i + 2, i + 2), data:sub(i + 3, i + 3)
+        local v = (lookup[a] or 0) * 262144 + (lookup[b] or 0) * 4096
+            + (lookup[c] or 0) * 64 + (lookup[d] or 0)
+        local b1, b2, b3 = math.floor(v / 65536) % 256, math.floor(v / 256) % 256, v % 256
+        n = n + 1
+        if c == "=" then
+            out[n] = string.char(b1)
+        elseif d == "=" then
+            out[n] = string.char(b1, b2)
+        else
+            out[n] = string.char(b1, b2, b3)
+        end
+    end
+    return table.concat(out)
+end
+
+local function LoadLogo(custom)
+    if custom and custom ~= "" then return custom end
+    local ok, asset = pcall(function()
+        if not (isfile and isfile(LOGO_FILE)) then
+            writefile(LOGO_FILE, B64Decode(LOGO_B64))
+        end
+        return getcustomasset(LOGO_FILE)
+    end)
+    if ok and asset and asset ~= "" then return asset end
+    return nil
+end
+
+-- ========================= BACKGROUND (ảnh tĩnh) =========================
+-- Mặc định dùng ảnh nền nhúng sẵn (JPG base64), không cần video hay file ngoài.
+-- opts.Background:
+--   (bỏ trống)         -> không nền (mặc định)
+--   "rbxassetid://ID"  -> ảnh đã upload lên Roblox
+--   "ten_file.png"     -> file ảnh trong thư mục workspace của executor
+--   false              -> tắt nền ảnh
+local BG_FILE = "uzex_bg_v1.jpg"
+local BG_B64 = ""
+
+local function LoadBackground(src)
+    if type(src) == "string" and src ~= "" then
+        if src:find("^rbxasset") then return src end
+        local ok, asset = pcall(function() return getcustomasset(src) end)
+        return ok and asset or nil
+    end
+    return nil -- mặc định: không dùng ảnh nền
+end
+
+-- ========================= WINDOW =========================
+function UzexUI:CreateWindow(opts)
+    opts = opts or {}
+    local guiName = opts.Name or "UzexUI"
+    local parent = GetGuiParent()
+    if UzexUI._current then UzexUI._current:Destroy() end
+    local old = parent:FindFirstChild(guiName)
+    if old then old:Destroy() end
+
+    local Gui = New("ScreenGui", {
+        Name = guiName, ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        IgnoreGuiInset = true, Parent = parent,
+    })
+
+    local Main = New("Frame", {
+        Name = "Main", Size = UDim2.fromOffset(560, 340),
+        Position = UDim2.new(0.5, -280, 0.5, -170),
+        BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
+        ClipsDescendants = true, Parent = Gui,
+    })
+    Corner(Main, 14)
+    New("UIGradient", {
+        Rotation = 90,
+        Color = ColorSequence.new(Color3.fromRGB(22, 22, 22), Color3.fromRGB(9, 9, 9)),
+        Parent = Main,
+    })
+    local mainStroke = Stroke(Main, Color3.new(1, 1, 1), 1)
+    New("UIGradient", {
+        Rotation = 90,
+        Transparency = NumberSequence.new({
+            NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 0.9),
+        }),
+        Parent = mainStroke,
+    })
+    local introScale = New("UIScale", { Scale = 0.92, Parent = Main })
+    -- Lớp phủ mờ dùng cho hiệu ứng đóng/mở (chỉ hiện trong lúc chạy hiệu ứng)
+    local fade = New("Frame", {
+        Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 100, Visible = false, Parent = Main,
+    })
+    Corner(fade, 14)
+    Tween(introScale, { Scale = 1 }, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
+
+    -- Ảnh nền (tạo trước để nằm dưới mọi thứ khác)
+    HasBg = false
+    local bgAsset = LoadBackground(opts.Background)
+    if bgAsset then
+        HasBg = true
+        local bg = New("ImageLabel", {
+            Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = bgAsset,
+            ScaleType = Enum.ScaleType.Crop, Parent = Main,
+        })
+        Corner(bg, 14)
+        local shade = New("Frame", {
+            Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0),
+            BackgroundTransparency = 0, BorderSizePixel = 0, Parent = Main,
+        })
+        Corner(shade, 14)
+        New("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(0.35, 0.6), Parent = shade })
+    end
+
+    local Top = New("Frame", {
+        Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = Theme.Sidebar,
+        BorderSizePixel = 0, Parent = Main,
+    })
+    Corner(Top, 12)
+    New("Frame", { -- che góc bo dưới của topbar
+        Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12),
+        BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = Top,
+    })
+    New("Frame", {
+        Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1),
+        BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = Top,
+    })
+    local logoAsset = LoadLogo(opts.Logo) -- chỉ dùng cho nút mở menu
+    New("Frame", {
+        Size = UDim2.fromOffset(4, 16), Position = UDim2.fromOffset(14, 12),
+        BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, Parent = Top,
+    }, { New("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+    Label({
+        Text = opts.Title or "UZEX Hub", Font = Enum.Font.GothamBold, TextSize = 15,
+        Position = UDim2.fromOffset(26, 0), Size = UDim2.new(0.5, 0, 1, 0), Parent = Top,
+    })
+    Label({
+        Text = opts.Subtitle or "", TextSize = 12, TextColor3 = Theme.SubText,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        Position = UDim2.new(0.4, 0, 0, 0), Size = UDim2.new(0.6, -84, 1, 0), Parent = Top,
+    })
+
+    local function TopButton(text, xOff, color)
+        local b = New("TextButton", {
+            Text = text, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = Theme.Text,
+            AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, xOff, 0.5, 0),
+            Size = UDim2.fromOffset(26, 26), BackgroundColor3 = Theme.Element,
+            AutoButtonColor = false, Parent = Top,
+        })
+        Corner(b, 7)
+        b.MouseEnter:Connect(function() Tween(b, { BackgroundColor3 = color }) end)
+        b.MouseLeave:Connect(function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
+        return b
+    end
+    local CloseBtn = TopButton("×", -10, Color3.fromRGB(220, 70, 80))
+    local MinBtn = TopButton("–", -42, Theme.ElementHover)
+
+    MakeDraggable(Top, Main)
+
+    -- Sidebar + content
+    local Side = New("ScrollingFrame", {
+        Position = UDim2.fromOffset(0, 40), Size = UDim2.new(0, 138, 1, -86),
+        BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0,
+        ScrollBarThickness = 0, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Parent = Main,
+    })
+    New("UIListLayout", { Padding = UDim.new(0, 4), Parent = Side })
+    New("UIPadding", {
+        PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8),
+        PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), Parent = Side,
+    })
+
+    local Content = New("Frame", {
+        Position = UDim2.fromOffset(138, 40), Size = UDim2.new(1, -138, 1, -40),
+        BackgroundTransparency = 1, Parent = Main,
+    })
+
+    -- Footer (chỉ avatar)
+    local Footer = New("Frame", {
+        Position = UDim2.new(0, 0, 1, -46), Size = UDim2.fromOffset(138, 46),
+        BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = Main,
+    })
+    New("Frame", {
+        Size = UDim2.new(1, -16, 0, 1), Position = UDim2.fromOffset(8, 0),
+        BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = Footer,
+    })
+    local lp = Players.LocalPlayer
+    local avatar = New("ImageLabel", {
+        Size = UDim2.fromOffset(32, 32), Position = UDim2.fromOffset(10, 8),
+        BackgroundColor3 = Theme.Element, BorderSizePixel = 0, Parent = Footer,
+    })
+    Corner(avatar, 16)
+    task.spawn(function()
+        if not lp then return end
+        local ok, img = pcall(function()
+            return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+        end)
+        if ok and avatar.Parent then avatar.Image = img end
+    end)
+
+    if HasBg then
+        Top.BackgroundTransparency = 0.35
+        for _, f in ipairs(Top:GetChildren()) do
+            if f:IsA("Frame") and f.BackgroundColor3 == Theme.Sidebar then
+                f.BackgroundTransparency = 0.35
+            end
+        end
+        Side.BackgroundTransparency = 0.45
+        Footer.BackgroundTransparency = 0.45
+    end
+
+    -- Notifications
+    local NotifyHolder = New("Frame", {
+        AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, -14),
+        Size = UDim2.fromOffset(250, 300), BackgroundTransparency = 1, Parent = Gui,
+    })
+    New("UIListLayout", {
+        Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Bottom,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+        SortOrder = Enum.SortOrder.LayoutOrder, Parent = NotifyHolder,
+    })
+
+    local Window = { Gui = Gui, Main = Main, Tabs = {}, Active = nil, ToggleList = {} }
+    UzexUI._current = Window
+
+    -- Tắt hẳn script UI: tắt các toggle đang bật, ngắt sự kiện, xoá menu + logo
+    function Window:Destroy()
+        if Window.Destroyed then return end
+        Window.Destroyed = true
+        for _, t in ipairs(Window.ToggleList) do
+            if t.get() and t.cb then task.spawn(t.cb, false) end
+        end
+        for _, c in ipairs(GlobalConns) do pcall(function() c:Disconnect() end) end
+        table.clear(GlobalConns)
+        if UzexUI._current == Window then UzexUI._current = nil end
+        Gui:Destroy()
+        if opts.OnClose then task.spawn(opts.OnClose) end
+    end
+
+    function Window:Notify(o)
+        o = o or {}
+        local card = New("Frame", {
+            Size = UDim2.fromOffset(250, 52), BackgroundColor3 = Theme.Bg,
+            BackgroundTransparency = 1, Parent = NotifyHolder,
+        })
+        Corner(card, 9)
+        local st = Stroke(card, Theme.Accent)
+        st.Transparency = 1
+        local bar = New("Frame", {
+            Size = UDim2.new(0, 3, 1, -16), Position = UDim2.fromOffset(0, 8),
+            BackgroundColor3 = Theme.Accent, BackgroundTransparency = 1,
+            BorderSizePixel = 0, Parent = card,
+        })
+        local t1 = Label({
+            Text = o.Title or "Thông báo", Font = Enum.Font.GothamBold, TextSize = 13,
+            Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -24, 0, 16),
+            TextTransparency = 1, Parent = card,
+        })
+        local t2 = Label({
+            Text = o.Content or "", TextSize = 12, TextColor3 = Theme.SubText,
+            Position = UDim2.fromOffset(12, 25), Size = UDim2.new(1, -24, 0, 20),
+            TextTruncate = Enum.TextTruncate.AtEnd, TextTransparency = 1, Parent = card,
+        })
+        Tween(card, { BackgroundTransparency = 0.05 })
+        Tween(bar, { BackgroundTransparency = 0 })
+        Tween(st, { Transparency = 0 })
+        Tween(t1, { TextTransparency = 0 })
+        Tween(t2, { TextTransparency = 0 })
+        task.delay(o.Duration or 3, function()
+            if not card.Parent then return end
+            Tween(card, { BackgroundTransparency = 1 })
+            Tween(bar, { BackgroundTransparency = 1 })
+            Tween(st, { Transparency = 1 })
+            Tween(t1, { TextTransparency = 1 })
+            Tween(t2, { TextTransparency = 1 })
+            task.wait(0.2)
+            card:Destroy()
+        end)
+    end
+
+    -- Hiện/ẩn
+    local visible = true
+    local toggleId = 0
+    local EASE_OUT = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+    local EASE_IN = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+    function Window:Toggle(v)
+        if v == nil then v = not visible end
+        if v == visible then return end
+        visible = v
+        toggleId = toggleId + 1
+        local id = toggleId
+        if v then
+            -- MỞ: phóng to bật nhẹ + mờ dần
+            if Window.Fab then Window.Fab.Visible = false end
+            Main.Visible = true
+            introScale.Scale = 0.8
+            fade.BackgroundTransparency = 0.4
+            fade.Visible = true
+            Tween(introScale, { Scale = 1 }, EASE_OUT)
+            Tween(fade, { BackgroundTransparency = 1 }, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out))
+            task.delay(0.22, function()
+                if toggleId == id and not Window.Destroyed then fade.Visible = false end
+            end)
+        else
+            -- ĐÓNG: thu nhỏ nhanh + tối dần, rồi hiện nút logo (bật ra)
+            fade.BackgroundTransparency = 1
+            fade.Visible = true
+            Tween(introScale, { Scale = 0.8 }, EASE_IN)
+            Tween(fade, { BackgroundTransparency = 0.35 }, EASE_IN)
+            task.delay(0.14, function()
+                if toggleId ~= id or Window.Destroyed then return end
+                Main.Visible = false
+                fade.Visible = false
+                fade.BackgroundTransparency = 1
+                if Window.Fab then
+                    Window.Fab.Visible = true
+                    if Window.FabPop then Window.FabPop() end
+                end
+            end)
+        end
+    end
+    MinBtn.MouseButton1Click:Connect(function() Window:Toggle(false) end)
+    CloseBtn.MouseButton1Click:Connect(function()
+        if Window.Destroyed then return end
+        fade.BackgroundTransparency = 1
+        fade.Visible = true
+        Tween(introScale, { Scale = 0.8 }, EASE_IN)
+        Tween(fade, { BackgroundTransparency = 0.35 }, EASE_IN)
+        task.delay(0.14, function() Window:Destroy() end)
+    end)
+
+    Window.ToggleKey = opts.ToggleKey or Enum.KeyCode.RightShift
+    UIS(UserInputService.InputBegan, function(i, gpe)
+        if not gpe and i.KeyCode == Window.ToggleKey then Window:Toggle() end
+    end)
+
+    function Window:SetKeybind(k)
+        if typeof(k) == "EnumItem" then Window.ToggleKey = k end
+    end
+    function Window:SelectTab(tab)
+        if not tab or Window.Active == tab then return end
+        if Window.Active then Window.Active.SetActive(false) end
+        Window.Active = tab
+        tab.SetActive(true)
+    end
+
+    -- Nút logo: chỉ hiện khi menu đang ẩn, bấm để mở menu (kéo được, kéo xong không mở)
+    do
+        local fab
+        if logoAsset then
+            fab = New("ImageButton", {
+                Size = UDim2.fromOffset(34, 34), Position = UDim2.new(0, 14, 0.5, -17),
+                BackgroundTransparency = 1, Image = logoAsset, AutoButtonColor = false,
+                Visible = false, Parent = Gui,
+            })
+            Corner(fab, 9)
+        else
+            fab = New("TextButton", {
+                Text = "U", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = Theme.OnAccent,
+                Size = UDim2.fromOffset(40, 40), Position = UDim2.new(0, 14, 0.5, -20),
+                BackgroundColor3 = Theme.Accent, AutoButtonColor = false,
+                Visible = false, Parent = Gui,
+            })
+            Corner(fab, 20)
+        end
+        Window.Fab = fab
+        MakeDraggable(fab, fab)
+
+        -- Hiệu ứng logo: viền sáng nhấp nháy, bật ra khi hiện, phóng nhẹ khi rê chuột, nhấn thì co lại
+        local fabScale = New("UIScale", { Scale = 1, Parent = fab })
+        local glow = Stroke(fab, Color3.new(1, 1, 1), 1.5)
+        glow.Transparency = 0.8
+        Tween(glow, { Transparency = 0.15 },
+            TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true))
+        function Window.FabPop()
+            fabScale.Scale = 0
+            Tween(fabScale, { Scale = 1 }, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
+        end
+        fab.MouseEnter:Connect(function() Tween(fabScale, { Scale = 1.12 }) end)
+        fab.MouseLeave:Connect(function() Tween(fabScale, { Scale = 1 }) end)
+
+        local downPos
+        fab.InputBegan:Connect(function(i)
+            if IsPress(i) then
+                downPos = i.Position
+                Tween(fabScale, { Scale = 0.88 }, TweenInfo.new(0.08))
+            end
+        end)
+        fab.InputEnded:Connect(function(i)
+            if IsPress(i) then
+                Tween(fabScale, { Scale = 1 }, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
+                if downPos and (i.Position - downPos).Magnitude < 6 then
+                    Window:Toggle(true)
+                end
+            end
+            downPos = nil
+        end)
+    end
+
+    -- ========================= TAB =========================
+    function Window:AddTab(name)
+        local Tab = {}
+
+        local btn = New("TextButton", {
+            Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Theme.Element,
+            BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = Side,
+        })
+        Corner(btn, 8)
+        local bar = New("Frame", {
+            Size = UDim2.fromOffset(3, 14), Position = UDim2.new(0, 4, 0.5, -7),
+            BackgroundColor3 = Theme.Accent, BackgroundTransparency = 1,
+            BorderSizePixel = 0, Parent = btn,
+        })
+        Corner(bar, 2)
+        local txt = Label({
+            Text = name, TextColor3 = Theme.SubText,
+            Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -20, 1, 0), Parent = btn,
+        })
+
+        local Page = New("ScrollingFrame", {
+            Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false,
+            BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.Accent, ScrollBarImageTransparency = 0.6,
+            CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = Content,
+        })
+        New("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Page })
+        New("UIPadding", {
+            PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10),
+            PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 10), Parent = Page,
+        })
+        Tab.Page = Page
+        Label({
+            Text = name, Font = Enum.Font.GothamBold, TextSize = 18, LayoutOrder = -10,
+            Size = UDim2.new(1, 0, 0, 28), Parent = Page,
+        })
+
+        local function setActive(on)
+            Page.Visible = on
+            Tween(btn, { BackgroundTransparency = on and (HasBg and 0.25 or 0) or 1 })
+            Tween(bar, { BackgroundTransparency = on and 0 or 1 })
+            Tween(txt, { TextColor3 = on and Theme.Text or Theme.SubText })
+        end
+        Tab.SetActive = setActive
+
+        btn.MouseButton1Click:Connect(function()
+            if Window.Active == Tab then return end
+            if Window.Active then Window.Active.SetActive(false) end
+            Window.Active = Tab
+            setActive(true)
+        end)
+        btn.MouseEnter:Connect(function()
+            if Window.Active ~= Tab then Tween(btn, { BackgroundTransparency = 0.55 }) end
+        end)
+        btn.MouseLeave:Connect(function()
+            if Window.Active ~= Tab then Tween(btn, { BackgroundTransparency = 1 }) end
+        end)
+        if not Window.Active then
+            Window.Active = Tab
+            setActive(true)
+        end
+
+        local function Row(h)
+            local r = New("Frame", {
+                Size = UDim2.new(1, 0, 0, h or 36), BackgroundColor3 = Theme.Element,
+                BorderSizePixel = 0, Parent = Page,
+            })
+            Card(r)
+            return r
+        end
+
+        function Tab:AddSection(title)
+            local f = New("Frame", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Parent = Page })
+            local dot = New("Frame", {
+                Size = UDim2.fromOffset(5, 5), Position = UDim2.new(0, 2, 0.5, -2),
+                BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, Parent = f,
+            })
+            Corner(dot, 3)
+            Label({
+                Text = string.upper(title), Font = Enum.Font.GothamBold, TextSize = 11,
+                TextColor3 = Theme.SubText, Position = UDim2.fromOffset(14, 0),
+                Size = UDim2.new(1, -14, 1, 0), Parent = f,
+            })
+        end
+
+        function Tab:AddLabel(text)
+            local r = Row(30)
+            local l = Label({
+                Text = text, TextColor3 = Theme.SubText, TextSize = 12,
+                Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -24, 1, 0), Parent = r,
+            })
+            return { Set = function(_, t) l.Text = t end }
+        end
+
+        function Tab:AddButton(o)
+            local b = New("TextButton", {
+                Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Element,
+                Text = "", AutoButtonColor = false, Parent = Page,
+            })
+            Card(b)
+            Label({
+                Text = o.Name, Position = UDim2.fromOffset(12, 0),
+                Size = UDim2.new(1, -24, 1, 0), Parent = b,
+            })
+            b.MouseEnter:Connect(function() Tween(b, { BackgroundColor3 = Theme.ElementHover }) end)
+            b.MouseLeave:Connect(function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
+            b.MouseButton1Click:Connect(function()
+                Tween(b, { BackgroundColor3 = Theme.Stroke })
+                task.delay(0.12, function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
+                if o.Callback then task.spawn(o.Callback) end
+            end)
+        end
+
+        function Tab:AddToggle(o)
+            local state = o.Default == true
+            local r = New("TextButton", {
+                Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Element,
+                Text = "", AutoButtonColor = false, Parent = Page,
+            })
+            Card(r)
+            Label({
+                Text = o.Name, Position = UDim2.fromOffset(12, 0),
+                Size = UDim2.new(1, -70, 1, 0), Parent = r,
+            })
+            local pill = New("Frame", {
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
+                Size = UDim2.fromOffset(36, 18), BackgroundColor3 = Theme.Stroke,
+                BorderSizePixel = 0, Parent = r,
+            })
+            Corner(pill, 9)
+            local knob = New("Frame", {
+                Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 2, 0.5, -7),
+                BackgroundColor3 = Theme.Text, BorderSizePixel = 0, Parent = pill,
+            })
+            Corner(knob, 7)
+
+            local function render(animate)
+                local pos = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+                local col = state and Theme.Accent or Theme.Stroke
+                local kcol = state and Theme.OnAccent or Theme.Text
+                if animate then
+                    Tween(knob, { Position = pos, BackgroundColor3 = kcol })
+                    Tween(pill, { BackgroundColor3 = col })
+                else
+                    knob.Position, knob.BackgroundColor3, pill.BackgroundColor3 = pos, kcol, col
+                end
+            end
+            render(false)
+
+            local obj = {}
+            table.insert(Window.ToggleList, { get = function() return state end, cb = o.Callback })
+            function obj:Set(v, fire)
+                state = v and true or false
+                render(true)
+                if fire ~= false and o.Callback then task.spawn(o.Callback, state) end
+            end
+            function obj:Get() return state end
+
+            r.MouseButton1Click:Connect(function() obj:Set(not state) end)
+            r.MouseEnter:Connect(function() Tween(r, { BackgroundColor3 = Theme.ElementHover }) end)
+            r.MouseLeave:Connect(function() Tween(r, { BackgroundColor3 = Theme.Element }) end)
+            if state and o.Callback then task.spawn(o.Callback, state) end
+            return obj
+        end
+
+        function Tab:AddSlider(o)
+            local min, max, step = o.Min or 0, o.Max or 100, o.Step or 1
+            local value = math.clamp(o.Default or min, min, max)
+            local suffix = tostring(o.Suffix or "")
+            local function fmt(v)
+                local t = tostring(math.floor(v * 1000 + 0.5) / 1000)
+                return suffix ~= "" and (t .. " " .. suffix) or t
+            end
+            local r = Row(48)
+            Label({
+                Text = o.Name, Position = UDim2.fromOffset(12, 6),
+                Size = UDim2.new(1, -120, 0, 16), Parent = r,
+            })
+            local valLbl = Label({
+                Text = fmt(value), TextColor3 = Theme.SubText, TextSize = 12,
+                TextXAlignment = Enum.TextXAlignment.Right,
+                Position = UDim2.new(1, -112, 0, 6), Size = UDim2.fromOffset(100, 16), Parent = r,
+            })
+            local track = New("Frame", {
+                Position = UDim2.new(0, 12, 1, -16), Size = UDim2.new(1, -24, 0, 6),
+                BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = r,
+            })
+            Corner(track, 3)
+            local fill = New("Frame", {
+                Size = UDim2.new((value - min) / (max - min), 0, 1, 0),
+                BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, Parent = track,
+            })
+            Corner(fill, 3)
+            New("UIGradient", {
+                Color = ColorSequence.new(Color3.fromRGB(150, 150, 150), Color3.fromRGB(255, 255, 255)),
+                Parent = fill,
+            })
+            local knob = New("Frame", {
+                AnchorPoint = Vector2.new(0.5, 0.5),
+                Position = UDim2.new((value - min) / (max - min), 0, 0.5, 0),
+                Size = UDim2.fromOffset(12, 12), BackgroundColor3 = Theme.Text,
+                BorderSizePixel = 0, ZIndex = 2, Parent = track,
+            })
+            Corner(knob, 6)
+
+            local obj = {}
+            function obj:Set(v, fire)
+                v = math.clamp(math.floor((v - min) / step + 0.5) * step + min, min, max)
+                if v == value then return end
+                value = v
+                valLbl.Text = fmt(v)
+                fill.Size = UDim2.new((v - min) / (max - min), 0, 1, 0)
+                knob.Position = UDim2.new((v - min) / (max - min), 0, 0.5, 0)
+                if fire ~= false and o.Callback then task.spawn(o.Callback, v) end
+            end
+            function obj:Get() return value end
+
+            local dragging = false
+            local function update(x)
+                local a = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+                obj:Set(min + (max - min) * a)
+            end
+            r.InputBegan:Connect(function(i)
+                if IsPress(i) then
+                    dragging = true
+                    update(i.Position.X)
+                    i.Changed:Connect(function()
+                        if i.UserInputState == Enum.UserInputState.End then dragging = false end
+                    end)
+                end
+            end)
+            UIS(UserInputService.InputChanged, function(i)
+                if dragging and IsMove(i) then update(i.Position.X) end
+            end)
+            return obj
+        end
+
+        -- Dropdown: chọn 1 hoặc nhiều (Multi = true), có cuộn khi nhiều mục, Refresh đổi danh sách
+        function Tab:AddDropdown(o)
+            local options = table.clone(o.Options or {})
+            local multi = o.Multi == true
+            local ITEM_H, MAX_VIS = 28, 6
+            local open = false
+            local selected, current = {}, nil
+
+            local function has(list, v)
+                for _, x in ipairs(list) do if x == v then return true end end
+                return false
+            end
+            local d = o.Default
+            if multi then
+                if type(d) == "table" then
+                    for _, v in ipairs(d) do selected[v] = true end
+                elseif d ~= nil then
+                    selected[d] = true
+                end
+            else
+                if type(d) == "table" then d = d[1] end
+                if d == nil or not has(options, d) then d = options[1] end
+                current = d
+            end
+            local function selectedList()
+                local out = {}
+                for _, v in ipairs(options) do
+                    if selected[v] then table.insert(out, v) end
+                end
+                return out
+            end
+            local function headText()
+                if multi then
+                    local l = selectedList()
+                    if #l == 0 then return "Chọn..." end
+                    local t = {}
+                    for _, v in ipairs(l) do t[#t + 1] = tostring(v) end
+                    return table.concat(t, ", ")
+                end
+                return current ~= nil and tostring(current) or "Chọn..."
+            end
+
+            local holder = New("Frame", {
+                Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Element,
+                BorderSizePixel = 0, ClipsDescendants = true, Parent = Page,
+            })
+            Card(holder)
+            local head = New("TextButton", {
+                Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1,
+                Text = "", Parent = holder,
+            })
+            Label({
+                Text = o.Name, Position = UDim2.fromOffset(12, 0),
+                Size = UDim2.new(0.45, -12, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = head,
+            })
+            local valLbl = Label({
+                Text = headText(), TextColor3 = Theme.SubText, TextSize = 12,
+                TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd,
+                Position = UDim2.new(0.45, 0, 0, 0), Size = UDim2.new(0.55, -28, 1, 0), Parent = head,
+            })
+            local arrow = Label({
+                Text = "▾", TextColor3 = Theme.SubText, TextSize = 14,
+                TextXAlignment = Enum.TextXAlignment.Center,
+                Position = UDim2.new(1, -24, 0, 0), Size = UDim2.fromOffset(20, 36), Parent = head,
+            })
+            local list = New("ScrollingFrame", {
+                Position = UDim2.fromOffset(0, 36), Size = UDim2.new(1, 0, 0, 0),
+                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+                ScrollBarImageColor3 = Theme.Accent, ScrollBarImageTransparency = 0.6,
+                CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = holder,
+            })
+            New("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+
+            local function listHeight() return math.min(#options, MAX_VIS) * ITEM_H end
+            local function resize()
+                list.Size = UDim2.new(1, 0, 0, listHeight())
+                Tween(holder, { Size = UDim2.new(1, 0, 0, open and (36 + listHeight() + 4) or 36) })
+                Tween(arrow, { Rotation = open and 180 or 0 })
+            end
+
+            local items = {}
+            local function paint()
+                valLbl.Text = headText()
+                for i, it in pairs(items) do
+                    local opt = options[i]
+                    local on = multi and selected[opt] == true or (not multi and opt == current)
+                    it.bar.BackgroundTransparency = on and 0 or 1
+                    it.label.TextColor3 = on and Theme.Text or Theme.SubText
+                end
+            end
+
+            local obj = {}
+            local function fireCb()
+                if o.Callback then
+                    task.spawn(o.Callback, multi and selectedList() or current)
+                end
+            end
+
+            local function rebuild()
+                for _, c in ipairs(list:GetChildren()) do
+                    if c:IsA("TextButton") then c:Destroy() end
+                end
+                table.clear(items)
+                for i, opt in ipairs(options) do
+                    local ob = New("TextButton", {
+                        Size = UDim2.new(1, 0, 0, ITEM_H), BackgroundColor3 = Theme.ElementHover,
+                        BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
+                        LayoutOrder = i, Parent = list,
+                    })
+                    local bar = New("Frame", {
+                        Size = UDim2.fromOffset(3, 14), Position = UDim2.new(0, 4, 0.5, -7),
+                        BackgroundColor3 = Theme.Accent, BackgroundTransparency = 1,
+                        BorderSizePixel = 0, Parent = ob,
+                    })
+                    Corner(bar, 2)
+                    local lbl = Label({
+                        Text = tostring(opt), TextSize = 12, TextColor3 = Theme.SubText,
+                        TextTruncate = Enum.TextTruncate.AtEnd,
+                        Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -24, 1, 0), Parent = ob,
+                    })
+                    items[i] = { bar = bar, label = lbl }
+                    ob.MouseEnter:Connect(function() Tween(ob, { BackgroundTransparency = 0.4 }) end)
+                    ob.MouseLeave:Connect(function() Tween(ob, { BackgroundTransparency = 1 }) end)
+                    ob.MouseButton1Click:Connect(function()
+                        if multi then
+                            selected[opt] = (not selected[opt]) or nil
+                            paint()
+                            fireCb()
+                        else
+                            open = false
+                            resize()
+                            if opt ~= current then
+                                current = opt
+                                paint()
+                                fireCb()
+                            end
+                        end
+                    end)
+                end
+                paint()
+            end
+            rebuild()
+
+            function obj:Get()
+                if multi then return selectedList() end
+                return current
+            end
+            function obj:Set(v, fire)
+                if multi then
+                    selected = {}
+                    if type(v) == "table" then
+                        for _, x in ipairs(v) do selected[x] = true end
+                    end
+                else
+                    current = v
+                end
+                paint()
+                if fire ~= false then fireCb() end
+            end
+            function obj:Refresh(newOptions, keep, fire)
+                options = table.clone(newOptions or {})
+                if multi then
+                    local kept = {}
+                    if keep then
+                        for k in pairs(selected) do
+                            if has(options, k) then kept[k] = true end
+                        end
+                    end
+                    selected = kept
+                elseif not (keep and current ~= nil and has(options, current)) then
+                    current = options[1]
+                end
+                rebuild()
+                if open then resize() end
+                if fire ~= false then fireCb() end
+            end
+
+            head.MouseButton1Click:Connect(function()
+                open = not open
+                resize()
+            end)
+            return obj
+        end
+
+        function Tab:AddInput(o)
+            local r = Row(36)
+            Label({
+                Text = o.Name, Position = UDim2.fromOffset(12, 0),
+                Size = UDim2.new(1, -170, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = r,
+            })
+            local box = New("TextBox", {
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
+                Size = UDim2.fromOffset(140, 24), BackgroundColor3 = Theme.ElementHover,
+                BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 12,
+                TextColor3 = Theme.Text, PlaceholderText = tostring(o.Placeholder or ""),
+                PlaceholderColor3 = Theme.SubText, ClearTextOnFocus = false,
+                ClipsDescendants = true, TextXAlignment = Enum.TextXAlignment.Left,
+                Text = o.Default ~= nil and tostring(o.Default) or "", Parent = r,
+            })
+            Corner(box, 6)
+            New("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), Parent = box })
+            local state = box.Text
+            box.FocusLost:Connect(function()
+                state = box.Text
+                if o.Finished ~= false and o.Callback then task.spawn(o.Callback, state) end
+            end)
+            box:GetPropertyChangedSignal("Text"):Connect(function()
+                if o.Numeric == true then
+                    local cleaned = box.Text:gsub("[^%d%.]", "")
+                    if cleaned ~= box.Text then box.Text = cleaned return end
+                end
+                state = box.Text
+                if o.Finished == false and o.Callback then task.spawn(o.Callback, state) end
+            end)
+            local obj = {}
+            function obj:Get() return state end
+            function obj:Set(v, fire)
+                state = tostring(v)
+                box.Text = state
+                if fire ~= false and o.Finished ~= false and o.Callback then task.spawn(o.Callback, state) end
+            end
+            return obj
+        end
+
+        function Tab:AddKeybind(o)
+            local function keyFrom(v)
+                if typeof(v) == "EnumItem" then return v end
+                local ok, found = pcall(function() return Enum.KeyCode[tostring(v)] end)
+                return (ok and found) or Enum.KeyCode.Unknown
+            end
+            local current = keyFrom(o.Default)
+            local listening, lastFire = false, 0
+            local function keyText()
+                return current == Enum.KeyCode.Unknown and "None" or current.Name
+            end
+            local r = Row(36)
+            Label({
+                Text = o.Name, Position = UDim2.fromOffset(12, 0),
+                Size = UDim2.new(1, -120, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = r,
+            })
+            local btn = New("TextButton", {
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
+                Size = UDim2.fromOffset(90, 24), BackgroundColor3 = Theme.ElementHover,
+                BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 12,
+                TextColor3 = Theme.Text, AutoButtonColor = false, Text = keyText(), Parent = r,
+            })
+            Corner(btn, 6)
+            btn.MouseButton1Click:Connect(function()
+                if listening then return end
+                listening = true
+                btn.Text = "..."
+                local c
+                c = UserInputService.InputBegan:Connect(function(i)
+                    if i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                    c:Disconnect()
+                    listening = false
+                    lastFire = os.clock()
+                    if i.KeyCode ~= Enum.KeyCode.Escape and i.KeyCode ~= current then
+                        current = i.KeyCode
+                        if o.OnChanged then task.spawn(o.OnChanged, current.Name) end
+                    end
+                    btn.Text = keyText()
+                end)
+            end)
+            UIS(UserInputService.InputBegan, function(i)
+                if listening or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
+                if current ~= Enum.KeyCode.Unknown and i.KeyCode == current
+                    and not UserInputService:GetFocusedTextBox() then
+                    local now = os.clock()
+                    if now - lastFire > 0.15 then
+                        lastFire = now
+                        if o.Callback then task.spawn(o.Callback) end
+                    end
+                end
+            end)
+            local obj = {}
+            function obj:Get() return current.Name end
+            function obj:Set(v) current = keyFrom(v); btn.Text = keyText() end
+            return obj
+        end
+
+        function Tab:AddParagraph(o)
+            local r = New("Frame", {
+                Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+                BackgroundColor3 = Theme.Element, BorderSizePixel = 0, Parent = Page,
+            })
+            Card(r)
+            New("UIPadding", {
+                PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
+                PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), Parent = r,
+            })
+            New("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = r })
+            Label({
+                Text = tostring(o.Title or ""), Font = Enum.Font.GothamBold, TextSize = 14,
+                Size = UDim2.new(1, 0, 0, 18), LayoutOrder = 1, Parent = r,
+            })
+            if o.Content and o.Content ~= "" then
+                Label({
+                    Text = tostring(o.Content), TextColor3 = Theme.SubText, TextSize = 12,
+                    TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
+                    AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0),
+                    LayoutOrder = 2, Parent = r,
+                })
+            end
+        end
+
+        function Tab:AddStatGrid(o)
+            local items = o.Items or {}
+            local cols = math.max(1, tonumber(o.Columns) or 3)
+            local rows = math.max(1, math.ceil(#items / cols))
+            local CELL_H, GAP = 46, 6
+            local g = New("Frame", {
+                Size = UDim2.new(1, 0, 0, rows * CELL_H + (rows - 1) * GAP),
+                BackgroundTransparency = 1, Parent = Page,
+            })
+            New("UIGridLayout", {
+                CellSize = UDim2.new(1 / cols, -GAP, 0, CELL_H),
+                CellPadding = UDim2.fromOffset(GAP, GAP),
+                SortOrder = Enum.SortOrder.LayoutOrder, Parent = g,
+            })
+            local vals = {}
+            for i, it in ipairs(items) do
+                local c = New("Frame", {
+                    BackgroundColor3 = Theme.Element, BorderSizePixel = 0, LayoutOrder = i, Parent = g,
+                })
+                Card(c)
+                Label({
+                    Text = tostring(it.Label or it.Key), TextColor3 = Theme.SubText, TextSize = 11,
+                    TextTruncate = Enum.TextTruncate.AtEnd,
+                    Position = UDim2.fromOffset(10, 5), Size = UDim2.new(1, -20, 0, 14), Parent = c,
+                })
+                vals[it.Key] = Label({
+                    Text = tostring(it.Value or "-"), Font = Enum.Font.GothamBold, TextSize = 14,
+                    TextColor3 = it.Color or Theme.Text, TextTruncate = Enum.TextTruncate.AtEnd,
+                    Position = UDim2.fromOffset(10, 22), Size = UDim2.new(1, -20, 0, 18), Parent = c,
+                })
+            end
+            local obj = {}
+            function obj:Set(key, value)
+                local l = vals[key]
+                if l then l.Text = tostring(value) end
+            end
+            return obj
+        end
+
+        return Tab
+    end
+
+    return Window
+end
+
+return UzexUI
+
+--[[ ============ VÍ DỤ SỬ DỤNG ============
+
+local UzexUI = loadstring(readfile("UzexUI.lua"))()  -- hoặc loadstring(game:HttpGet("link raw"))()
+
+local Win = UzexUI:CreateWindow({
+    Title = "UZEX Hub",
+    Subtitle = "Heavyweight Fishing",
+    ToggleKey = Enum.KeyCode.RightShift,
+})
+
+local Main = Win:AddTab("Main")
+Main:AddSection("Auto")
+Main:AddToggle({ Name = "Auto Fish", Default = false, Callback = function(v) print("Auto Fish", v) end })
+Main:AddSlider({ Name = "Delay", Min = 0, Max = 5, Step = 0.1, Default = 1, Callback = function(v) print(v) end })
+Main:AddDropdown({ Name = "Mode", Options = { "Legit", "Fast", "Instant" }, Default = "Legit", Callback = print })
+Main:AddButton({ Name = "Teleport", Callback = function() Win:Notify({ Title = "UZEX", Content = "Đã teleport!" }) end })
+
+local Shop = Win:AddTab("Shop")
+Shop:AddSection("Index")
+Shop:AddLabel("Đặt các chức năng Index ở đây")
+
+]]
+
+end)()
+
+----------------------------------------------------------------- adapter
 local Library = {}
 Library.Flags = {}
-Library.Assets = { Logo = "" }
+Library.Assets = { Logo = "", Background = "" }
 local Assets = Library.Assets
 
 -- Runtime UI language support. Internal game values (Normal/Nightmare, item IDs,
 -- remote arguments, etc.) are intentionally not translated.
-Library.Language = "Tiếng Việt"
+Library.Language = "English"
 Library._TextObjects = setmetatable({}, { __mode = "k" })
 local EN_TRANSLATIONS = {
-    ["Uzex Hub"] = "Uzex Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
+    ["UZEX Hub"] = "UZEX Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
     ["Dịch chuyển"] = "Teleport", ["Cửa hàng"] = "Shop", ["Nâng cấp"] = "Upgrade",
     ["Khác"] = "Misc", ["Cài đặt"] = "Settings", ["Bán cá"] = "Sell Fish",
     ["Tự động bán cá"] = "Auto Sell Fish", ["Cách bán cá #1"] = "Sell Method #1",
@@ -44,7 +1466,7 @@ local EN_TRANSLATIONS = {
     ["Chọn đảo"] = "Select Island", ["Dịch chuyển đến đảo"] = "Teleport to Island",
     ["NPC"] = "NPCs", ["Chọn NPC"] = "Select NPC", ["Dịch chuyển đến NPC"] = "Teleport to NPC",
     ["Người chơi"] = "Players", ["Chọn người chơi"] = "Select Player", ["Dịch chuyển đến người chơi"] = "Teleport to Player",
-    ["Cá"] = "Fish", ["Mở khóa tất cả cá"] = "Unlock All Fish", ["Mua mồi"] = "Buy Bait",
+    ["Mua mồi"] = "Buy Bait",
     ["Chọn mồi"] = "Select Bait", ["Số lượng mua"] = "Purchase Amount", ["Độ trễ mua (phút)"] = "Purchase Delay (minutes)",
     ["Tự động mua mồi"] = "Auto Buy Bait", ["Chế tạo mồi"] = "Craft Bait", ["Số lượng chế tạo"] = "Craft Amount",
     ["Tự động chế tạo mồi"] = "Auto Craft Bait", ["Chế tạo cần câu"] = "Craft Rod",
@@ -56,7 +1478,7 @@ local EN_TRANSLATIONS = {
     ["Tăng sáng tối đa"] = "Full Bright", ["Tắt sương mù"] = "Disable Fog", ["Chế độ hiệu năng"] = "Performance Mode",
     ["Bật thông báo"] = "Enable Notifications", ["Thông báo"] = "Notification", ["Đã bật thông báo"] = "Notifications enabled",
     ["Câu cá"] = "Fishing", ["Khóa thanh bắt cá"] = "Lock Catch Bar", ["Tự động thả câu"] = "Auto Cast",
-    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss",
+    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss", ["Kích hoạt Secret Boss"] = "Secret Boss Activation", ["Chuyển server"] = "Server Hop", ["Tự động kiểm tra trạng thái"] = "Auto Check Status", ["Tự động chuyển server tìm God Spirit"] = "Auto Hop to God Spirit Server", ["Tự động chuyển server tìm Maoshan"] = "Auto Hop to Maoshan Server", ["Tự động chuyển server tìm Taoist"] = "Auto Hop to Taoist Server", ["Chuyển server ngay (God Spirit)"] = "Hop Now (God Spirit)", ["Chuyển server ngay (Maoshan)"] = "Hop Now (Maoshan)", ["Chuyển server ngay (Taoist)"] = "Hop Now (Taoist)", ["Cá yêu thích"] = "Favourite Fish", ["Chọn cá"] = "Select Fish", ["Tự động yêu thích cá đã chọn"] = "Auto Favourite Selected Fish", ["Tự động bỏ qua cá"] = "Auto Skip Fish", ["Cá cần bỏ qua"] = "Fishes to Skip", ["Tự động bỏ qua cá đã chọn"] = "Auto Skip Selected Fish", ["Black Tortoise Bloodline - vùng an toàn"] = "Black Tortoise Bloodline - Safe Band",
     ["Cách thả câu"] = "Cast Method", ["Độ trễ thả câu"] = "Cast Delay", ["Tự trang bị mồi tốt nhất"] = "Auto Equip Best Bait",
     ["Tự trang bị cần câu"] = "Auto Equip Rod", ["Kỹ năng"] = "Skills", ["Tự động dùng kỹ năng"] = "Auto Use Skills",
     ["Chọn kỹ năng"] = "Select Skills", ["Boss"] = "Boss", ["Chọn chế độ Boss"] = "Select Boss Mode",
@@ -68,8 +1490,7 @@ local EN_TRANSLATIONS = {
     ["Mở nâng cấp kỹ năng"] = "Open Skill Upgrade", ["Mở học kỹ năng"] = "Open Skill Learning",
     ["Mở giao diện trao đổi"] = "Open Trade UI", ["Mở đặc tính"] = "Open Traits", ["Phím tắt"] = "Hotkeys",
     ["Tắt phím tắt"] = "Disable Hotkeys", ["Phím bật bay"] = "Fly Toggle Key", ["Phím bật xuyên vật thể"] = "Noclip Toggle Key",
-    ["Máy chủ"] = "Server", ["Server Hop"] = "Server Hop", ["Vào lại máy chủ"] = "Rejoin Server", ["Đổi máy chủ ít người"] = "Join Low-Population Server",
-    ["Quét sự kiện"] = "Event Scanner", ["Quét Maoshan"] = "Scan Maoshan", ["Quét Taoist"] = "Scan Taoist", ["Quét Spirit"] = "Scan Spirit", ["Quét thời tiết"] = "Scan Weather", ["Theo dõi Enzo"] = "Watch Enzo Ready", ["Webhook Maoshan"] = "Maoshan Webhook", ["Webhook Taoist"] = "Taoist Webhook", ["Webhook Spirit"] = "Spirit Webhook", ["Webhook thời tiết"] = "Weather Webhook", ["API Server Hop"] = "Server Hop API", ["API Base URL"] = "API Base URL", ["API Key"] = "API Key", ["Gửi sự kiện lên API"] = "Send Events to API", ["Bật quét NPC"] = "Enable NPC Scanning",
+    ["Máy chủ"] = "Server", ["Vào lại máy chủ"] = "Rejoin Server", ["Đổi máy chủ ít người"] = "Join Low-Population Server",
     ["Tự vào lại"] = "Auto Rejoin", ["Tự vào lại khi mất kết nối"] = "Auto Rejoin on Disconnect",
     ["Thông báo Discord Webhook"] = "Discord Webhook Notifications", ["Thông báo qua Webhook"] = "Webhook Notifications",
     ["Đường dẫn Webhook"] = "Webhook URL", ["Gửi thử Webhook"] = "Test Webhook", ["Quyền riêng tư"] = "Privacy",
@@ -125,11 +1546,13 @@ function Library:SetLanguage(language)
         end
     end
 end
+EN_TRANSLATIONS["Chọn..."] = "Select..."
+EN_TRANSLATIONS["Thông báo"] = "Notification"
 
 -- The UZEX emblem (same logo as the UI preview), embedded as a PNG so it needs no Roblox upload.
 -- It is written once as a local custom asset.
 -- When local custom assets are unavailable, the library's normal fallback logo is used.
-local EMBEDDED_LOGO = "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"
+local EMBEDDED_LOGO = "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAVgklEQVR42u3dW4gc15kH8P85p7qru7p77s5EsZ+FHMmDSfZhbfaiCIz9EByzZEZi8WAvSrL74MUaMIvfpHl2INFGsLBZgxeZxZ7OgyMc2BCvNeyDzYJZFEWDhWLDOtHV0lz7Utdzzj5MVbs1Hl0cjTQ9Xf8f6MWpSJpSf/9z6vuqqwAiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiLqIngKHhxrrRBCWJ6JW5ubm1N5+VknJycNPw/5KHxlrVU8E8QdQI5WewASQCflrbUjANpCiIBn6MtOnz7tNJvNJwqFgpMkSV//rKVSCUEQnPnud7+7vJ07Q4cfuy0vfAlACCE0AJ3+tycA/ADAXwP4cwABLwe+fGkUhuGAlPK9UqlUTJIEQvTn+mSMged5CILgKQDv1et1mX1WGAA7e7W3QgiT/rcBAM8BeB7AU+mhTQAJz9jmkiSxABq+7w9rrW2/7lCttUYIIZVS2/5ZYADce+ErIUTStdrvAXAIwGEAj2Shn/6KeNl1h2tSIaQQIgtT0c8/p9ZaMAB2ZuGr9B9RA0istUUAz6RF/wyAYnpotq2T6blm8VNPYQB89W2+SQsf1tpH0tX+BQD7ug7X6bFZ55/X+sQA2KGFLwHIDdv8J7He1Ps+gNomqz1HfsQA6IPVPtvmG2ttDcBkus1/suvwhEVPDIA+KvwNI7x96Rb/EL5o6lmsN/UkzyExAHZ+4Xc39bS11gXwNG7d1FNc8YkB0B/b/I1NvcPpar9nwzafRU8MgD4o/M2aek8BmAbwPQAD6aEm3epzm08MgD5a7Q3Wm3rjAJ4F8CJubupprM/rJT8exADog8Lf0NSbSFf7aQDj2aH4oqnHbT4xAPpgtd+sqfcSgANdRd692rPwiQHQZ6s9m3pE/RwAG79+m470DmD9W3jPgU09ov4KgE2aeuhq6r0EYKLrcDb1iPohAG7xsI2JtOifBZt6RP0VAJs09ZA29Q6m23w29Yj6LQDu8LCNg7i5qadZ9ER9EAAbtvnJhqbeQQBuV9GDhU+0wwPgNk297IadzZp6LHqinR4AXU/H7X7YxotgU4+o/wNACGFv8QRd4IuHbbDwifopAKy1UghhrLWPA3gXwMObrPa8YYfoPtrOm2OyJ+SOpcUfb7i+5xN0ifr9EiDd5pu06Hm3HlFOdgDdOwEWPlFOA4CIGABExAAgIgYAETEAiIgBQEQMACJiABARA4CIGABExAAgIgYAUa+z1vbM34Xftyd6QEUvhICUElJKWGuRJAkDgCgPRS+EgNYarVYLa2triOMYzWaTAUCUh6JvNBpoNBoIwxDGGJRKJV4CEOWp6LNjHMeBEIIBQLRTCx5Ap+Dvtuiz/x+bgEQ7tOiFEFBKQQiBOI7h+36n8HdK0TMAiO6h6JvNJtbW1tBqtRBF0U2XADuh6BkARFtQ9NlITwixo4qeAUCU46JnABCLPsdFzwAgFn2Oi54BQCz6HBc9A4BY9DkuegYAsehzXPQMAOqbos/uxFNq/e3xLHoGAOWo6K21iKIIrVar84tFzwCgnBT92toa2u024jgGABY9A4DyVPTdt+B2FzuLngFAO5QQolPQd1v0LHgGAPUBKSWSJMHKygoajQaLngFAebG6uopmswnf9xEEQed6nkXPAKAc+MMf/gClFJRSnafmsOjv846Lp4B67RIgJ4VvpJSWAUCUI9Zaba3VjuNIa+2278B5CUB0/4veAjAAZKlUUkIIFUXRJSHEDQBYWFjYtp0AdwBE93Gbb61NlFLC8zzlOI7QWn8YBMHhMAwfnZmZOQMAs7OzhjsAov5Z8A0AWSwWZbFYlEEQXAvD8JQx5o1XXnnlg65jBYBt7QMwAIi2brW3QghVLpeV1hpa67NRFJ0UQpycmZm5lqaDqNfrcmFhwc7Ozm57E5ABQHTvqz0KhYIqFovwfT9MkuTXAE58+OGH79frdQ0Ac3NzCgCOHTtmAYjZ2VndCz8AA4DoT6h6IYQG4JRKJSWlRBRF58MwfNta+9aRI0fOZ8cePXrUwXoDEJOTk2ZqasoCMD/5yU+GwjC0r7766up2XgowAIi+4jZfKaVKpZITBIFOkuR9AG9KKd9++eWXw7TQ1eTkZKe7393k+9nPfvZYHMfTSqlpKeU0gPfm5ubk1NSUZgAQ9e42X7quKx3Hge/716IoOimlPHnkyJGz2YFzc3NqYWHB7t27F12Fb44fP+4aY5621r4Ux/EB13VVetmw7e8HZwAQ3WK1B2CEEE65XFZxHENr/YHW+g2l1KkjR458qam3cbU/fvz4I1rrw9baQ4VCYY+1FmEYwvf9qFAoFIwxggFA1IOrfbFYlIVCQYZh2AjD8BdCiJ/PzMx8uPHavl6vi+7Cn5ubU5cvXz4ghHhea/2c67oDSZLA930DwAohJABH9MjrgRkARLcY4WmtTyql3nr55ZcvZqv9sWPHVLo7wLFjx6wQwgDAT3/603Fr7bOXLl16SUo54TgOkiRBu93WYl33TXc98yUHBgDlfbW/qxFevV7PRnida/vZ2VkcP378Sa31i9baZ13XHY/jGFEU2SiKjBBCCiFUL58EBgDlrur/lBFed+EfP358IEmS56SUzwN4ynVdhGGIVqvVvdqrnXA+GACUq23+vYzwXnvttX2FQuGFJEkOua77iLUWQRDYKIoMgJ5f7RkAlNdt/laM8A4DeMZ13WIQBPB9XwNAWvRqp54gBgD15WqPLR7hAUAQBGi1Wom1Vu3E1b6nA8AYAyn57WS699X+AYzw+uakbXsANJtNVKvVTvF3v+ON6G6v7R/gCK+vbFsA1Ot1AMAnn3yCwcFBlEolDA8Po1QqdUc6g4But9rneoTXN5cAYRhicXER165dw/DwMIaHh1Gr1TrFzyCgrOo5wuvDAOh+E8yNGzewuLgIz/MwNjaGoaGhzv/GMMj3Np8jvD4NgO7CdhwH1lq022189tlnuHLlCgYHBzE6OopKpcJdQU4IITjCy1MAdAcB8MXz4ZMkwfXr13Hjxg0MDAxgZGQEg4ODnffBs2nYf6s9gASA43kekiThCC9PAXC7XcHa2hpWV1fhui5GR0fZNOwzpVLJaq0rnuc57XZ7NY7jUwBOzszM/GbjtT1HeDkIgI27gmzVj+MYly9fxueff45arYaxsTEMDAzw8mCnfxgdRyVJ8r9BEPwyiqL/ePXVVy9uttpzhJezANgYBN27guXlZaysrMDzPAwPD2N0dJRNwx14vQ8A4+PjK1NTU3+B9Ouy3Q/S3Lt3L0d4eQ+AzcKgu2nYbDbx+eefs2m4Q2XPxese4dXrddTrdZNe23OExwDYPAiklFBKdZqGi4uLqFQqGB0dxdDQEJuGO8TRo0dl97U9APz4xz/eo5Q6ZIw5zBEeA+C2YdB9edBsNtFoNFAqlTA0NITR0VE2DXtcts0/evRocWho6Blr7WFr7TOu6xbT5+lxhMcAuLtdQbbqR1GEK1eu4Pr16xgYGMDo6Cibhj3YCjh69Kio1WoPSykPAnihUCjsA9DZ5nO1ZwD8SUEghEChUOg0DZeXl+F5XmeUWCgUuCvY3n8nkTYCB621/+N53q4NN+yw8BkAWxMG2YTA93388Y9/xJUrVzrTAzYNt1epVBJCCK/dbidaa8GiZwDctyDI7jS01t62acgweOB0+rm0PBUMgAe2K9isaTgyMoJyucxdwQPuBfAUMAC2JQi6m4ZXr17t3Gn40EMPfalpmPUWiBgAfRYEm33/oFwuY2RkBKOjo2waEgMgb7uCIAhw6dKlzp2GIyMjfGgJMQDyEgRZ09AY03loSbVaxcjICB9aQgyAPIVBd9NwbW2t8zxDNg2JAZCzXYFSCnEc4+rVq7h+/XpnVzA8PNwpfj7ynBgAfRwGmzUNr1692nnAaff3DwBIa60EIGyWJPf5r5h93fYufx4BIEurBzWLF9Zae+LECRmGIT9UDICduyvobhpevnwZ165dw9DQEB566CFUKhULoJE9zOIB/t0cIURyF4Wv0uP0Np3GxmuvvcYbgBgA/XF5kN1puLi4KJaXl1GpVAZqtdp7Fy9eTO7fH2/1+h8vPaVUQSn16eXLl3/50Ucf/eLb3/52snE3YK1VAJA+bjs5d+5ccXx8/Bmt9QsAhpIkAR7QzTm+7zu/+tWvBpIkgWDzhAHQL2HgOA6MMYiiyPE87y/vx59jjEGhUECtVkMURVheXv4/pdQJY8wvH3744U9usc03aeHjxo0bj2itD1lrX3Bdd5+1Fg/mCiW9Bki/sJX1VFj/DIC+CwIhBJrNpt6Kwup6bDaKxWLRdV202+3lMAzfAfDm17/+9fc3+XvI+fl52b3Nv3r16lNSyukkSb5XrVYHgiDA6urqA78EEEIgDMPOjoQYAH3pXr/hljYOtRDCqdVqsNYiiqLzQRC85TjO62NjYxc3bO9tuoU3ae/BfPrpp+O1Wu1ZY8yLSqknS6USGo0GlpeXE2zTd+6FEFz1GQB0m8LX6WqvqtWqs7q6GrXb7f90HOf1lZWVX+/evTvsvqZPCx/dDcelpaWJJEmmtdbTnueNR1GEZrNpgyDIHq3FzwMDgHqo6C3WX4slBwYGlJQSrVbrYqvVeksI8e+7du06lx17+vRpZ//+/Z0HaU5NTRkAuHDhgjs4OHhQCPF8FEUHqtWqajabWFpa0kIIIddvUOC2mwFAPVT4xlpri8Wi8jxPRVGEKIp+kyTJm8Vi8Z2xsbE1YP2x2ZOTkwBg5+fnb1rtL126tKdYLB4yxhwsl8t7jDFoNpvZNl9JKVn0xADoxdXe8zzpui5837/WarVOSSnfGB8f/2Djap+9Yj27tp+bm1MHDhw4YIx5SWv9dLlcdn3f7zT10kdr8d+cGAC9tNoDsEopVavVVBRFSJLkrO/7J4wxp3bt2tV5F978/Lzav3+/mZ+fBwCbbfOzEZ4xZloIMZE19bJtPh+tRQyA3lztRblclqVSCa1Way0IgneEEG9+7Wtfez+bz9+iqWcAYHFx8YkwDH+YJMn3q9VqLX0BZvbaLMltPjEAeqzwrbVaSulUq1WVjfBardbtRnjA+gjPYsMIT2v9ZLVa7b62l2zqEQOg9wpfW2tRLBbVyMiIs7KysiUjvFarZcMw5AiPGAC9us0HIKvVqhJCII7ji+12e8tGeHwXHjEAeq/wDQBbKBRUuVxWURQhjuPfxHH8ZhAE73zzm9/kCI8YAH244HdGeMViEUEQXPN9/xSANx577DGO8IgB0K+rvZRS1Wo1FccxtNZnwzA8obU+NTExwREeMQD6re4BGGOMKJfL0nVdtFqtMAzDt4UQb+7du/emEV660nOERwyAnb7HTwvb8TxPCSEQRdH5MAzfAvD23r17z3cd2xnhTU5OcoRHDIAdrDPC8zzPabVaOoqi9x3HOVEsFm8a4dXrdUxOTn5phHf+/PmJKIqm4zierlQq4+nrrjnCIwZAr6726VZdVioVJaWE7/sX2+32W9bakxMTE2ezY7ubepOTk53Cv3DhghuG4UEhxPNxHB/wPE8lSYKlpSW9ng8c4REDoNcK3wAwhULB8TxP+b6POI4/TJLk31zXrT/66KON9LjskVpfGuGdPXt2j1LqUBRFnRFeq9XC2tpaUigUlJRSPchHbRExAO684BtrrSyXy7JcLst2u32t3W7fboQnulZ7Y61VH3/88QFr7fNa64OlUskNwxBra2s6fcqNBODwiTfEAOit1b4zwkuSBHEcn2232ye11ie7R3gA5LFjx+z+/fstukZ4Z8+eHVdKTZ87d266UChMOI6DZrOZze45wiMGQK/VPW4zwtu3b9+mI7z5+XkxOzurZ2dnAQC/+93vngTwopTyWc/zxn3f74zw0ht2WPjEAOilPf7djvC678vvHuF9/PHHtTAMJx3H+QGAJ8rlMtrtNkd4xADoYV95hLdJU29CSjkdx/GhSqXySNrUs1EUcYRHDIBeXO1xbyM8c+HCBVdr/XSSJC8BOOB5nmq322g0Gjp9fLXiak8MgN4q/C0Z4TmOczCKokPFYnGPlBLtdhurq6uJtVbx2p4YAL234G/pCM91XTcMQzQaDSOltOAIjxgAPbna39cRXtrUI2IA9ErdgyM8onwFAEd4RPkMAI7wiPo9AMT6e65NttqDIzzKB2OMEbkPAGOMLpfLMgiCWEpZqFQqKggCJEnyQRzHr3OER/1Y/IVCwYnjWG/7ArzN1/fy97//faHdbv/z6Ojoj5aXlxtCiDqA1+8wwus0+7pHeJVKxQ3DEL7vd4/wemJ+l17OYHh4GPw68KY7QYRhiHfffRdhGKJfx67W2qRarTqtVuvnhULhH5eWluLZ2VmTyx1A2qQLAfz9b3/72w/K5fJ/7d69+2L3as8RHvVj8b/yyis/6oVFuFdWR5GGAebm5hSArKknv/Od7yTZcZuN8Hzf74zweuXn4Q6AO4A7FX/6XohsUpXfHkC2Ezh9+rQzPz9vpqamuq+LOMIjFn+/BwAAZCu9tVbU63W5e/fuPysWi38Tx/HfcoRHLP77o+eulev1ugQAY8zffeMb3/gnY8wjjUZDt9vtzosyBG/MJxZ/fwbA1NSUXlhYsN/61rf+4bPPPvuXwcHBbNzHbT6x+Lf68rtHT55Ybw0Ic+bMmX8dGhr64dLSUrKTt/1sAt7hg9hHTcCdUvw9uQNIPwwWgJ2bm1OPP/74j1ZWVn4+MjLiWGsTlgqx+LdOz66o63cIW5OFwJkzZzAyMrLjdwLE4mcAMASIxc8AYAgQi58BwBAgFj8DgCFALH4GAEOAWPwMAIYAsfgZAAwBYvEzABgCxOJnADAEiMXPAGAIEIufAcAQIBY/A4AhQCz+3AcAQ4BY/DkPAIYAsfhzHgAMAWLx5zwAGALE4s95ADAEiMWf8wBgCBCLP+cBwBAgFn/OA4AhQCz+nAcAQ4BY/DkPAIYAsfhzHgAMARY/iz/nAcAQYPGz+HMeAAwBFn/eiz/3AcAQYPHn/dzwA84QYPEzAOh2IYAteImqtfamX7T5OdpihsXPALjnEPB9/55fV22theu6qFQqDIDNzz0cx4HrurDWbsn5LhaLksV/h/POU7Dph0dkgbCwsPBXxhiVJPf+ZnLHcTA2Noat+L36biVyHARBgFOnTm3Z+ZFS6pmZmf8GINJQYfHTVw8C4iLHk5NTc3Nzaqt+r8nJSZ7QO6jX61v6+01NTWmeVSIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIrpL/w9HjiVGZn9PMwAAAABJRU5ErkJggg=="
 
 local function decodeBase64(data)
     local lookup = {}
@@ -157,11 +1580,11 @@ pcall(function()
     if type(writefile) ~= "function" or typeof(getcustomasset) ~= "function" then
         return
     end
-    local folder = "UzexHubAssets"
+    local folder = "UZEXHubAssets"
     if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(folder) then
         makefolder(folder)
     end
-    local path = folder .. "/UzexHubLogo.png"
+    local path = folder .. "/UZEXHubLogo.png"
     local png = decodeBase64(EMBEDDED_LOGO)
     local fresh = type(isfile) == "function" and type(readfile) == "function" and isfile(path) and readfile(path) == png
     if not fresh then
@@ -173,1410 +1596,321 @@ pcall(function()
     end
 end)
 
-local Theme = {
-    Background = Color3.fromRGB(12, 12, 13),
-    Topbar = Color3.fromRGB(17, 17, 18),
-    Sidebar = Color3.fromRGB(14, 14, 15),
-    Surface = Color3.fromRGB(22, 22, 24),
-    Surface2 = Color3.fromRGB(30, 30, 33),
-    Surface3 = Color3.fromRGB(44, 44, 48),
-    Stroke = Color3.fromRGB(52, 52, 56),
-    Accent = Color3.fromRGB(236, 236, 240),
-    AccentText = Color3.fromRGB(14, 14, 15),
-    Text = Color3.fromRGB(236, 236, 240),
-    Muted = Color3.fromRGB(138, 138, 146),
-    Error = Color3.fromRGB(240, 100, 100),
-    Warning = Color3.fromRGB(240, 176, 108),
-    Success = Color3.fromRGB(130, 215, 160),
-}
-Library.Theme = Theme
 
-local FONT = Enum.Font.GothamMedium
-local FONT_BOLD = Enum.Font.GothamBold
-
----------------------------------------------------------------- helpers
-local function tween(obj, time, props, style, dir)
-    local t = TweenService:Create(
-        obj,
-        TweenInfo.new(time, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out),
-        props
-    )
-    t:Play()
-    return t
+-- Vietnamese-aware upper-casing (string.upper breaks accented letters)
+local function viUpper(s)
+    s = tostring(s or "")
+    if not utf8 or not utf8.len(s) then return string.upper(s) end
+    local out = {}
+    for _, cp in utf8.codes(s) do
+        local u = cp
+        if cp >= 97 and cp <= 122 then u = cp - 32
+        elseif cp >= 0xE0 and cp <= 0xFE and cp ~= 0xF7 then u = cp - 32
+        elseif cp == 0x103 then u = 0x102
+        elseif cp == 0x111 then u = 0x110
+        elseif cp == 0x129 then u = 0x128
+        elseif cp == 0x169 then u = 0x168
+        elseif cp == 0x1A1 then u = 0x1A0
+        elseif cp == 0x1B0 then u = 0x1AF
+        elseif cp >= 0x1EA1 and cp <= 0x1EF9 and cp % 2 == 1 then u = cp - 1
+        end
+        out[#out + 1] = utf8.char(u)
+    end
+    return table.concat(out)
 end
 
-local function new(class, props, parent)
-    local inst = Instance.new(class)
-    for key, value in pairs(props or {}) do
-        inst[key] = value
-    end
-    if class == "TextLabel" or class == "TextButton" or class == "TextBox" then
-        local record = { source = tostring(inst.Text or ""), updating = false }
-        Library._TextObjects[inst] = record
-        record.updating = true
-        inst.Text = translateText(record.source)
-        task.defer(function()
-            record.updating = false
-        end)
-        inst:GetPropertyChangedSignal("Text"):Connect(function()
-            if record.updating then return end
-            record.source = tostring(inst.Text or "")
-            local translated = translateText(record.source)
-            if translated ~= inst.Text then
-                record.updating = true
-                inst.Text = translated
-                record.updating = false
+Library._Sections = setmetatable({}, { __mode = "k" })
+do
+    local baseSetLanguage = Library.SetLanguage
+    function Library:SetLanguage(language)
+        baseSetLanguage(self, language)
+        for label, title in pairs(self._Sections) do
+            if label.Parent then
+                label.Text = viUpper(translateText(title))
+            else
+                self._Sections[label] = nil
             end
-        end)
+        end
     end
-    if parent then
-        inst.Parent = parent
+end
+
+-- Auto-translate every text object UZEXUI creates (same behaviour as before)
+local function registerText(inst)
+    if not (inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox")) then return end
+    if Library._TextObjects[inst] then return end
+    local record = { source = tostring(inst.Text or ""), updating = false }
+    Library._TextObjects[inst] = record
+    local first = translateText(record.source)
+    if first ~= inst.Text then
+        record.updating = true
+        inst.Text = first
+        task.defer(function() record.updating = false end)
     end
-    return inst
-end
-
-local function round(parent, radius)
-    return new("UICorner", { CornerRadius = UDim.new(0, radius) }, parent)
-end
-
-local function outline(parent, color, thickness, transparency)
-    return new("UIStroke", {
-        Color = color or Theme.Stroke,
-        Thickness = thickness or 1,
-        Transparency = transparency or 0,
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-    }, parent)
-end
-
-local function pad(parent, left, top, right, bottom)
-    return new("UIPadding", {
-        PaddingLeft = UDim.new(0, left),
-        PaddingTop = UDim.new(0, top),
-        PaddingRight = UDim.new(0, right),
-        PaddingBottom = UDim.new(0, bottom),
-    }, parent)
-end
-
-local function text(parent, props)
-    local base = {
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        Font = FONT,
-        TextSize = 13,
-        TextColor3 = Theme.Text,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Center,
-        Text = "",
-    }
-    for key, value in pairs(props) do
-        base[key] = value
-    end
-    return new("TextLabel", base, parent)
-end
-
-local function hitbox(parent, size)
-    return new("TextButton", {
-        Size = size or UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        Text = "",
-        AutoButtonColor = false,
-        ZIndex = 3,
-    }, parent)
-end
-
-local function safe(fn, ...)
-    if type(fn) ~= "function" then
-        return
-    end
-    local ok, err = pcall(fn, ...)
-    if not ok then
-        warn("[Uzex Hub] callback error: " .. tostring(err))
-    end
+    inst:GetPropertyChangedSignal("Text"):Connect(function()
+        if record.updating or record.dead then return end
+        record.source = tostring(inst.Text or "")
+        local translated = translateText(record.source)
+        if translated ~= inst.Text then
+            record.updating = true
+            inst.Text = translated
+            record.updating = false
+        end
+    end)
 end
 
 local function opt(source)
-    if type(source) == "string" then
-        return { Name = source }
-    end
+    if type(source) == "string" then return { Name = source } end
     return type(source) == "table" and source or {}
 end
-
-local function titleOf(o)
-    return tostring(o.Name or o.Title or o.Text or "")
-end
-
+local function titleOf(o) return tostring(o.Name or o.Title or o.Text or "") end
 local function descOf(o)
     local d = o.Description or o.Desc
     return d ~= nil and tostring(d) or ""
 end
-
-local function register(o, element)
-    if o.Flag then
-        Library.Flags[o.Flag] = element
+local function register(o, el)
+    if o.Flag then Library.Flags[o.Flag] = el end
+    return el
+end
+local function pick(...)
+    for i = 1, select("#", ...) do
+        local v = select(i, ...)
+        if v ~= nil then return v end
     end
-    return element
+    return nil
 end
 
-local function isPointer(input)
-    return input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch
+local function snapshot(tab)
+    local s = {}
+    for _, c in ipairs(tab.Page:GetChildren()) do s[c] = true end
+    return s
 end
-
-local function isMove(input)
-    return input.UserInputType == Enum.UserInputType.MouseMovement
-        or input.UserInputType == Enum.UserInputType.Touch
-end
-
-local function attachHover(frame, button)
-    button.MouseEnter:Connect(function()
-        tween(frame, 0.15, { BackgroundColor3 = Theme.Surface2 })
-    end)
-    button.MouseLeave:Connect(function()
-        tween(frame, 0.2, { BackgroundColor3 = Theme.Surface })
-    end)
-end
-
-local function contains(list, value)
-    for _, v in ipairs(list) do
-        if v == value then
-            return true
-        end
+local function newRow(tab, snap)
+    for _, c in ipairs(tab.Page:GetChildren()) do
+        if not snap[c] and c:IsA("GuiObject") then return c end
     end
-    return false
 end
 
-local function keyFrom(value)
-    if typeof(value) == "EnumItem" then
-        return value
+-- UZEXUI rows have no description line, so add one under the title
+local function addDescription(row, desc)
+    if not row or desc == "" then return end
+    local title = row:FindFirstChildWhichIsA("TextLabel")
+    row.AutomaticSize = Enum.AutomaticSize.Y
+    row.Size = UDim2.new(1, 0, 0, 52)
+    Instance.new("UIPadding", row).PaddingBottom = UDim.new(0, 8)
+    local width = title and title.Size.X or UDim.new(1, -24)
+    if title then
+        title.Position = UDim2.fromOffset(12, 7)
+        title.Size = UDim2.new(width.Scale, width.Offset, 0, 18)
     end
-    local ok, found = pcall(function()
-        return Enum.KeyCode[tostring(value)]
-    end)
-    return (ok and found) or Enum.KeyCode.Unknown
+    local label = Instance.new("TextLabel")
+    label.BackgroundTransparency = 1
+    label.Font = Enum.Font.GothamMedium
+    label.TextSize = 11
+    label.TextColor3 = Color3.fromRGB(140, 140, 140)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Top
+    label.TextWrapped = true
+    label.AutomaticSize = Enum.AutomaticSize.Y
+    label.Position = UDim2.fromOffset(12, 27)
+    label.Size = UDim2.new(width.Scale, width.Offset, 0, 14)
+    label.Text = desc
+    label.Parent = row
 end
 
----------------------------------------------------------------- gui root
-local gui
+local TabMethods = {}
 
-local function getGui()
-    if gui and gui.Parent then
-        return gui
+function TabMethods:CreateSection(name)
+    local o = opt(name)
+    local title = titleOf(o)
+    local snap = snapshot(self)
+    self:AddSection(title)
+    local row = newRow(self, snap)
+    local label = row and row:FindFirstChildWhichIsA("TextLabel")
+    if label then
+        local record = Library._TextObjects[label]
+        if record then record.dead = true end
+        Library._TextObjects[label] = nil
+        Library._Sections[label] = title
+        label.Text = viUpper(translateText(title))
     end
-    gui = new("ScreenGui", {
-        Name = "UzexHubUI",
-        ResetOnSpawn = false,
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        DisplayOrder = 9999,
-        IgnoreGuiInset = true,
+    return register(o, {})
+end
+
+function TabMethods:CreateParagraph(o)
+    o = opt(o)
+    local snap = snapshot(self)
+    self:AddParagraph({
+        Title = tostring(pick(o.Title, o.Name, "")),
+        Content = tostring(pick(o.Content, o.Description, o.Desc, "")),
     })
-    pcall(function()
-        gui.Parent = (type(gethui) == "function" and gethui()) or CoreGui
-    end)
-    if not gui.Parent then
-        gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+    local row = newRow(self, snap)
+    local el = {}
+    function el:Set(data)
+        data = type(data) == "table" and data or { Content = tostring(data) }
+        local labels = {}
+        if row then
+            for _, c in ipairs(row:GetChildren()) do
+                if c:IsA("TextLabel") then labels[#labels + 1] = c end
+            end
+            table.sort(labels, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+        end
+        if data.Title and labels[1] then labels[1].Text = tostring(data.Title) end
+        if data.Content and labels[2] then labels[2].Text = tostring(data.Content) end
     end
+    return register(o, el)
+end
 
-    local holder = new("Frame", {
-        Name = "Thông báo",
-        AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, -14, 0, 14),
-        Size = UDim2.fromOffset(270, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-    }, gui)
-    new("UIListLayout", {
-        Padding = UDim.new(0, 8),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        HorizontalAlignment = Enum.HorizontalAlignment.Right,
-    }, holder)
-    return gui
+function TabMethods:CreateStatGrid(o)
+    o = opt(o)
+    local obj = self:AddStatGrid({ Items = o.Items or {}, Columns = o.Columns })
+    return register(o, obj)
+end
+
+function TabMethods:CreateButton(o)
+    o = opt(o)
+    local snap = snapshot(self)
+    self:AddButton({ Name = titleOf(o), Callback = o.Callback })
+    addDescription(newRow(self, snap), descOf(o))
+    return register(o, {})
+end
+
+function TabMethods:CreateToggle(o)
+    o = opt(o)
+    local snap = snapshot(self)
+    local inner = self:AddToggle({
+        Name = titleOf(o),
+        Default = pick(o.CurrentValue, o.Default, o.Value) == true,
+        Callback = o.Callback,
+    })
+    addDescription(newRow(self, snap), descOf(o))
+    local el = {}
+    function el:Get() return inner:Get() end
+    function el:Set(value, quiet)
+        value = value == true
+        if value == inner:Get() then return end
+        inner:Set(value, not quiet)
+    end
+    return register(o, el)
+end
+
+function TabMethods:CreateSlider(o)
+    o = opt(o)
+    local min = pick(o.Min, o.Range and o.Range[1], 0)
+    local max = pick(o.Max, o.Range and o.Range[2], 100)
+    local inner = self:AddSlider({
+        Name = titleOf(o),
+        Min = min,
+        Max = max,
+        Step = pick(o.Increment, o.Step, 1),
+        Default = tonumber(pick(o.CurrentValue, o.Default, o.Value)) or min,
+        Suffix = pick(o.Suffix, o.Unit, ""),
+        Callback = o.Callback,
+    })
+    local el = {}
+    function el:Get() return inner:Get() end
+    function el:Set(value, quiet)
+        inner:Set(tonumber(value) or inner:Get(), not quiet)
+    end
+    return register(o, el)
+end
+
+function TabMethods:CreateDropdown(o)
+    o = opt(o)
+    local inner = self:AddDropdown({
+        Name = titleOf(o),
+        Options = pick(o.Options, o.Values, o.Items, {}),
+        Default = pick(o.CurrentOption, o.Default),
+        Multi = (o.MultipleOptions or o.Multi) == true,
+        Callback = o.Callback,
+    })
+    local el = {}
+    function el:Get() return inner:Get() end
+    function el:Set(value, quiet) inner:Set(value, not quiet) end
+    function el:Refresh(newOptions, keepSelection, quiet)
+        inner:Refresh(newOptions, keepSelection, not quiet)
+    end
+    return register(o, el)
+end
+
+function TabMethods:CreateInput(o)
+    o = opt(o)
+    local default = pick(o.CurrentValue, o.Default, o.Value)
+    local inner = self:AddInput({
+        Name = titleOf(o),
+        Default = default ~= nil and tostring(default) or nil,
+        Placeholder = pick(o.PlaceholderText, o.Placeholder, ""),
+        Numeric = o.Numeric,
+        Finished = o.Finished,
+        Callback = o.Callback,
+    })
+    local el = {}
+    function el:Get() return inner:Get() end
+    function el:Set(value, quiet) inner:Set(value, not quiet) end
+    return register(o, el)
+end
+
+function TabMethods:CreateKeybind(o)
+    o = opt(o)
+    local inner = self:AddKeybind({
+        Name = titleOf(o),
+        Default = pick(o.CurrentKeybind, o.Default, o.Value),
+        OnChanged = o.OnChanged,
+        Callback = o.Callback,
+    })
+    local el = {}
+    function el:Get() return inner:Get() end
+    function el:Set(value) inner:Set(value) end
+    return register(o, el)
+end
+
+function TabMethods:CreateLabel(text)
+    local o = opt(text)
+    return register(o, self:AddLabel(titleOf(o)))
 end
 
 function Library:Notify(o)
-    if Library.NotificationsEnabled == false then
-        return
-    end
-    o = opt(o)
-    local holder = getGui():FindFirstChild("Notifications")
-    if not holder then
-        return
-    end
-    local kind = string.lower(tostring(o.Type or ""))
-    local color = Theme.Text
-    if kind == "error" then
-        color = Theme.Error
-    elseif kind == "warning" then
-        color = Theme.Warning
-    elseif kind == "success" then
-        color = Theme.Success
-    end
-
-    local wrap = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-    }, holder)
-    local card = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        Position = UDim2.new(1.2, 0, 0, 0),
-        BackgroundColor3 = Theme.Surface,
-        BorderSizePixel = 0,
-    }, wrap)
-    round(card, 10)
-    outline(card, Theme.Stroke, 1, 0.2)
-    pad(card, 14, 10, 12, 10)
-    new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, card)
-
-    text(card, {
-        Size = UDim2.new(1, 0, 0, 16),
-        Font = FONT_BOLD,
-        TextSize = 13,
-        TextColor3 = color,
-        Text = tostring(o.Title or "Uzex Hub"),
-        LayoutOrder = 1,
+    if Library.NotificationsEnabled == false then return end
+    local window = Library._window
+    if not window or window.Destroyed then return end
+    if type(o) ~= "table" then o = { Content = tostring(o) } end
+    pcall(window.Notify, window, {
+        Title = tostring(o.Title or "Thông báo"),
+        Content = tostring(o.Content or o.Text or ""),
+        Duration = o.Duration or 3,
     })
-    local content = tostring(o.Content or o.Text or "")
-    if content ~= "" then
-        text(card, {
-            Size = UDim2.new(1, 0, 0, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            TextSize = 12,
-            TextColor3 = Theme.Muted,
-            TextWrapped = true,
-            TextYAlignment = Enum.TextYAlignment.Top,
-            Text = content,
-            LayoutOrder = 2,
-        })
-    end
-
-    tween(card, 0.4, { Position = UDim2.new(0, 0, 0, 0) })
-    task.delay(tonumber(o.Duration) or 4, function()
-        if card.Parent then
-            tween(card, 0.3, { Position = UDim2.new(1.2, 0, 0, 0) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
-            task.delay(0.35, function()
-                wrap:Destroy()
-            end)
-        end
-    end)
-end
-
----------------------------------------------------------------- tab / elements
-local Tab = {}
-Tab.__index = Tab
-
-function Tab:_add(frame)
-    self._n = self._n + 1
-    frame.LayoutOrder = self._n
-    frame.Parent = self.Page
-    return frame
-end
-
-function Tab:_row(height)
-    local f = new("Frame", {
-        Size = UDim2.new(1, 0, 0, height),
-        BackgroundColor3 = Theme.Surface,
-        BorderSizePixel = 0,
-    })
-    round(f, 8)
-    outline(f, Theme.Stroke, 1, 0.4)
-    return self:_add(f)
-end
-
-function Tab:CreateSection(name)
-    local o = opt(name)
-    local holder = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 26),
-        BackgroundTransparency = 1,
-    })
-    text(holder, {
-        Size = UDim2.new(1, -4, 1, -2),
-        Position = UDim2.new(0, 4, 0, 4),
-        Font = FONT_BOLD,
-        TextSize = 11,
-        TextColor3 = Theme.Muted,
-        TextYAlignment = Enum.TextYAlignment.Bottom,
-        Text = string.upper(titleOf(o)),
-    })
-    self:_add(holder)
-end
-
-function Tab:CreateParagraph(o)
-    o = opt(o)
-    local f = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundColor3 = Theme.Surface,
-        BorderSizePixel = 0,
-    })
-    round(f, 8)
-    outline(f, Theme.Stroke, 1, 0.4)
-    pad(f, 14, 10, 14, 10)
-    new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, f)
-    local title = tostring(o.Title or o.Name or "")
-    if title ~= "" then
-        text(f, {
-            Size = UDim2.new(1, 0, 0, 16),
-            Font = FONT_BOLD,
-            Text = title,
-            LayoutOrder = 1,
-        })
-    end
-    local content = tostring(o.Content or o.Text or descOf(o))
-    if content ~= "" then
-        text(f, {
-            Size = UDim2.new(1, 0, 0, 0),
-            AutomaticSize = Enum.AutomaticSize.Y,
-            TextSize = 12,
-            TextColor3 = Theme.Muted,
-            TextWrapped = true,
-            TextYAlignment = Enum.TextYAlignment.Top,
-            Text = content,
-            LayoutOrder = 2,
-        })
-    end
-    self:_add(f)
-    return register(o, {})
-end
-Tab.CreateLabel = Tab.CreateParagraph
-
-function Tab:CreateStatGrid(o)
-    o = opt(o)
-    local items = o.Items or {}
-    local columns = math.max(1, tonumber(o.Columns) or 3)
-    local grid = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 0),
-        AutomaticSize = Enum.AutomaticSize.Y,
-        BackgroundTransparency = 1,
-    })
-    new("UIGridLayout", {
-        CellSize = UDim2.new(1 / columns, -math.ceil(8 * (columns - 1) / columns), 0, 62),
-        CellPadding = UDim2.fromOffset(8, 8),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-    }, grid)
-
-    local valueLabels = {}
-    for index, item in ipairs(items) do
-        local card = new("Frame", {
-            BackgroundColor3 = Theme.Surface,
-            BorderSizePixel = 0,
-            LayoutOrder = index,
-        }, grid)
-        round(card, 10)
-        outline(card, Theme.Stroke, 1, 0.4)
-        local bar = new("Frame", {
-            Position = UDim2.new(0, 12, 0, 10),
-            Size = UDim2.fromOffset(18, 2),
-            BackgroundColor3 = item.Color or Theme.Accent,
-            BorderSizePixel = 0,
-        }, card)
-        round(bar, 1)
-        valueLabels[item.Key] = text(card, {
-            Position = UDim2.new(0, 12, 0, 18),
-            Size = UDim2.new(1, -24, 0, 22),
-            Font = FONT_BOLD,
-            TextSize = 15,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Text = tostring(item.Value or "-"),
-        })
-        text(card, {
-            Position = UDim2.new(0, 12, 0, 40),
-            Size = UDim2.new(1, -24, 0, 14),
-            TextSize = 10,
-            TextColor3 = Theme.Muted,
-            Text = string.upper(tostring(item.Label or item.Key)),
-        })
-    end
-    self:_add(grid)
-
-    local el = {}
-    function el:Set(key, value)
-        local label = valueLabels[key]
-        if label then
-            local s = tostring(value)
-            if label.Text ~= s then
-                label.Text = s
-            end
-        end
-    end
-    return register(o, el)
-end
-
-function Tab:CreateButton(o)
-    o = opt(o)
-    local desc = descOf(o)
-    local f = self:_row(desc ~= "" and 52 or 40)
-    text(f, {
-        Size = UDim2.new(1, -50, 0, desc ~= "" and 18 or 40),
-        Position = UDim2.new(0, 14, 0, desc ~= "" and 8 or 0),
-        Text = titleOf(o),
-    })
-    if desc ~= "" then
-        text(f, {
-            Size = UDim2.new(1, -50, 0, 16),
-            Position = UDim2.new(0, 14, 0, 27),
-            TextSize = 11,
-            TextColor3 = Theme.Muted,
-            Text = desc,
-        })
-    end
-    text(f, {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -14, 0.5, 0),
-        Size = UDim2.fromOffset(14, 20),
-        Font = FONT_BOLD,
-        TextSize = 16,
-        TextColor3 = Theme.Muted,
-        TextXAlignment = Enum.TextXAlignment.Center,
-        Text = ">",
-    })
-    local hit = hitbox(f)
-    attachHover(f, hit)
-    hit.MouseButton1Down:Connect(function()
-        tween(f, 0.08, { BackgroundColor3 = Theme.Surface3 })
-    end)
-    hit.MouseButton1Up:Connect(function()
-        tween(f, 0.2, { BackgroundColor3 = Theme.Surface2 })
-    end)
-    hit.MouseButton1Click:Connect(function()
-        safe(o.Callback)
-    end)
-    return register(o, {})
-end
-
-function Tab:CreateToggle(o)
-    o = opt(o)
-    local desc = descOf(o)
-    local f = self:_row(desc ~= "" and 52 or 42)
-    text(f, {
-        Size = UDim2.new(1, -80, 0, desc ~= "" and 18 or 42),
-        Position = UDim2.new(0, 14, 0, desc ~= "" and 8 or 0),
-        Text = titleOf(o),
-    })
-    if desc ~= "" then
-        text(f, {
-            Size = UDim2.new(1, -80, 0, 16),
-            Position = UDim2.new(0, 14, 0, 27),
-            TextSize = 11,
-            TextColor3 = Theme.Muted,
-            Text = desc,
-        })
-    end
-    local pill = new("Frame", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -14, 0.5, 0),
-        Size = UDim2.fromOffset(40, 22),
-        BackgroundColor3 = Theme.Surface3,
-        BorderSizePixel = 0,
-    }, f)
-    round(pill, 11)
-    local knob = new("Frame", {
-        Position = UDim2.new(0, 3, 0.5, -8),
-        Size = UDim2.fromOffset(16, 16),
-        BackgroundColor3 = Theme.Muted,
-        BorderSizePixel = 0,
-    }, pill)
-    round(knob, 8)
-
-    local default = (o.CurrentValue or o.Default or o.Value) == true
-    local state = default
-
-    local function paint(instant)
-        local pillColor = state and Theme.Accent or Theme.Surface3
-        local knobColor = state and Theme.AccentText or Theme.Muted
-        local knobPos = state and UDim2.new(0, 21, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
-        if instant then
-            pill.BackgroundColor3 = pillColor
-            knob.BackgroundColor3 = knobColor
-            knob.Position = knobPos
-        else
-            tween(pill, 0.2, { BackgroundColor3 = pillColor })
-            tween(knob, 0.2, { BackgroundColor3 = knobColor, Position = knobPos })
-        end
-    end
-
-    local function set(value, quiet)
-        value = value == true
-        if value == state then
-            return
-        end
-        state = value
-        paint(false)
-        if not quiet then
-            safe(o.Callback, value)
-        end
-    end
-
-    local hit = hitbox(f)
-    attachHover(f, hit)
-    hit.MouseButton1Click:Connect(function()
-        set(not state)
-    end)
-    paint(true)
-
-    local el = {}
-    function el:Get()
-        return state
-    end
-    function el:Set(value, quiet)
-        set(value, quiet)
-    end
-    register(o, el)
-    if default then
-        safe(o.Callback, true)
-    end
-    return el
-end
-
-function Tab:CreateSlider(o)
-    o = opt(o)
-    local min = o.Min or (o.Range and o.Range[1]) or 0
-    local max = o.Max or (o.Range and o.Range[2]) or 100
-    local inc = o.Increment or o.Step or 1
-    local frac = tostring(inc):match("%.(%d+)")
-    local decimals = frac and #frac or 0
-    local suffix = tostring(o.Suffix or o.Unit or "")
-    local state = math.clamp(tonumber(o.CurrentValue or o.Default or o.Value) or min, min, max)
-
-    local f = self:_row(56)
-    text(f, {
-        Size = UDim2.new(1, -110, 0, 18),
-        Position = UDim2.new(0, 14, 0, 8),
-        Text = titleOf(o),
-    })
-    local valueLabel = text(f, {
-        AnchorPoint = Vector2.new(1, 0),
-        Size = UDim2.fromOffset(90, 18),
-        Position = UDim2.new(1, -14, 0, 8),
-        TextSize = 12,
-        TextColor3 = Theme.Muted,
-        TextXAlignment = Enum.TextXAlignment.Right,
-    })
-    local track = new("Frame", {
-        Position = UDim2.new(0, 14, 0, 36),
-        Size = UDim2.new(1, -28, 0, 6),
-        BackgroundColor3 = Theme.Surface3,
-        BorderSizePixel = 0,
-    }, f)
-    round(track, 3)
-    local fill = new("Frame", {
-        Size = UDim2.new(0, 0, 1, 0),
-        BackgroundColor3 = Theme.Accent,
-        BorderSizePixel = 0,
-    }, track)
-    round(fill, 3)
-    local knob = new("Frame", {
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(1, 0, 0.5, 0),
-        Size = UDim2.fromOffset(12, 12),
-        BackgroundColor3 = Theme.Accent,
-        BorderSizePixel = 0,
-    }, fill)
-    round(knob, 6)
-
-    local function fmt(value)
-        local s = string.format("%." .. decimals .. "f", value)
-        return suffix ~= "" and (s .. " " .. suffix) or s
-    end
-
-    local function ratio(value)
-        if max == min then
-            return 0
-        end
-        return (value - min) / (max - min)
-    end
-
-    local function paint(animate)
-        valueLabel.Text = fmt(state)
-        local size = UDim2.new(ratio(state), 0, 1, 0)
-        if animate then
-            tween(fill, 0.15, { Size = size })
-        else
-            fill.Size = size
-        end
-    end
-
-    local function apply(value, animate, quiet)
-        value = math.clamp(math.floor(value / inc + 0.5) * inc, min, max)
-        if value == state then
-            return
-        end
-        state = value
-        paint(animate)
-        if not quiet then
-            safe(o.Callback, value)
-        end
-    end
-
-    local dragging = false
-    local hit = new("TextButton", {
-        Position = UDim2.new(0, 8, 0, 26),
-        Size = UDim2.new(1, -16, 0, 26),
-        BackgroundTransparency = 1,
-        Text = "",
-        AutoButtonColor = false,
-        ZIndex = 3,
-    }, f)
-
-    local function fromX(x)
-        local width = math.max(track.AbsoluteSize.X, 1)
-        local p = math.clamp((x - track.AbsolutePosition.X) / width, 0, 1)
-        apply(min + (max - min) * p, false)
-    end
-
-    hit.InputBegan:Connect(function(input)
-        if isPointer(input) then
-            dragging = true
-            self.Page.ScrollingEnabled = false
-            fromX(input.Position.X)
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and isMove(input) then
-            fromX(input.Position.X)
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if dragging and isPointer(input) then
-            dragging = false
-            self.Page.ScrollingEnabled = true
-        end
-    end)
-    paint(false)
-
-    local el = {}
-    function el:Get()
-        return state
-    end
-    function el:Set(value, quiet)
-        apply(tonumber(value) or state, true, quiet)
-    end
-    return register(o, el)
-end
-
-function Tab:_dropdown(o, multi)
-    local options = table.clone(o.Options or o.Values or o.Items or {})
-    local current = o.CurrentOption
-    if current == nil then
-        current = o.Default
-    end
-
-    local state
-    local selected = {}
-    if multi then
-        if type(current) == "table" then
-            for _, v in ipairs(current) do
-                selected[v] = true
-            end
-        end
-    else
-        if type(current) == "table" then
-            current = current[1]
-        end
-        if current == nil or not contains(options, current) then
-            current = options[1]
-        end
-        state = current
-    end
-
-    local f = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 42),
-        BackgroundColor3 = Theme.Surface,
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-    })
-    round(f, 8)
-    outline(f, Theme.Stroke, 1, 0.4)
-    self:_add(f)
-
-    text(f, {
-        Size = UDim2.new(0.5, -14, 0, 42),
-        Position = UDim2.new(0, 14, 0, 0),
-        Text = titleOf(o),
-    })
-    local valueLabel = text(f, {
-        Size = UDim2.new(0.5, -44, 0, 42),
-        Position = UDim2.new(0.5, 0, 0, 0),
-        TextSize = 12,
-        TextColor3 = Theme.Muted,
-        TextXAlignment = Enum.TextXAlignment.Right,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-    })
-    local chevron = text(f, {
-        AnchorPoint = Vector2.new(0.5, 0),
-        Position = UDim2.new(1, -20, 0, 0),
-        Size = UDim2.fromOffset(14, 42),
-        Font = FONT_BOLD,
-        TextSize = 15,
-        TextColor3 = Theme.Muted,
-        TextXAlignment = Enum.TextXAlignment.Center,
-        Text = ">",
-    })
-    local header = hitbox(f, UDim2.new(1, 0, 0, 42))
-    attachHover(f, header)
-
-    local list = new("ScrollingFrame", {
-        Position = UDim2.new(0, 8, 0, 46),
-        Size = UDim2.new(1, -16, 0, 0),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 2,
-        ScrollBarImageColor3 = Theme.Surface3,
-        CanvasSize = UDim2.new(),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    }, f)
-    new("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, list)
-
-    local open = false
-    local buttons = {}
-
-    local function selectedList()
-        local result = {}
-        for _, v in ipairs(options) do
-            if selected[v] then
-                result[#result + 1] = v
-            end
-        end
-        return result
-    end
-
-    local function listHeight()
-        local n = #options
-        if n == 0 then
-            return 0
-        end
-        return math.min(n * 30 + (n - 1) * 2, 150)
-    end
-
-    local function paintHeader()
-        if multi then
-            local n = #selectedList()
-            valueLabel.Text = n > 0 and (n .. " selected") or "None"
-        else
-            valueLabel.Text = state ~= nil and tostring(state) or "None"
-        end
-    end
-
-    local function paintOptions()
-        for option, parts in pairs(buttons) do
-            local on = multi and selected[option] or (not multi and option == state)
-            tween(parts.label, 0.15, { TextColor3 = on and Theme.Text or Theme.Muted })
-            tween(parts.button, 0.15, { BackgroundTransparency = (on and not multi) and 0.5 or 1 })
-            if parts.box then
-                tween(parts.box, 0.15, { BackgroundColor3 = on and Theme.Accent or Theme.Surface3 })
-            end
-        end
-    end
-
-    local function resize()
-        local height = listHeight()
-        list.Size = UDim2.new(1, -16, 0, height)
-        tween(f, 0.22, { Size = UDim2.new(1, 0, 0, open and (46 + height + 8) or 42) })
-        tween(chevron, 0.22, { Rotation = open and 90 or 0 })
-    end
-
-    local function rebuild()
-        for _, child in ipairs(list:GetChildren()) do
-            if child:IsA("TextButton") then
-                child:Destroy()
-            end
-        end
-        buttons = {}
-        for index, option in ipairs(options) do
-            local b = new("TextButton", {
-                Size = UDim2.new(1, 0, 0, 30),
-                BackgroundColor3 = Theme.Surface3,
-                BackgroundTransparency = 1,
-                AutoButtonColor = false,
-                Text = "",
-                LayoutOrder = index,
-            }, list)
-            round(b, 6)
-            local label = text(b, {
-                Size = UDim2.new(1, -40, 1, 0),
-                Position = UDim2.new(0, 10, 0, 0),
-                TextSize = 12,
-                TextColor3 = Theme.Muted,
-                TextTruncate = Enum.TextTruncate.AtEnd,
-                Text = tostring(option),
-            })
-            local box
-            if multi then
-                box = new("Frame", {
-                    AnchorPoint = Vector2.new(1, 0.5),
-                    Position = UDim2.new(1, -8, 0.5, 0),
-                    Size = UDim2.fromOffset(16, 16),
-                    BackgroundColor3 = Theme.Surface3,
-                    BorderSizePixel = 0,
-                }, b)
-                round(box, 4)
-            end
-            buttons[option] = { button = b, label = label, box = box }
-            b.MouseEnter:Connect(function()
-                if multi or option ~= state then
-                    tween(b, 0.12, { BackgroundTransparency = 0.6 })
-                end
-            end)
-            b.MouseLeave:Connect(function()
-                local on = multi and selected[option] or (not multi and option == state)
-                tween(b, 0.15, { BackgroundTransparency = (on and not multi) and 0.5 or 1 })
-            end)
-            b.MouseButton1Click:Connect(function()
-                if multi then
-                    selected[option] = (not selected[option]) or nil
-                    paintHeader()
-                    paintOptions()
-                    safe(o.Callback, selectedList())
-                else
-                    open = false
-                    resize()
-                    if option ~= state then
-                        state = option
-                        paintHeader()
-                        paintOptions()
-                        safe(o.Callback, option)
-                    end
-                end
-            end)
-        end
-        paintOptions()
-    end
-
-    header.MouseButton1Click:Connect(function()
-        open = not open
-        resize()
-    end)
-
-    rebuild()
-    paintHeader()
-
-    local el = {}
-    function el:Get()
-        if multi then
-            return selectedList()
-        end
-        return state
-    end
-    function el:Set(value, quiet)
-        if multi then
-            selected = {}
-            if type(value) == "table" then
-                for _, v in ipairs(value) do
-                    selected[v] = true
-                end
-            end
-            paintHeader()
-            paintOptions()
-            if not quiet then
-                safe(o.Callback, selectedList())
-            end
-        else
-            state = value
-            paintHeader()
-            paintOptions()
-            if not quiet then
-                safe(o.Callback, value)
-            end
-        end
-    end
-    function el:Refresh(newOptions, keepSelection, quiet)
-        options = table.clone(newOptions or {})
-        if multi then
-            local kept = {}
-            if keepSelection then
-                for key in pairs(selected) do
-                    if contains(options, key) then
-                        kept[key] = true
-                    end
-                end
-            end
-            selected = kept
-        elseif not (keepSelection and state ~= nil and contains(options, state)) then
-            state = options[1]
-        end
-        rebuild()
-        paintHeader()
-        if open then
-            resize()
-        end
-        if not quiet then
-            safe(o.Callback, multi and selectedList() or state)
-        end
-    end
-    return register(o, el)
-end
-
-function Tab:CreateDropdown(o)
-    o = opt(o)
-    return self:_dropdown(o, (o.MultipleOptions or o.Multi) == true)
-end
-
-function Tab:CreateInput(o)
-    o = opt(o)
-    local f = self:_row(42)
-    text(f, {
-        Size = UDim2.new(1, -170, 1, 0),
-        Position = UDim2.new(0, 14, 0, 0),
-        Text = titleOf(o),
-    })
-    local default = o.CurrentValue or o.Default or o.Value
-    local state = default ~= nil and tostring(default) or ""
-    local box = new("TextBox", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -10, 0.5, 0),
-        Size = UDim2.fromOffset(140, 26),
-        BackgroundColor3 = Theme.Surface3,
-        BorderSizePixel = 0,
-        Font = FONT,
-        TextSize = 12,
-        TextColor3 = Theme.Text,
-        PlaceholderText = tostring(o.PlaceholderText or o.Placeholder or ""),
-        PlaceholderColor3 = Theme.Muted,
-        ClearTextOnFocus = false,
-        Text = state,
-    }, f)
-    round(box, 6)
-    local boxStroke = outline(box, Theme.Stroke, 1, 1)
-    box.Focused:Connect(function()
-        tween(boxStroke, 0.15, { Transparency = 0 })
-    end)
-    box.FocusLost:Connect(function()
-        tween(boxStroke, 0.2, { Transparency = 1 })
-        if o.Finished ~= false then
-            state = box.Text
-            safe(o.Callback, state)
-        end
-    end)
-    box:GetPropertyChangedSignal("Text"):Connect(function()
-        if o.Numeric == true then
-            local cleaned = box.Text:gsub("[^%d%.]", "")
-            if cleaned ~= box.Text then
-                box.Text = cleaned
-                return
-            end
-        end
-        state = box.Text
-        if o.Finished == false then
-            safe(o.Callback, state)
-        end
-    end)
-
-    local el = {}
-    function el:Get()
-        return state
-    end
-    function el:Set(value, quiet)
-        state = tostring(value)
-        box.Text = state
-        if not quiet and o.Finished ~= false then
-            safe(o.Callback, state)
-        end
-    end
-    return register(o, el)
-end
-
-function Tab:CreateKeybind(o)
-    o = opt(o)
-    local f = self:_row(42)
-    text(f, {
-        Size = UDim2.new(1, -120, 1, 0),
-        Position = UDim2.new(0, 14, 0, 0),
-        Text = titleOf(o),
-    })
-    local current = keyFrom(o.CurrentKeybind or o.Default or o.Value)
-    local listening = false
-    local lastFire = 0
-
-    local button = new("TextButton", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -10, 0.5, 0),
-        Size = UDim2.fromOffset(90, 26),
-        BackgroundColor3 = Theme.Surface3,
-        BorderSizePixel = 0,
-        AutoButtonColor = false,
-        Font = FONT_BOLD,
-        TextSize = 12,
-        TextColor3 = Theme.Text,
-        Text = current == Enum.KeyCode.Unknown and "None" or current.Name,
-    }, f)
-    round(button, 6)
-
-    button.MouseButton1Click:Connect(function()
-        if listening then
-            return
-        end
-        listening = true
-        button.Text = "..."
-        tween(button, 0.15, { BackgroundColor3 = Theme.Accent, TextColor3 = Theme.AccentText })
-        local connection
-        connection = UserInputService.InputBegan:Connect(function(input)
-            if input.UserInputType ~= Enum.UserInputType.Keyboard then
-                return
-            end
-            connection:Disconnect()
-            listening = false
-            lastFire = os.clock()
-            if input.KeyCode ~= Enum.KeyCode.Escape and input.KeyCode ~= current then
-                current = input.KeyCode
-                safe(o.OnChanged, current.Name)
-            end
-            button.Text = current == Enum.KeyCode.Unknown and "None" or current.Name
-            tween(button, 0.2, { BackgroundColor3 = Theme.Surface3, TextColor3 = Theme.Text })
-        end)
-    end)
-
-    UserInputService.InputBegan:Connect(function(input)
-        if listening or input.UserInputType ~= Enum.UserInputType.Keyboard then
-            return
-        end
-        if current ~= Enum.KeyCode.Unknown and input.KeyCode == current and not UserInputService:GetFocusedTextBox() then
-            local now = os.clock()
-            if now - lastFire > 0.15 then
-                lastFire = now
-                safe(o.Callback)
-            end
-        end
-    end)
-
-    local el = {}
-    function el:Get()
-        return current.Name
-    end
-    function el:Set(value)
-        current = keyFrom(value)
-        button.Text = current == Enum.KeyCode.Unknown and "None" or current.Name
-    end
-    return register(o, el)
-end
-
----------------------------------------------------------------- window
-local Window = {}
-Window.__index = Window
-
-function Window:SelectTab(tab)
-    if type(tab) ~= "table" or not tab.Page then
-        return
-    end
-    local previous = self._active
-    if previous == tab then
-        return
-    end
-    self._active = tab
-    for _, other in ipairs(self._tabs) do
-        local on = other == tab
-        tween(other.Label, 0.2, { TextColor3 = on and Theme.Text or Theme.Muted })
-        tween(other.Button, 0.2, { BackgroundTransparency = on and 0.4 or 1 })
-        tween(other.Indicator, 0.2, { BackgroundTransparency = on and 0 or 1 })
-        if not on then
-            other.Page.Visible = false
-        end
-    end
-    tab.Page.Position = UDim2.new(0, 0, 0, 10)
-    tab.Page.Visible = true
-    tween(tab.Page, 0.25, { Position = UDim2.new(0, 0, 0, 0) })
-end
-
-function Window:CreateTab(o)
-    o = opt(o)
-    local title = titleOf(o)
-
-    local button = new("TextButton", {
-        Size = UDim2.new(1, 0, 0, 34),
-        BackgroundColor3 = Theme.Surface2,
-        BackgroundTransparency = 1,
-        AutoButtonColor = false,
-        Text = "",
-        LayoutOrder = #self._tabs + 1,
-    }, self._tabList)
-    round(button, 8)
-    local indicator = new("Frame", {
-        AnchorPoint = Vector2.new(0, 0.5),
-        Position = UDim2.new(0, 4, 0.5, 0),
-        Size = UDim2.fromOffset(3, 16),
-        BackgroundColor3 = Theme.Accent,
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-    }, button)
-    round(indicator, 2)
-    local label = text(button, {
-        Size = UDim2.new(1, -24, 1, 0),
-        Position = UDim2.new(0, 16, 0, 0),
-        TextColor3 = Theme.Muted,
-        Text = title,
-    })
-
-    local page = new("ScrollingFrame", {
-        Size = UDim2.fromScale(1, 1),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 3,
-        ScrollBarImageColor3 = Theme.Surface3,
-        CanvasSize = UDim2.new(),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Visible = false,
-    }, self._content)
-    pad(page, 12, 10, 12, 12)
-    new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, page)
-
-    local tab = setmetatable({
-        Button = button,
-        Label = label,
-        Indicator = indicator,
-        Page = page,
-        Window = self,
-        _n = 0,
-    }, Tab)
-    table.insert(self._tabs, tab)
-
-    button.MouseEnter:Connect(function()
-        if self._active ~= tab then
-            tween(button, 0.15, { BackgroundTransparency = 0.7 })
-        end
-    end)
-    button.MouseLeave:Connect(function()
-        if self._active ~= tab then
-            tween(button, 0.2, { BackgroundTransparency = 1 })
-        end
-    end)
-    button.MouseButton1Click:Connect(function()
-        self:SelectTab(tab)
-    end)
-
-    if #self._tabs == 1 then
-        self:SelectTab(tab)
-    end
-    return tab
-end
-
-function Window:Toggle(force)
-    local show = force
-    if show == nil then
-        show = not self._visible
-    end
-    self._visible = show
-    self._toggleToken = (self._toggleToken or 0) + 1
-    local token = self._toggleToken
-    local main = self._main
-    local rest = self._basePos
-
-    -- one tween at a time, so rapid toggles never jump or stutter
-    if self._toggleTween then
-        pcall(function() self._toggleTween:Cancel() end)
-        self._toggleTween = nil
-    end
-    -- older builds animated the scale; make sure it is back at its fitted size
-    local sc = main:FindFirstChildOfClass("UIScale")
-    local fitted = main:GetAttribute("FitScale")
-    if sc and fitted then
-        sc.Scale = fitted
-    end
-
-    if show then
-        if not main.Visible then
-            main.GroupTransparency = 1
-            main.Position = rest + UDim2.fromOffset(0, 10)
-            main.Visible = true
-        end
-        -- fade and slide up in a single fast tween
-        self._toggleTween = tween(main, 0.16, { GroupTransparency = 0, Position = rest }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
-    else
-        local closing = tween(main, 0.11, { GroupTransparency = 1, Position = rest + UDim2.fromOffset(0, 6) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-        self._toggleTween = closing
-        closing.Completed:Connect(function(state)
-            if state == Enum.PlaybackState.Completed and token == self._toggleToken and not self._visible then
-                main.Visible = false
-                main.Position = rest
-            end
-        end)
-    end
-end
-
-function Window:SetKeybind(key)
-    if typeof(key) == "EnumItem" then
-        self._toggleKey = key
-    end
-end
-
-function Window:Destroy()
-    if self.Gui then
-        self.Gui:Destroy()
-    end
 end
 
 function Library:CreateWindow(o)
     o = opt(o)
-    local root = getGui()
-    local width, height = 600, 390
-
-    local main = new("CanvasGroup", {
-        Name = "Main",
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.new(0.5, 0, 0.5, 0),
-        Size = UDim2.fromOffset(width, height),
-        BackgroundColor3 = Theme.Background,
-        BorderSizePixel = 0,
-        GroupTransparency = 1,
-    }, root)
-    round(main, 12)
-    outline(main, Theme.Stroke, 1, 0.2)
-    local scale = new("UIScale", {}, main)
-    local function fit()
-        local camera = workspace.CurrentCamera
-        if camera then
-            local view = camera.ViewportSize
-            local fitted = math.clamp(math.min(view.X * 0.94 / width, view.Y * 0.88 / height), 0.5, 1)
-            scale.Scale = fitted
-            main:SetAttribute("FitScale", fitted)
-        end
-    end
-    fit()
-    if workspace.CurrentCamera then
-        workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
-    end
-
-    local window = setmetatable({
-        Gui = root,
-        _main = main,
-        _tabs = {},
-        _visible = false,
-        _basePos = main.Position,
-        _toggleKey = o.ToggleUIKeybind or Enum.KeyCode.LeftControl,
-    }, Window)
-
-    -- title bar
-    local top = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 46),
-        BackgroundColor3 = Theme.Topbar,
-        BorderSizePixel = 0,
-    }, main)
-    new("Frame", {
-        AnchorPoint = Vector2.new(0, 1),
-        Position = UDim2.new(0, 0, 1, 0),
-        Size = UDim2.new(1, 0, 0, 1),
-        BackgroundColor3 = Theme.Stroke,
-        BackgroundTransparency = 0.4,
-        BorderSizePixel = 0,
-    }, top)
-
-    local textX = 16
-    if Assets.Logo ~= "" then
-        local logo = new("ImageLabel", {
-            Position = UDim2.new(0, 12, 0.5, -14),
-            Size = UDim2.fromOffset(28, 28),
-            BackgroundTransparency = 1,
-            Image = Assets.Logo,
-            ScaleType = Enum.ScaleType.Fit,
-        }, top)
-        round(logo, 6)
-        textX = 50
-    end
-    local subtitle = tostring(o.Subtitle or "")
-    text(top, {
-        Size = UDim2.new(1, -textX - 60, 0, 18),
-        Position = UDim2.new(0, textX, 0, subtitle ~= "" and 7 or 14),
-        Font = FONT_BOLD,
-        TextSize = 15,
-        Text = tostring(o.Name or o.Title or "Uzex Hub"),
+    local window = UzexUI:CreateWindow({
+        Name = "UZEXHubUI",
+        Title = tostring(o.Name or o.Title or "UZEX Hub"),
+        Subtitle = tostring(o.Subtitle or ""),
+        Logo = (Assets.Logo ~= "" and Assets.Logo) or nil,
+        ToggleKey = (typeof(o.ToggleUIKeybind) == "EnumItem" and o.ToggleUIKeybind)
+            or (typeof(o.ToggleKey) == "EnumItem" and o.ToggleKey) or nil,
     })
-    if subtitle ~= "" then
-        text(top, {
-            Size = UDim2.new(1, -textX - 60, 0, 14),
-            Position = UDim2.new(0, textX, 0, 25),
-            TextSize = 11,
-            TextColor3 = Theme.Muted,
-            Text = subtitle,
-        })
+    Library._window = window
+
+    -- The script keeps its own draggable logo button, so drop UZEXUI's built-in one.
+    if window.Fab then
+        pcall(function() window.Fab:Destroy() end)
+        window.Fab = nil
+    end
+    window.FabPop = nil
+
+    -- Translate everything UZEXUI builds (now and later)
+    for _, d in ipairs(window.Gui:GetDescendants()) do registerText(d) end
+    window.Gui.DescendantAdded:Connect(registerText)
+
+    function window:CreateTab(t)
+        t = opt(t)
+        local tab = self:AddTab(titleOf(t))
+        for name, fn in pairs(TabMethods) do tab[name] = fn end
+        return tab
     end
 
-    local close = new("TextButton", {
-        AnchorPoint = Vector2.new(1, 0.5),
-        Position = UDim2.new(1, -10, 0.5, 0),
-        Size = UDim2.fromOffset(30, 30),
-        BackgroundColor3 = Theme.Surface2,
-        BackgroundTransparency = 1,
-        AutoButtonColor = false,
-        Font = FONT_BOLD,
-        TextSize = 18,
-        TextColor3 = Theme.Muted,
-        Text = "-",
-    }, top)
-    round(close, 8)
-    close.MouseEnter:Connect(function()
-        tween(close, 0.15, { BackgroundTransparency = 0, TextColor3 = Theme.Text })
-    end)
-    close.MouseLeave:Connect(function()
-        tween(close, 0.2, { BackgroundTransparency = 1, TextColor3 = Theme.Muted })
-    end)
-    close.MouseButton1Click:Connect(function()
-        window:Toggle(false)
-        Library:Notify({
-            Title = "Đã ẩn",
-            Content = "Nhấn " .. window._toggleKey.Name .. " hoặc chạm vào logo để mở lại.",
-            Duration = 3,
-        })
-    end)
-
-    -- dragging
-    local dragging, dragStart, startPos = false, nil, nil
-    top.InputBegan:Connect(function(input)
-        if isPointer(input) then
-            dragging = true
-            dragStart = input.Position
-            startPos = main.Position
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and isMove(input) then
-            local delta = input.Position - dragStart
-            main.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + delta.X,
-                startPos.Y.Scale, startPos.Y.Offset + delta.Y
-            )
-            window._basePos = main.Position
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if dragging and isPointer(input) then
-            dragging = false
-        end
-    end)
-
-    -- sidebar + content
-    local sidebar = new("Frame", {
-        Position = UDim2.new(0, 0, 0, 46),
-        Size = UDim2.new(0, 150, 1, -46),
-        BackgroundColor3 = Theme.Sidebar,
-        BorderSizePixel = 0,
-    }, main)
-    new("Frame", {
-        AnchorPoint = Vector2.new(1, 0),
-        Position = UDim2.new(1, 0, 0, 0),
-        Size = UDim2.new(0, 1, 1, 0),
-        BackgroundColor3 = Theme.Stroke,
-        BackgroundTransparency = 0.4,
-        BorderSizePixel = 0,
-    }, sidebar)
-    local tabList = new("ScrollingFrame", {
-        Size = UDim2.new(1, -1, 1, 0),
-        BackgroundTransparency = 1,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 0,
-        CanvasSize = UDim2.new(),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    }, sidebar)
-    pad(tabList, 8, 10, 8, 10)
-    new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, tabList)
-    window._tabList = tabList
-
-    local content = new("Frame", {
-        Position = UDim2.new(0, 150, 0, 46),
-        Size = UDim2.new(1, -150, 1, -46),
-        BackgroundTransparency = 1,
-        ClipsDescendants = true,
-    }, main)
-    window._content = content
-
-    -- optional Home tab
+    -- optional Home tab (stats grid + Discord button)
     local home = o.Home
     if type(home) == "table" then
         local tab = window:CreateTab({ Name = home.Name or "Home" })
@@ -1607,15 +1941,6 @@ function Library:CreateWindow(o)
         end
     end
 
-    UserInputService.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Keyboard
-            and input.KeyCode == window._toggleKey
-            and not UserInputService:GetFocusedTextBox() then
-            window:Toggle()
-        end
-    end)
-
-    window:Toggle(true)
     return window
 end
 Library.Window = Library.CreateWindow
@@ -1623,8 +1948,9 @@ Library.Window = Library.CreateWindow
 return Library
 end)()
 
+
 --------------------------------------------------------------------------------
--- Uzex Hub application
+-- UZEX Hub application
 --------------------------------------------------------------------------------
 
 local Players = game:GetService("Players")
@@ -1665,7 +1991,19 @@ local Config = {
     UpgradeMethod = "Instant",
     AutoRebirth = false,
     FilterBossFish = false,
-    FilterSecretFish = false,
+    AutoFarmSecretBoss = false,
+    AutoSecretBossMode = "Always Active",
+    FavoriteFish = "",
+    AutoFavoriteFish = false,
+    SkipFishList = {},
+    AutoSkipFish = false,
+    BlackTortoiseBand = 0.12,
+    DumpGuyHotbarSlot = 4,
+    AutoGiveFish = false,
+    HopAutoCheck = false,
+    AutoHopGodSpirit = false,
+    AutoHopMaoshan = false,
+    AutoHopTaoist = false,
     CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
@@ -1720,24 +2058,14 @@ local Config = {
     AutoFarmIsland = false,
     SelectedFarmIsland = "Beginning Isle",
     AutoTicketQuest = false,
+    AutoDailyQuest = false,
     TicketQuestMode = "Hard",
     AutoEquipBestBait = false,
     AutoEquipRod = false,
-    ScanMaoshan = false,
-    ScanTaoist = false,
-    ScanSpirit = false,
-    ScanWeather = false,
-    WatchEnzoReady = false,
-    ServerHopApiBase = "",
-    ServerHopApiKey = "",
-    ServerHopApiEnabled = false,
-    MaoshanWebhook = "",
-    TaoistWebhook = "",
-    SpiritWebhook = "",
-    WeatherWebhook = ""
+    Language = "English"
 }
 
-local SAVE_FOLDER = "UzexHub"
+local SAVE_FOLDER = "UZEXHub"
 local SAVE_FILE = SAVE_FOLDER .. "/HeavyweighFishingConfig.json"
 
 local function SaveConfig()
@@ -1763,6 +2091,7 @@ end
 LoadConfig()
 Config.AutoFarmIsland = false -- Auto Farm Fish was removed from the UI
 Library.NotificationsEnabled = Config.NotificationsEnabled ~= false
+Library.Language = (Config.Language == "Tiếng Việt") and "Tiếng Việt" or "English" -- saved language
 if type(Config.SkillOrder) ~= "table" then
     Config.SkillOrder = {"Z", "X", "C", "V"}
 else
@@ -1797,12 +2126,12 @@ task.spawn(function()
     pcall(function()
         if isfile then
             allow = false
-            if isfile("UzexHub/rejoin.flag") and delfile then
-                pcall(delfile, "UzexHub/rejoin.flag")
+            if isfile("UZEXHub/rejoin.flag") and delfile then
+                pcall(delfile, "UZEXHub/rejoin.flag")
             end
             -- only run when Auto Execute is ON in the saved config
-            if isfile("UzexHub/HeavyweighFishingConfig.json") then
-                local dec = HttpService:JSONDecode(readfile("UzexHub/HeavyweighFishingConfig.json"))
+            if isfile("UZEXHub/HeavyweighFishingConfig.json") then
+                local dec = HttpService:JSONDecode(readfile("UZEXHub/HeavyweighFishingConfig.json"))
                 allow = (type(dec) == "table" and dec.AutoExecute == true)
             end
         end
@@ -1840,7 +2169,7 @@ local function QueueAutoExecute(force)
     if autoExecPayload:find("YOUR-USER", 1, true) then
         pcall(function()
             Library:Notify({
-                Title = "Tự chạy script",
+                Title = "Auto Execute ",
                 Content = "Hãy đặt liên kết script trong autoExecPayload trước.",
                 Type = "warning",
                 Duration = 6,
@@ -1928,14 +2257,40 @@ local function GetModuleData(mod)
     return nil
 end
 
+-- Anti-AFK: Roblox kicks after 20 minutes idle (error 278), which Auto Rejoin then
+-- turns into a server change. Old Roblox Idled handlers are disabled FIRST, and only
+-- then do we connect our own (before, the loop below disabled our own handler too).
+if getconnections then
+    pcall(function()
+        for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
+            if conn.Disable then
+                conn:Disable()
+            elseif conn.Disconnect then
+                conn:Disconnect()
+            end
+        end
+    end)
+end
+
 local lastAfkTick = os.clock()
 
-LocalPlayer.Idled:Connect(function()
-    if not Config.AntiAFK then return end
+local function AntiAfkPulse()
     pcall(function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new(0, 0))
     end)
+    pcall(function()
+        -- fallback: tiny real input so the idle timer always resets
+        VirtualInputManager:SendMouseMoveEvent(1, 1, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftShift, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.LeftShift, false, game)
+    end)
+end
+
+LocalPlayer.Idled:Connect(function()
+    if not Config.AntiAFK then return end
+    AntiAfkPulse()
 end)
 
 task.spawn(function()
@@ -1943,12 +2298,9 @@ task.spawn(function()
         task.wait(1)
         if Config.AntiAFK then
             local now = os.clock()
-            if now - lastAfkTick >= 600 then
+            if now - lastAfkTick >= 240 then -- every 4 minutes (kick is at 20)
                 lastAfkTick = now
-                pcall(function()
-                    VirtualUser:CaptureController()
-                    VirtualUser:ClickButton2(Vector2.new(0, 0))
-                end)
+                AntiAfkPulse()
             end
 
             pcall(function()
@@ -1965,16 +2317,6 @@ task.spawn(function()
         end
     end
 end)
-
-if getconnections then
-    for _, conn in pairs(getconnections(LocalPlayer.Idled)) do
-        if conn.Disable then
-            conn:Disable()
-        elseif conn.Disconnect then
-            conn:Disconnect()
-        end
-    end
-end
 
 local cachedChar = LocalPlayer.Character
 local cachedHum = cachedChar and cachedChar:FindFirstChildOfClass("Humanoid")
@@ -2283,6 +2625,8 @@ do
     end
 end
 
+local IsGameAllowingSkill, IsSkillSlotAvailable, IsSkillOnCooldown, IsSkillKeyReady, UzexFilter, TriggerGuiButton
+do
 local function FindSkillNumberValue(char, key)
     local skillsFolder = cachedSkillsFolder or (char and char:FindFirstChild("Skills"))
     if not skillsFolder then return nil, nil end
@@ -2316,7 +2660,7 @@ local function FindSkillButton(key)
     return nil
 end
 
-local function IsGameAllowingSkill(char)
+function IsGameAllowingSkill(char)
     if not FishingGui or not FishingGui.Visible then
         wasMinigameVisible = false
         return false
@@ -2383,7 +2727,7 @@ local function IsGameAllowingSkill(char)
     return true
 end
 
-local function IsSkillSlotAvailable(char, key)
+function IsSkillSlotAvailable(char, key)
     if PlayerData then
         local rodVal = PlayerData:FindFirstChild("FishingRod")
         local rodInv = PlayerData:FindFirstChild("FishingRodInventory")
@@ -2402,7 +2746,7 @@ local function IsSkillSlotAvailable(char, key)
     return s ~= nil
 end
 
-local function IsSkillOnCooldown(char, key)
+function IsSkillOnCooldown(char, key)
     local btn = FindSkillButton(key)
     if btn then
         local cd = btn:FindFirstChild("CD")
@@ -2425,7 +2769,7 @@ local function IsSkillConfirmedUsed(char, key)
     return IsSkillOnCooldown(char, key)
 end
 
-local function IsSkillKeyReady(char, key)
+function IsSkillKeyReady(char, key)
     if not IsSkillSlotAvailable(char, key) then
         return false
     end
@@ -2477,11 +2821,13 @@ local barPosConn = nil
 local boundBar = nil
 
 -- Fish filter: Auto Cast keeps casting until a Boss / Secret Boss fish bites
-local UzexFilter = { Skip = false, Cache = {}, LastNotify = 0, AntiChecked = {} }
+UzexFilter = { Skip = false, Cache = {}, LastNotify = 0, AntiChecked = {} }
+UzexFilter.SecretFarmAllowed = function() return false end
 
 local function LockFishingBar()
     if isLockingBar then return end
     if UzexFilter.Skip then return end
+    if UzexFilter.SecretFarmAllowed() then return end
     if not FishingGui or not FishingGui.Visible or not FishingBar then return end
     if not (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) then return end
     isLockingBar = true
@@ -2522,7 +2868,7 @@ end
 
 BindFishingBarLock()
 
-local function TriggerGuiButton(btn)
+function TriggerGuiButton(btn)
     if not btn then return false end
     if not btn:IsA("GuiButton") then
         btn = btn:FindFirstChildWhichIsA("GuiButton", true) or (btn.Parent and btn.Parent:IsA("GuiButton") and btn.Parent) or nil
@@ -2762,11 +3108,16 @@ RunService.Heartbeat:Connect(function()
     LockFishingBar()
     if Config.AutoMiniGame then
         StepPhase2MiniGame()
-        StepRhythmMiniGame()
+        if not UzexFilter.BTActive then
+            StepRhythmMiniGame()
+        end
     end
 end)
 
-local function GetModelPart(obj)
+end
+local GetModelPart, FindBossTarget, GetButtonLabelText, FindBossMenuFrame, CheckBossStatusOnToggle, clearPlayerESP
+do
+function GetModelPart(obj)
     if not obj then return nil end
     if obj:IsA("BasePart") then return obj end
     if obj:IsA("Model") then
@@ -2826,6 +3177,29 @@ local function UzexFishData(name)
     return data
 end
 
+-- Secret Boss list from the game (Info.FishingAreaRarity["Secret Boss"]), refreshed every 30s
+function UzexFilter.SecretSet()
+    local now = os.clock()
+    if UzexFilter.SecretSetData and now - (UzexFilter.SecretSetAt or 0) < 30 then
+        return UzexFilter.SecretSetData
+    end
+    local set = {}
+    pcall(function()
+        local mod = Info:FindFirstChild("FishingAreaRarity")
+        local data = mod and require(mod)
+        local list = type(data) == "table" and data["Secret Boss"]
+        if type(list) == "table" then
+            for key, value in pairs(list) do
+                if type(key) == "string" then set[string.lower(key)] = true end
+                if type(value) == "string" then set[string.lower(value)] = true end
+            end
+        end
+    end)
+    UzexFilter.SecretSetData = set
+    UzexFilter.SecretSetAt = now
+    return set
+end
+
 -- returns isBoss, isSecret, shownName for the fish currently on the line
 function UzexFilter.Classify()
     local isBoss, isSecret, shown, known = false, false, "", false
@@ -2868,14 +3242,19 @@ function UzexFilter.Classify()
                     known = true
                     if data.Boss == true then isBoss = true end
                     -- secret only when the game says so (no guessing from drop chance)
-                    if data.Secret == true or data.Rarity == "Secret" then
+                    if data.Secret == true or data.SecretBoss == true or data.Rarity == "Secret" then
                         isSecret = true
                     end
+                    if data.SpecialBoss == true then isBoss = true end
                     if type(data.Rarity) == "string" and string.lower(data.Rarity) == "boss" then
                         isBoss = true
                     end
                 end
                 local lower = string.lower(clean)
+                if UzexFilter.SecretSet()[lower] then
+                    isSecret = true
+                    known = true
+                end
                 if string.find(lower, "secret", 1, true) or string.find(lower, "diaohai", 1, true)
                     or string.find(lower, "wuzhi", 1, true) then
                     isSecret = true
@@ -2949,7 +3328,7 @@ local function IsLongDiaoHaiName(obj)
     return string.find(raw, "diaohai", 1, true) ~= nil or string.find(raw, "longdiao", 1, true) ~= nil
 end
 
-local function FindBossTarget(wantSecret)
+function FindBossTarget(wantSecret)
     local npcFolder = workspace:FindFirstChild("NPC")
     local bossFolder = npcFolder and npcFolder:FindFirstChild("Boss")
 
@@ -3026,7 +3405,7 @@ local lastBossNotifyTick = 0
 local function NotifyBoss(title, content, key, cooldown)
 end
 
-local function GetButtonLabelText(obj)
+function GetButtonLabelText(obj)
     if not obj then return "" end
     if obj:IsA("TextButton") or obj:IsA("TextLabel") then
         if obj.Text and obj.Text ~= "" then
@@ -3086,7 +3465,7 @@ local function TriggerGuiButton(btn)
     return triggered
 end
 
-local function FindBossMenuFrame()
+function FindBossMenuFrame()
     if not MainGui then return nil end
     local menu = MainGui:FindFirstChild("Menu")
     if not menu then return nil end
@@ -3182,7 +3561,7 @@ local function CloseBossMenuFrame(bossFrame)
     end
 end
 
-local function CheckBossStatusOnToggle(wantSecret)
+function CheckBossStatusOnToggle(wantSecret)
     bossSummoned = false
     bossSummonTick = 0
     local rodVal = PlayerData and PlayerData:FindFirstChild("FishingRod")
@@ -3533,6 +3912,586 @@ local function StepAutoBoss(char, isMinigame)
     end
 end
 
+-------------------------------------------------------------------------------
+-- Auto Farm Secret Boss (ported from NNVN)
+-- Casts the rod, drops every fish that is not a Secret Boss, and auto-reels the
+-- Secret Boss once it is hooked. Mode: "Always Active" / "Only When Weather".
+-------------------------------------------------------------------------------
+do
+local SecretFarmAllowed
+local SecretFarm = {
+    CurrentTarget = nil,
+    CurrentToken = nil,
+    CurrentRunId = 0,
+    HasHooked = false,
+    PendingCancel = false,
+    LastCast = 0,
+    LastCancel = 0,
+    LastFastCancel = 0,
+    LastProgress = 0,
+    LastNotify = "",
+}
+
+local SecretFarmKeywords = { "secret", "hidden", "mythic", "event", "rare" }
+local SecretFarmWeather = {
+    foggy = true,
+    ["blazing sun"] = true,
+    snowy = true,
+    windy = true,
+    rainy = true,
+    thunderstorm = true,
+}
+local SecretFarmNames = {}
+
+local function SecretFarmHasKeyword(text)
+    text = string.lower(tostring(text or ""))
+    for _, kw in ipairs(SecretFarmKeywords) do
+        if string.find(text, kw, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function SecretFarmLoadNames()
+    local set = {}
+    pcall(function()
+        local rarity = Info:FindFirstChild("FishingAreaRarity")
+        if rarity then
+            local data = require(rarity)
+            if type(data) == "table" and type(data["Secret Boss"]) == "table" then
+                for key in pairs(data["Secret Boss"]) do
+                    set[string.lower(tostring(key))] = true
+                end
+            end
+        end
+    end)
+    pcall(function()
+        local inventory = Info:FindFirstChild("Inventory")
+        if inventory then
+            for _, entry in ipairs(inventory:GetChildren()) do
+                if entry:IsA("ModuleScript") then
+                    local ok, data = pcall(require, entry)
+                    if ok and type(data) == "table" and data.SecretBoss == true then
+                        set[string.lower(tostring(data.FishName or entry.Name))] = true
+                    end
+                end
+            end
+        end
+    end)
+    SecretFarmNames = set
+end
+
+task.spawn(function()
+    while true do
+        SecretFarmLoadNames()
+        task.wait(30)
+    end
+end)
+
+local function SecretFarmGetWeather()
+    local weather = "Clear"
+    pcall(function()
+        local gui = MainGui and MainGui.Parent and MainGui
+            or LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+        local i1 = gui and gui:FindFirstChild("Info")
+        local i2 = i1 and i1:FindFirstChild("Info")
+        local w = i2 and i2:FindFirstChild("Weather")
+        local v = w and w:FindFirstChild("Value")
+        if v then
+            local raw = v:IsA("TextLabel") and v.Text or v.Value
+            weather = tostring(raw):gsub("Weather:%s*", "")
+        end
+    end)
+    return weather
+end
+
+SecretFarmAllowed = function()
+    if not Config.AutoFarmSecretBoss then
+        return false
+    end
+    -- the summon based boss modes drive the rod themselves
+    if Config.AutoBoss or Config.AutoSecretBoss then
+        return false
+    end
+    if Config.AutoSecretBossMode ~= "Only When Weather" then
+        return true
+    end
+    local name = string.lower(SecretFarmGetWeather())
+    name = name:gsub("^weather:%s*", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return SecretFarmWeather[name] == true
+end
+
+UzexFilter.SecretFarmAllowed = SecretFarmAllowed
+
+local function SecretFarmCurrentTarget()
+    local current = SecretFarm.CurrentTarget
+    local info = { Name = nil, SecretBoss = false }
+    if type(current) == "table" then
+        info.Name = current.FishName or current.Name or current.fishName
+        info.SecretBoss = current.SecretBoss == true
+    elseif typeof(current) == "Instance" then
+        info.Name = current:GetAttribute("FishName") or current.Name
+        info.SecretBoss = current:GetAttribute("SecretBoss") == true
+    elseif type(current) == "string" then
+        info.Name = current
+    end
+    local fishId = LocalPlayer:GetAttribute("FishID")
+    local fishes = workspace:FindFirstChild("Fishes")
+    local entry = fishId and fishes and fishes:FindFirstChild(tostring(fishId))
+    if entry then
+        info.Name = info.Name or entry:GetAttribute("FishName") or entry.Name
+        info.SecretBoss = info.SecretBoss or entry:GetAttribute("SecretBoss") == true
+    end
+    local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+    local bar = fishing and fishing:FindFirstChild("ProgressionBar")
+    local label = bar and bar:FindFirstChild("FishName")
+    if (not info.Name or info.Name == "" or info.Name == "???") and label and label.Text ~= "" then
+        info.Name = label.Text
+    end
+    return info
+end
+
+local function SecretFarmIsSecret(info)
+    info = info or SecretFarmCurrentTarget()
+    local lower = string.lower(tostring(info.Name or ""))
+    return info.SecretBoss == true or SecretFarmNames[lower] == true or SecretFarmHasKeyword(lower)
+end
+
+local function SecretFarmReset()
+    SecretFarm.CurrentTarget = nil
+    SecretFarm.CurrentToken = nil
+    SecretFarm.HasHooked = false
+    SecretFarm.PendingCancel = false
+end
+
+local function SecretFarmCast()
+    if not SecretFarmAllowed() or os.clock() - SecretFarm.LastCast < 0.35 then
+        return false
+    end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    if char:GetAttribute("Fishing") and not char:GetAttribute("Retractable") then
+        return false
+    end
+    SecretFarm.LastCast = os.clock()
+    SecretFarmReset()
+    pcall(function()
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            FishingEvent:FireServer(hrp.CFrame)
+        else
+            FishingEvent:FireServer()
+        end
+    end)
+    return true
+end
+
+local function SecretFarmDropFish()
+    if not SecretFarmAllowed() then return false end
+    local char = LocalPlayer.Character
+    if not char then return false end
+    if not char:GetAttribute("Fishing") then
+        SecretFarmReset()
+        return true
+    end
+    SecretFarm.PendingCancel = true
+    pcall(function()
+        local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+        local frame = fishing and fishing:FindFirstChild("BarFrame")
+        local bar = frame and frame:FindFirstChild("Bar")
+        if bar then
+            bar.Position = UDim2.new(-0.15, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
+        end
+    end)
+    if SecretFarm.CurrentToken and os.clock() - SecretFarm.LastFastCancel > 0.5 then
+        SecretFarm.LastFastCancel = os.clock()
+        pcall(function()
+            Events.FishingMinigame:FireServer(false, SecretFarm.CurrentToken)
+        end)
+    end
+    if not char:GetAttribute("Retractable") then return false end
+    if os.clock() - SecretFarm.LastCancel < 0.35 then return false end
+    SecretFarm.LastCancel = os.clock()
+    pcall(function()
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            FishingEvent:FireServer(hrp.CFrame)
+        else
+            FishingEvent:FireServer()
+        end
+    end)
+    return false
+end
+
+local function SecretFarmReel(info)
+    if not SecretFarmAllowed() or not SecretFarmIsSecret(info) then return end
+    local key = "Secret Boss" .. tostring(info.Name)
+    if SecretFarm.LastNotify ~= key then
+        SecretFarm.LastNotify = key
+        pcall(function()
+            Library:Notify({
+                Title = "Secret Boss",
+                Content = "Đang farm Secret Boss: " .. tostring(info.Name or "Unknown"),
+                Duration = 3,
+            })
+        end)
+    end
+    if os.clock() - SecretFarm.LastProgress > 0.04 then
+        SecretFarm.LastProgress = os.clock()
+        pcall(function()
+            UpdateFishProgression:FireServer()
+        end)
+    end
+end
+
+task.spawn(function()
+    while true do
+        if not SecretFarmAllowed() then
+            task.wait(1.5)
+        else
+            task.wait(0.2)
+            pcall(function()
+                local char = LocalPlayer.Character
+                local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+                if char and char:GetAttribute("Fishing") then
+                    if SecretFarm.PendingCancel then
+                        SecretFarmDropFish()
+                    elseif SecretFarm.HasHooked and fishing and fishing.Visible then
+                        local info = SecretFarmCurrentTarget()
+                        if SecretFarmIsSecret(info) then
+                            SecretFarm.PendingCancel = false
+                            SecretFarmReel(info)
+                        elseif info.Name and info.Name ~= "???" then
+                            SecretFarm.PendingCancel = true
+                            SecretFarmDropFish()
+                        end
+                    end
+                else
+                    SecretFarmReset()
+                    -- the rod must be in hand before casting: equip it, wait until it is
+                    -- really held (retry), and only then cast
+                    if not UzexFilter.HoldingRod() and not UzexFilter.Busy then
+                        local tries = 0
+                        while not UzexFilter.HoldingRod() and tries < 4 and SecretFarmAllowed() do
+                            tries = tries + 1
+                            pcall(function()
+                                ToggleHotbar:InvokeServer("1")
+                            end)
+                            local waited = 0
+                            while not UzexFilter.HoldingRod() and waited < 0.6 do
+                                task.wait(0.05)
+                                waited = waited + 0.05
+                            end
+                        end
+                    end
+                    if UzexFilter.HoldingRod() then
+                        task.wait(0.1)
+                        SecretFarmCast()
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+pcall(function()
+    local minigame = Events:FindFirstChild("FishingMinigame")
+    if not minigame then return end
+    minigame.OnClientEvent:Connect(function(target, second, token)
+        if not target or not second then return end
+        SecretFarm.CurrentTarget = target
+        SecretFarm.CurrentToken = token
+        SecretFarm.HasHooked = true
+        SecretFarm.PendingCancel = false
+        SecretFarm.CurrentRunId = SecretFarm.CurrentRunId + 1
+        local runId = SecretFarm.CurrentRunId
+        if not SecretFarmAllowed() then return end
+        local info = SecretFarmCurrentTarget()
+        if not SecretFarmIsSecret(info) then
+            SecretFarm.PendingCancel = true
+            task.delay(0.15, SecretFarmDropFish)
+            return
+        end
+        task.spawn(function()
+            local active = true
+            local conn
+            local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+            if fishing then
+                conn = fishing:GetPropertyChangedSignal("Visible"):Connect(function()
+                    if not fishing.Visible then
+                        active = false
+                        if conn then conn:Disconnect() end
+                    end
+                end)
+            end
+            while active do
+                if not SecretFarmAllowed() or runId ~= SecretFarm.CurrentRunId then
+                    break
+                end
+                local now = SecretFarmCurrentTarget()
+                if not SecretFarmIsSecret(now) then
+                    SecretFarm.PendingCancel = true
+                    SecretFarmDropFish()
+                    break
+                end
+                SecretFarmReel(now)
+                task.wait(0.05)
+            end
+            if conn then conn:Disconnect() end
+            if SecretFarmAllowed() and runId == SecretFarm.CurrentRunId then
+                SecretFarmReset()
+            end
+        end)
+    end)
+end)
+end
+
+-------------------------------------------------------------------------------
+-- Favourite Fish / Auto Skip Fish / Black Tortoise Bloodline minigame
+-- (ported from NNVN)
+-------------------------------------------------------------------------------
+do
+    -- fish name list used by the Favourite / Skip dropdowns
+    function UzexFilter.FishNames()
+        local list, seen = {}, {}
+        pcall(function()
+            local inventory = Info:FindFirstChild("Inventory")
+            if inventory then
+                for _, entry in ipairs(inventory:GetChildren()) do
+                    if entry:IsA("ModuleScript") and not seen[entry.Name] then
+                        seen[entry.Name] = true
+                        table.insert(list, entry.Name)
+                    end
+                end
+            end
+        end)
+        if #list == 0 then
+            pcall(function()
+                local index = PlayerData:FindFirstChild("Index")
+                if index then
+                    for _, entry in ipairs(index:GetChildren()) do
+                        if not seen[entry.Name] then
+                            seen[entry.Name] = true
+                            table.insert(list, entry.Name)
+                        end
+                    end
+                end
+            end)
+        end
+        if #list == 0 then
+            list = {
+                "Rainbow Dragonfish", "Frost Queenfish", "Nameless Octoparasite", "Colossal Tigerfish",
+                "Heavenpiercer Turtle", "Golden Guardian Fish", "Crimson Electric Eel", "Frost Kingfish",
+                "Ascended Perch", "Primordial Kunfish Overlord", "Warbringer Shark", "Flying Fish Emperor",
+                "Flying Fish Empress", "Sanguine Fish", "Draconic Koi", "Reborn Puffer Beast",
+            }
+        end
+        table.sort(list)
+        return list
+    end
+
+    ---------------------------------------------------------------------------
+    -- Favourite Fish: favourites every inventory item of the selected fish
+    ---------------------------------------------------------------------------
+    local function FavoriteSelectedFish()
+        local selected = Config.FavoriteFish
+        if type(selected) ~= "string" or selected == "" or selected == "No Selection" then
+            return 0
+        end
+        local inventory = PlayerData:FindFirstChild("Inventory")
+        local favoriteItem = Events:FindFirstChild("FavoriteItem")
+        if not inventory or not favoriteItem then
+            return 0
+        end
+        local prefix = selected .. " | "
+        local count = 0
+        for _, entry in ipairs(inventory:GetChildren()) do
+            if not Config.AutoFavoriteFish then break end
+            if entry.Name:sub(1, #prefix) == prefix and not entry.Name:match(" | Favorite$") then
+                favoriteItem:FireServer(entry.Name)
+                count = count + 1
+                task.wait(0.12)
+            end
+        end
+        return count
+    end
+
+    task.spawn(function()
+        while true do
+            if Config.AutoFavoriteFish then
+                pcall(FavoriteSelectedFish)
+            end
+            task.wait(1)
+        end
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Auto Skip Fish: gives up a hooked fish that is in the skip list
+    ---------------------------------------------------------------------------
+    local skipRequestId = 0
+    local lastHookedName = ""
+
+    pcall(function()
+        local minigame = Events:FindFirstChild("FishingMinigame")
+        if not minigame then return end
+        minigame.OnClientEvent:Connect(function(data, _, token)
+            local fishName = type(data) == "table" and data.FishName or nil
+            lastHookedName = tostring(fishName or "")
+            if not Config.AutoSkipFish or not fishName then return end
+            local skipSet = {}
+            if type(Config.SkipFishList) == "table" then
+                for _, name in ipairs(Config.SkipFishList) do
+                    skipSet[name] = true
+                end
+            end
+            if not skipSet[fishName] then return end
+            skipRequestId = skipRequestId + 1
+            local myId = skipRequestId
+            task.delay(3, function()
+                if Config.AutoSkipFish and myId == skipRequestId and token ~= nil then
+                    pcall(function()
+                        minigame:FireServer(false, token)
+                    end)
+                end
+            end)
+        end)
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Black Tortoise Bloodline rhythm (Hard mode) - runs inside Auto Mini Game.
+    -- Hits the good notes only and never presses the red "Bad" notes.
+    ---------------------------------------------------------------------------
+    local NOTE_SPEED = 1.15 / 1.4
+    local HIT_WINDOW = 0.22
+    local lanes = { "A", "S", "D" }
+    local keyMap = { A = Enum.KeyCode.A, S = Enum.KeyCode.S, D = Enum.KeyCode.D }
+    local bt = {
+        active = false,
+        generation = 0,
+        seen = setmetatable({}, { __mode = "k" }),
+        lastPress = { A = 0, S = 0, D = 0 },
+        pressBusy = { A = false, S = false, D = false },
+        connections = {},
+    }
+
+    local function IsBlackTortoise(name)
+        return string.find(string.lower(tostring(name or "")), "black tortoise", 1, true) ~= nil
+    end
+
+    local function IsBadNote(note)
+        local c = note.BackgroundColor3
+        return c.R > 0.65 and c.G * 1.5 < c.R and c.B * 1.5 < c.R
+    end
+
+    local function PressLane(lane)
+        if bt.pressBusy[lane] then return false end
+        local key = keyMap[lane]
+        if not key then return false end
+        bt.pressBusy[lane] = true
+        local ok = pcall(function()
+            VirtualInputManager:SendKeyEvent(true, key, false, game)
+        end)
+        if not ok then
+            bt.pressBusy[lane] = false
+            return false
+        end
+        task.delay(0.025, function()
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(false, key, false, game)
+            end)
+            bt.pressBusy[lane] = false
+        end)
+        return true
+    end
+
+    local function ScheduleNote(laneFrame, barFrame, lane, note, generation)
+        if not note or note.Name ~= "Note_FX" or not note:IsA("GuiObject") then return end
+        if bt.seen[note] then return end
+        bt.seen[note] = true
+        if IsBadNote(note) then return end
+        local ok1, noteY = pcall(function() return note.Position.Y.Scale end)
+        local ok2, targetY = pcall(function() return barFrame.Position.Y.Scale end)
+        if not ok1 or not ok2 or type(noteY) ~= "number" or type(targetY) ~= "number" then return end
+        local band = math.clamp(tonumber(Config.BlackTortoiseBand) or 0.12, 0.03, 0.17)
+        local delay = math.clamp((targetY - math.min(0.04, band * 0.35) - noteY) / NOTE_SPEED, 0, 2)
+        local function try(retries)
+            if generation ~= bt.generation or not bt.active or not Config.AutoMiniGame then return end
+            if note.Parent ~= laneFrame or not note.Visible or not laneFrame.Parent then return end
+            if targetY + HIT_WINDOW < note.Position.Y.Scale then return end
+            local best, bestDist = nil, math.huge
+            for _, child in ipairs(laneFrame:GetChildren()) do
+                if child.Name == "Note_FX" and child:IsA("GuiObject") and child.Visible then
+                    local d = math.abs(child.Position.Y.Scale - targetY)
+                    if d <= HIT_WINDOW and d < bestDist then
+                        best, bestDist = child, d
+                    end
+                end
+            end
+            if best == note and not IsBadNote(best) then
+                local now = os.clock()
+                if now - (bt.lastPress[lane] or 0) >= 0.12 and PressLane(lane) then
+                    bt.lastPress[lane] = now
+                end
+            elseif retries > 0 then
+                task.delay(0.04, try, retries - 1)
+            end
+        end
+        task.delay(delay, try, 5)
+    end
+
+    local function StopBlackTortoise()
+        bt.active = false
+        UzexFilter.BTActive = false
+        bt.generation = bt.generation + 1
+        bt.seen = setmetatable({}, { __mode = "k" })
+        bt.pressBusy = { A = false, S = false, D = false }
+        for _, conn in ipairs(bt.connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        table.clear(bt.connections)
+    end
+
+    local function StartBlackTortoise(data)
+        StopBlackTortoise()
+        if type(data) ~= "table" or tostring(data.Mode):lower() ~= "hard" then return end
+        if not Config.AutoMiniGame then return end
+        local generation = bt.generation
+        task.defer(function()
+            if generation ~= bt.generation then return end
+            local isBT = IsBlackTortoise(lastHookedName)
+            if not isBT then
+                local ok, _, _, shown = pcall(UzexFilter.Classify)
+                isBT = ok and IsBlackTortoise(shown)
+            end
+            if not isBT then return end
+            local gui = FishingGui and FishingGui:FindFirstChild("Rhythm")
+            if not gui then return end
+            bt.active = true
+            UzexFilter.BTActive = true
+            for _, lane in ipairs(lanes) do
+                local laneFrame = gui:FindFirstChild("Progression" .. lane)
+                local barFrame = laneFrame and laneFrame:FindFirstChild("BarFrame")
+                if laneFrame and barFrame then
+                    table.insert(bt.connections, laneFrame.ChildAdded:Connect(function(child)
+                        pcall(ScheduleNote, laneFrame, barFrame, lane, child, generation)
+                    end))
+                    for _, child in ipairs(laneFrame:GetChildren()) do
+                        pcall(ScheduleNote, laneFrame, barFrame, lane, child, generation)
+                    end
+                end
+            end
+        end)
+    end
+
+    pcall(function()
+        local rhythmStart = Events:FindFirstChild("RhythmStart")
+        local rhythmStop = Events:FindFirstChild("RhythmStop")
+        if rhythmStart then rhythmStart.OnClientEvent:Connect(StartBlackTortoise) end
+        if rhythmStop then rhythmStop.OnClientEvent:Connect(StopBlackTortoise) end
+    end)
+end
+
 local lastMinigameEndTick = 0
 
 task.spawn(function()
@@ -3554,8 +4513,8 @@ task.spawn(function()
         end
         wasMinigameActive = isMinigame
         -- Fish filter: only fight Boss / Secret Boss fish, drop every other fish and recast
-        local filterOn = (Config.FilterBossFish or Config.FilterSecretFish)
-            and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland)
+        local filterOn = Config.FilterBossFish
+            and not (Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland or UzexFilter.SecretFarmAllowed())
         local curFishId = LocalPlayer:GetAttribute("FishID")
         if filterOn and (isMinigame or curFishId ~= nil) then
             -- every new fish on the line starts a new decision (decided as soon as the fish is known)
@@ -3569,7 +4528,7 @@ task.spawn(function()
             if not fightAllowed and cancelStage == 0 then
                 local isBoss, isSecret, shown, known = UzexFilter.Classify()
                 local waited = now - fightStart
-                if (Config.FilterBossFish and isBoss and not isSecret) or (Config.FilterSecretFish and isSecret) then
+                if Config.FilterBossFish and isBoss and not isSecret then
                     fightAllowed = true
                     pcall(function()
                         Library:Notify({
@@ -3607,7 +4566,7 @@ task.spawn(function()
         end
         -- after a skipped fish the rod must end up in hand again (only for that case, never otherwise)
         if UzexFilter.NeedRod and not UzexFilter.Busy then
-            if not (Config.FilterBossFish or Config.FilterSecretFish) or UzexFilter.HoldingRod() then
+            if not Config.FilterBossFish or UzexFilter.HoldingRod() then
                 UzexFilter.NeedRod = false
             elseif now - (UzexFilter.LastEquip or 0) > 0.3 then
                 UzexFilter.LastEquip = now
@@ -3618,8 +4577,9 @@ task.spawn(function()
                 end)
             end
         end
-        local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
-        local activeCast = Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish or Config.FilterSecretFish
+        local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip and not secretFarmOn
+        local secretFarmOn = UzexFilter.SecretFarmAllowed()
+        local activeCast = (Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish) and not secretFarmOn
         local activeSkill = (Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
 
         if not isMinigame then
@@ -3758,19 +4718,20 @@ Events:WaitForChild("Charge").OnClientEvent:Connect(function(remote)
     end
 end)
 
-local function clearPlayerESP()
+function clearPlayerESP()
     for _, player in ipairs(Players:GetPlayers()) do
         local char = player.Character
         if char then
             local head = char:FindFirstChild("Head")
             if head then
-                local esp = head:FindFirstChild("UzexHubESP")
+                local esp = head:FindFirstChild("UZEXHubESP")
                 if esp then esp:Destroy() end
             end
         end
     end
 end
 
+end
 local function updateESP()
     if not Config.ESPEnabled then return end
     for _, player in ipairs(Players:GetPlayers()) do
@@ -3780,11 +4741,11 @@ local function updateESP()
                 local head = char:FindFirstChild("Head")
                 local hum = char:FindFirstChildOfClass("Humanoid")
                 if head and hum then
-                    local esp = head:FindFirstChild("UzexHubESP")
+                    local esp = head:FindFirstChild("UZEXHubESP")
                     if hum.Health > 0 then
                         if not esp then
                             esp = Instance.new("BillboardGui")
-                            esp.Name = "UzexHubESP"
+                            esp.Name = "UZEXHubESP"
                             esp.Adornee = head
                             esp.Size = UDim2.new(0, 200, 0, 25)
                             esp.StudsOffset = Vector3.new(0, 2.5, 0)
@@ -4041,7 +5002,9 @@ task.spawn(function()
     end
 end)
 
-local lastTicketQuestTime = 0
+local lastTicketQuestTime, GetBuyableBaits
+do
+lastTicketQuestTime = 0
 local ChooseDialogueOption = Events:WaitForChild("ChooseDialogueOption", 9e9)
 
 local function HideTicketDialogueUI()
@@ -4825,10 +5788,148 @@ do
     end)
 end
 
+-------------------------------------------------------------------------------
+-- Auto Claim Daily Quest (menu-based, not NPC)
+-- Clicks the checkmark button on each completed daily quest task in the Quest
+-- menu, then claims the Daily Reward if it's ready.
+-- Works by firing the same remote that the game's own claim button fires.
+-------------------------------------------------------------------------------
+do
+    local lastDailyAttempt = 0
+    local DAILY_COOLDOWN = 30  -- seconds between full sweeps
+
+    -- Best-effort remote discovery: the game may use different names.
+    local function findRemote(names)
+        for _, name in ipairs(names) do
+            local r = Events:FindFirstChild(name)
+            if r then return r end
+        end
+        for _, name in ipairs(names) do
+            local r = ReplicatedStorage:FindFirstChild(name, true)
+            if r then return r end
+        end
+        return nil
+    end
+
+    -- Try to claim via known remote patterns, then via GUI buttons.
+    local function TryClaimDaily()
+        -- ---- 1) RemoteEvent / RemoteFunction approach ----
+        local claimRemote = findRemote({
+            "ClaimDailyQuest", "ClaimDailyReward", "ClaimDaily",
+            "DailyQuestClaim", "DailyRewardClaim", "ClaimDailyTask",
+            "DailyQuest", "DailyReward",
+        })
+        if claimRemote then
+            if claimRemote:IsA("RemoteFunction") then
+                pcall(function() claimRemote:InvokeServer() end)
+            else
+                pcall(function() claimRemote:FireServer() end)
+            end
+        end
+
+        -- ---- 2) GUI button approach: find the Quest menu and click all
+        --         visible claim / checkmark buttons inside Daily Quest tab ----
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local mg = pg and pg:FindFirstChild("MainGui")
+        local menu = mg and mg:FindFirstChild("Menu")
+        local questMenu = menu and menu:FindFirstChild("Quest")
+        if not questMenu then return end
+
+        -- Navigate to the Daily Quest sub-tab if needed
+        local function clickButton(container, names)
+            for _, name in ipairs(names) do
+                local btn = container:FindFirstChild(name, true)
+                if btn and btn:IsA("GuiButton") and btn.Visible then
+                    local fireClick = btn.MouseButton1Click
+                    if fireClick then
+                        pcall(function() fireClick:Fire() end)
+                        task.wait(0.15)
+                    end
+                end
+            end
+        end
+
+        clickButton(questMenu, { "DailyQuest", "Daily Quest", "Daily", "DailyTab" })
+        task.wait(0.3)
+
+        -- Now scan for completed task claim buttons
+        local function tryClaimButtons(root)
+            if not root then return end
+            local claimed = 0
+            for _, descendant in ipairs(root:GetDescendants()) do
+                if descendant:IsA("GuiButton") and descendant.Visible then
+                    local name = string.lower(descendant.Name)
+                    -- Buttons named Claim, ClaimBtn, CheckMark, Done, Collect etc.
+                    if name == "claim" or name == "claimbtn" or name == "claimbutton"
+                        or name == "checkmark" or name == "done" or name == "collect"
+                        or name == "collectbtn" or name == "completebtn"
+                        or string.find(name, "claim", 1, true)
+                        or string.find(name, "collect", 1, true) then
+                        -- Only click if the parent frame looks like a completed task
+                        -- (has a progress label showing the goal is met, or is just enabled)
+                        local parent = descendant.Parent
+                        local completed = false
+                        if parent then
+                            for _, child in ipairs(parent:GetDescendants()) do
+                                if child:IsA("TextLabel") then
+                                    local t = child.Text
+                                    -- "10/10" or "25/25" pattern
+                                    local a, b = t:match("(%d+)/(%d+)")
+                                    if a and b and tonumber(a) >= tonumber(b) then
+                                        completed = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if completed or descendant.BackgroundTransparency < 0.9 then
+                            pcall(function() descendant.MouseButton1Click:Fire() end)
+                            claimed = claimed + 1
+                            task.wait(0.2)
+                        end
+                    end
+                end
+            end
+            return claimed
+        end
+
+        -- Try inside daily quest panel
+        local dailyPanel = questMenu:FindFirstChild("DailyQuest", true)
+            or questMenu:FindFirstChild("Daily Quest", true)
+            or questMenu:FindFirstChild("Daily", true)
+        tryClaimButtons(dailyPanel or questMenu)
+
+        -- Also try to claim the Daily Reward (calendar tab)
+        local rewardPanel = questMenu:FindFirstChild("DailyReward", true)
+            or questMenu:FindFirstChild("Daily Reward", true)
+        if rewardPanel then
+            local claimBtn = rewardPanel:FindFirstChild("Claim", true)
+                or rewardPanel:FindFirstChild("ClaimBtn", true)
+                or rewardPanel:FindFirstChild("CollectBtn", true)
+            if claimBtn and claimBtn:IsA("GuiButton") and claimBtn.Visible then
+                pcall(function() claimBtn.MouseButton1Click:Fire() end)
+            end
+        end
+    end
+
+    -- Expose step function to the main 1-second loop
+    _G.StepDailyQuest = function()
+        if not Config.AutoDailyQuest then return end
+        if os.clock() - lastDailyAttempt < DAILY_COOLDOWN then return end
+        lastDailyAttempt = os.clock()
+        task.spawn(TryClaimDaily)
+    end
+end
+
+
+
 task.spawn(function()
     while task.wait(1) do
         if Config.AutoTicketQuest then
             StepSmartTicketQuest()
+        end
+        if type(_G.StepDailyQuest) == "function" then
+            _G.StepDailyQuest()
         end
         if Config.AutoEquipBestBait then
             StepAutoEquipBestBait()
@@ -4836,7 +5937,7 @@ task.spawn(function()
     end
 end)
 
-local function GetBuyableBaits()
+function GetBuyableBaits()
     local list = {}
     local seen = {}
     local baitFolder = Info:FindFirstChild("Bait")
@@ -4865,6 +5966,7 @@ local function GetBuyableBaits()
     return list
 end
 
+end
 local function GetCraftableBaits()
     local list = {}
     local baitFolder = Info:FindFirstChild("Bait")
@@ -5175,6 +6277,72 @@ local function GetNPCList()
     return list
 end
 
+-- Looser NPC lookup used when the normal lookups find nothing, mainly for the Spirit
+-- (God) NPCs: matches by name, by Name attribute, by colour (Blue / Green / Yellow) and
+-- by the word "spirit", then picks the one closest to the player.
+local function FindLooseNPCPart(npcName, lowerNpc)
+    local function norm(text)
+        return string.lower((string.gsub(tostring(text or ""), "[%s_%-]+", "")))
+    end
+    local want = norm(npcName)
+    if want == "" then
+        return nil
+    end
+    local color
+    for _, c in ipairs({ "blue", "green", "yellow" }) do
+        if string.find(want, c, 1, true) then
+            color = c
+            break
+        end
+    end
+    local anySpirit = string.find(want, "spirit", 1, true) ~= nil or want == "god" or want == "gods"
+
+    local char = LocalPlayer.Character or cachedChar
+    local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+    local best, bestDist
+
+    local function consider(inst, inGod)
+        if not (inst:IsA("Model") or inst:IsA("BasePart")) then
+            return
+        end
+        local name = norm(inst.Name)
+        local attr = norm(inst:GetAttribute("Name"))
+        local hit = (name == want or attr == want)
+        if not hit and color and (name == color or attr == color) then
+            hit = true
+        end
+        if not hit and anySpirit and not color then
+            hit = inGod and (inst.Parent and inst.Parent.Name == "God") or string.find(name, "spirit", 1, true) ~= nil
+        end
+        if not hit and #want >= 4 then
+            hit = string.find(name, want, 1, true) ~= nil or (#name >= 4 and string.find(want, name, 1, true) ~= nil)
+        end
+        if not hit then
+            return
+        end
+        local part = GetModelPart(inst)
+        if part and part:IsDescendantOf(workspace) then
+            local dist = hrp and (part.Position - hrp.Position).Magnitude or 0
+            if not best or dist < bestDist then
+                best, bestDist = part, dist
+            end
+        end
+    end
+
+    local godFolder = workspace:FindFirstChild("God")
+    if godFolder then
+        for _, inst in ipairs(godFolder:GetDescendants()) do
+            consider(inst, true)
+        end
+    end
+    if not best then
+        for _, inst in ipairs(workspace:GetDescendants()) do
+            consider(inst, false)
+        end
+    end
+    return best
+end
+
 local function TeleportToNPC(npcName)
     if not npcName or npcName == "" then return end
     local lowerNpc = string.lower(string.gsub(tostring(npcName), "%s+", ""))
@@ -5261,6 +6429,9 @@ local function TeleportToNPC(npcName)
         if cached and cached:IsDescendantOf(workspace) then
             targetPart = cached
         end
+    end
+    if not targetPart or not targetPart:IsDescendantOf(workspace) then
+        targetPart = FindLooseNPCPart(npcName, lowerNpc)
     end
     if not targetPart or not targetPart:IsDescendantOf(workspace) then
         pcall(function()
@@ -5518,12 +6689,12 @@ ApplyLightingSettings()
 
 -- Window built on Uzex UI. The existing JSON config
 -- remains authoritative; Uzex UI keeps no settings of its own.
--- Replace this placeholder with the real Uzex Hub Discord invite when it is available.
+-- Replace this placeholder with the real UZEX Hub Discord invite when it is available.
 -- The Home tab exposes this URL and copies it when its link button is pressed.
-local DISCORD_INVITE = "https://discord.gg/pzVJV34AH8"
+local DISCORD_INVITE = "https://discord.gg/QPux5hHVY"
 
 local Window = Library:CreateWindow({
-    Name = "Uzex Hub",
+    Name = "UZEX Hub",
     Subtitle = "Heavyweigh Fishing",
     Icon = Library.Assets.Logo,
     Size = UDim2.fromOffset(640, 460),
@@ -5535,10 +6706,10 @@ local Window = Library:CreateWindow({
     SaveSize = false,
     Home = {
         Name = "Trang chủ",
-        Title = "Uzex Hub",
+        Title = "UZEX Hub",
         Desc = "Heavyweigh Fishing",
         Discord = DISCORD_INVITE,
-        DiscordTitle = "Uzex Hub Discord",
+        DiscordTitle = "UZEX Hub Discord",
         DiscordIcon = "message-circle",
         Features = false,
         Stats = {
@@ -5571,11 +6742,11 @@ local Window = Library:CreateWindow({
     OpenButton = false
 })
 
--- Keep the draggable Uzex Hub logo; all window visibility changes
+-- Keep the draggable UZEX Hub logo; all window visibility changes
 -- go through Uzex UI, including restoring a hidden window.
 do
     local LogoGui = Instance.new("ScreenGui")
-    LogoGui.Name = "UzexHubLogoGui"
+    LogoGui.Name = "UZEXHubLogoGui"
     LogoGui.ResetOnSpawn = false
     LogoGui.DisplayOrder = 10000
     pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
@@ -5711,15 +6882,329 @@ end
 local Tabs = {
     Main = Window:CreateTab({ Name = "Chính", Icon = "home" }),
     Teleport = Window:CreateTab({ Name = "Dịch chuyển", Icon = "map-pin" }),
+    Hop = Window:CreateTab({ Name = "Chuyển server", Icon = "server" }),
     Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
     Upgrade = Window:CreateTab({ Name = "Nâng cấp", Icon = "arrow-up" }),
     Misc = Window:CreateTab({ Name = "Khác", Icon = "layers" }),
-    Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" }),
-    ServerHop = Window:CreateTab({ Name = "Server Hop", Icon = "globe" })
+    Settings = Window:CreateTab({ Name = "Cài đặt", Icon = "settings" })
 }
 
+-------------------------------------------------------------------------------
+-- Hop Server tab: God Spirit / Maoshan / Taoist (ported from NNVN Server Hop)
+-------------------------------------------------------------------------------
+do
+    local bootAt = os.clock()
+    local hopping = false
+    local lastHop = 0
+    local HOP_FILE = "UZEXHub/server-hop-visited.json"
+
+    local function Notify(title, content, duration)
+        pcall(function()
+            Library:Notify({ Title = title, Content = content, Duration = duration or 3 })
+        end)
+    end
+
+    local function Norm(text)
+        return (string.lower(tostring(text or "")):gsub("[_%-]+", " "):gsub("%s+", " "))
+    end
+
+    ---------------------------------------------------------------------------
+    -- detection
+    ---------------------------------------------------------------------------
+    local trackerPaths = {
+        taoist = { { "NPC", "Function", "Taoist" }, { "NPC", "Taoist" }, { "world", "NPC", "Taoist" } },
+        maoshan = { { "NPC", "Function", "Maoshan" }, { "NPC", "Maoshan" }, { "world", "NPC", "Maoshan" } },
+    }
+    local trackerNames = {
+        taoist = { taoist = true },
+        maoshan = { maoshan = true, ["mao shan"] = true },
+    }
+    local cache, cacheAt = {}, {}
+
+    local function FindAtPath(path)
+        local node = workspace
+        for _, name in ipairs(path) do
+            node = node and node:FindFirstChild(name)
+            if not node then return nil end
+        end
+        return node
+    end
+
+    local function FindTracker(kind)
+        local now = os.clock()
+        if cacheAt[kind] and now - cacheAt[kind] < 10 then
+            local hit = cache[kind]
+            if hit == false then return nil end
+            if hit and hit.Parent then return hit end
+        end
+        local found
+        for _, path in ipairs(trackerPaths[kind]) do
+            found = FindAtPath(path)
+            if found then break end
+        end
+        if not found then
+            local roots = {}
+            local npc = workspace:FindFirstChild("NPC")
+            if npc then table.insert(roots, npc) end
+            local map = workspace:FindFirstChild("Map") or workspace:FindFirstChild("World")
+            if map then table.insert(roots, map) end
+            if #roots == 0 then table.insert(roots, workspace) end
+            for _, root in ipairs(roots) do
+                for _, inst in ipairs(root:GetDescendants()) do
+                    if trackerNames[kind][Norm(inst.Name)] then
+                        found = inst
+                        break
+                    end
+                end
+                if found then break end
+            end
+        end
+        cache[kind] = found or false
+        cacheAt[kind] = now
+        return found
+    end
+
+    local godCount, godAt = 0, 0
+    local function GodSpiritCount()
+        local now = os.clock()
+        if now - godAt < 10 then return godCount end
+        local count = 0
+        local folders = { workspace:FindFirstChild("God") }
+        local npc = workspace:FindFirstChild("NPC")
+        if npc then table.insert(folders, npc:FindFirstChild("God")) end
+        for _, folder in pairs(folders) do
+            if folder then
+                count = math.max(count, #folder:GetChildren())
+            end
+        end
+        if count == 0 then
+            local roots = {}
+            if npc then table.insert(roots, npc) end
+            local chars = workspace:FindFirstChild("Characters")
+            if chars then table.insert(roots, chars) end
+            if #roots == 0 then table.insert(roots, workspace) end
+            for _, root in ipairs(roots) do
+                for _, inst in ipairs(root:GetDescendants()) do
+                    local n = Norm(inst.Name)
+                    if n == "god spirit" or n == "spirit god" then
+                        count = count + 1
+                    end
+                end
+            end
+        end
+        godCount, godAt = count, now
+        return count
+    end
+
+    local Checks = {
+        ["God Spirit"] = function() return GodSpiritCount() > 0 end,
+        ["Maoshan"] = function() return FindTracker("maoshan") ~= nil end,
+        ["Taoist"] = function() return FindTracker("taoist") ~= nil end,
+    }
+    local ConfigKey = {
+        ["God Spirit"] = "AutoHopGodSpirit",
+        ["Maoshan"] = "AutoHopMaoshan",
+        ["Taoist"] = "AutoHopTaoist",
+    }
+    local FlagName = {
+        ["God Spirit"] = "AutoHopGodSpiritToggle",
+        ["Maoshan"] = "AutoHopMaoshanToggle",
+        ["Taoist"] = "AutoHopTaoistToggle",
+    }
+    local Order = { "God Spirit", "Maoshan", "Taoist" }
+
+    ---------------------------------------------------------------------------
+    -- hop to a fresh public server (never the same one twice within the hour)
+    ---------------------------------------------------------------------------
+    local function LoadVisited()
+        local data = { hour = os.date("!*t").hour, ids = {} }
+        pcall(function()
+            if isfile and isfile(HOP_FILE) then
+                local dec = HttpService:JSONDecode(readfile(HOP_FILE))
+                if type(dec) == "table" and dec.hour == data.hour and type(dec.ids) == "table" then
+                    data = dec
+                end
+            end
+        end)
+        return data
+    end
+
+    local function SaveVisited(data)
+        pcall(function()
+            if writefile then
+                writefile(HOP_FILE, HttpService:JSONEncode(data))
+            end
+        end)
+    end
+
+    local function HopServer()
+        local placeId = game.PlaceId
+        local visited = LoadVisited()
+        local seen = {}
+        for _, id in ipairs(visited.ids) do seen[tostring(id)] = true end
+        local requestFn = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+        local cursor = ""
+        for _ = 1, 8 do
+            local url = "https://games.roblox.com/v1/games/" .. tostring(placeId) .. "/servers/Public?sortOrder=Asc&limit=100"
+            if cursor ~= "" then url = url .. "&cursor=" .. cursor end
+            local raw
+            if requestFn then
+                local ok, res = pcall(requestFn, { Url = url, Method = "GET" })
+                raw = ok and res and res.Body or nil
+            else
+                local ok, res = pcall(game.HttpGet, game, url)
+                raw = ok and res or nil
+            end
+            local data
+            if raw then pcall(function() data = HttpService:JSONDecode(raw) end) end
+            if type(data) ~= "table" or type(data.data) ~= "table" then
+                task.wait(1)
+            else
+                for _, server in ipairs(data.data) do
+                    local id = tostring(server.id)
+                    if id ~= game.JobId and not seen[id]
+                        and (tonumber(server.playing) or 0) < (tonumber(server.maxPlayers) or 0) then
+                        table.insert(visited.ids, id)
+                        SaveVisited(visited)
+                        pcall(function()
+                            TeleportService:TeleportToPlaceInstance(placeId, id, LocalPlayer)
+                        end)
+                        task.wait(4)
+                        return true
+                    end
+                end
+                if data.nextPageCursor and data.nextPageCursor ~= "" then
+                    cursor = data.nextPageCursor
+                else
+                    break
+                end
+            end
+        end
+        return false
+    end
+
+    ---------------------------------------------------------------------------
+    -- UI
+    ---------------------------------------------------------------------------
+    local status = Tabs.Hop:CreateStatGrid({
+        Columns = 3,
+        Items = {
+            { Key = "God Spirit", Label = "God Spirit", Value = "-" },
+            { Key = "Maoshan", Label = "Maoshan", Value = "-" },
+            { Key = "Taoist", Label = "Taoist", Value = "-" },
+        },
+    })
+
+    local function RefreshStatus()
+        for _, name in ipairs(Order) do
+            local ok, found = pcall(Checks[name])
+            status:Set(name, ok and (found and "🟢 Online" or "🔴 Offline") or "-")
+        end
+    end
+
+    Tabs.Hop:CreateToggle({
+        Flag = "HopAutoCheckToggle",
+        Name = "Tự động kiểm tra trạng thái",
+        CurrentValue = Config.HopAutoCheck,
+        Callback = function(Value)
+            Config.HopAutoCheck = Value
+            SaveConfig()
+        end
+    })
+
+    for _, name in ipairs(Order) do
+        Tabs.Hop:CreateSection(name)
+
+        Tabs.Hop:CreateToggle({
+            Flag = FlagName[name],
+            Name = "Tự động chuyển server tìm " .. name,
+            CurrentValue = Config[ConfigKey[name]],
+            Callback = function(Value)
+                Config[ConfigKey[name]] = Value
+                SaveConfig()
+            end
+        })
+
+        Tabs.Hop:CreateButton({
+            Name = "Chuyển server ngay (" .. name .. ")",
+            Callback = function()
+                task.spawn(function()
+                    local ok, found = pcall(Checks[name])
+                    if ok and found then
+                        Notify(name, name .. " đã có trong server này!", 3)
+                        return
+                    end
+                    Notify(name, "Không có " .. name .. ". Đang chuyển server...", 3)
+                    if not HopServer() then
+                        Notify(name, "Không tìm được server phù hợp, thử lại sau.", 4)
+                    end
+                end)
+            end
+        })
+    end
+
+    ---------------------------------------------------------------------------
+    -- background loops
+    ---------------------------------------------------------------------------
+    task.spawn(function()
+        while true do
+            task.wait(4)
+            if Config.HopAutoCheck then
+                pcall(RefreshStatus)
+            end
+        end
+    end)
+
+    -- Auto hop keeps going across servers (the saved flags + Auto Execute restart it)
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            local wanted = {}
+            for _, name in ipairs(Order) do
+                if Config[ConfigKey[name]] then
+                    table.insert(wanted, name)
+                end
+            end
+            if #wanted > 0 and not hopping and os.clock() - bootAt > 12
+                and LocalPlayer.Character and game:IsLoaded() then
+                local foundName
+                for _, name in ipairs(wanted) do
+                    local ok, found = pcall(Checks[name])
+                    if ok and found then
+                        foundName = name
+                        break
+                    end
+                end
+                if foundName then
+                    for _, name in ipairs(Order) do
+                        Config[ConfigKey[name]] = false
+                        local flag = Library.Flags[FlagName[name]]
+                        if flag and flag.Set then
+                            pcall(flag.Set, flag, false, true)
+                        end
+                    end
+                    SaveConfig()
+                    pcall(RefreshStatus)
+                    Notify(foundName .. " Found!", "Đã dừng tự động chuyển server - " .. foundName .. " đang ở đây!", 6)
+                elseif os.clock() - lastHop > 10 then
+                    lastHop = os.clock()
+                    hopping = true
+                    Notify("Hop Server", "Không thấy " .. table.concat(wanted, " / ") .. ". Đang chuyển server...", 2)
+                    task.spawn(function()
+                        pcall(HopServer)
+                        task.wait(8)
+                        hopping = false
+                    end)
+                end
+            end
+        end
+    end)
+end
+
+
 Tabs.Settings:CreateSection("Language / Ngôn ngữ")
-Tabs.Settings:CreateDropdown({
+local LanguageDropdownObj
+LanguageDropdownObj = Tabs.Settings:CreateDropdown({
     Flag = "LanguageDropdown",
     Name = "Language / Ngôn ngữ",
     Options = {"Tiếng Việt", "English"},
@@ -5729,6 +7214,13 @@ Tabs.Settings:CreateDropdown({
     Callback = function(Value)
         if type(Value) == "table" then Value = Value[1] end
         Library:SetLanguage(Value)
+        Config.Language = Library.Language
+        SaveConfig()
+        task.defer(function()
+            if LanguageDropdownObj then
+                LanguageDropdownObj:Set(Library.Language, true)
+            end
+        end)
     end
 })
 
@@ -5789,6 +7281,19 @@ Tabs.Main:CreateDropdown({
     end
 })
 
+Tabs.Main:CreateSection("Nhiệm vụ hàng ngày")
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoDailyQuestToggle",
+    Name = "Tự nhận nhiệm vụ hàng ngày",
+    Description = "Tự tương tác với NPC nhiệm vụ hàng ngày và nhận thưởng",
+    CurrentValue = Config.AutoDailyQuest,
+    Callback = function(Value)
+        Config.AutoDailyQuest = Value
+        SaveConfig()
+    end
+})
+
 Tabs.Main:CreateSection("Nhiệm vụ vé tự động")
 
 Tabs.Main:CreateToggle({
@@ -5816,6 +7321,282 @@ Tabs.Main:CreateDropdown({
         SaveConfig()
     end
 })
+
+-------------------------------------------------------------------------------
+-- Dump Guy (ported from NNVN): hand in a fish of at least 2,000,000 kg
+-------------------------------------------------------------------------------
+do
+    local MAX_LIMIT = 2000000
+    local DUMB_GUY = "Dumb guy"
+
+    local function Notify(content, duration)
+        pcall(function()
+            Library:Notify({ Title = "Dump Guy", Content = content, Duration = duration or 4 })
+        end)
+    end
+
+    local lastWarn = 0
+    local function Warn(content)
+        if os.clock() - lastWarn < 3 then return end
+        lastWarn = os.clock()
+        Notify(content, 4)
+    end
+
+    local function GetSlot()
+        return math.clamp(math.floor(tonumber(Config.DumpGuyHotbarSlot) or 4), 1, 10)
+    end
+
+    local function WeightOf(name)
+        local text = tostring(name or ""):match("|%s*([%d,.]+)%s*$")
+        if not text then return nil end
+        return tonumber((text:gsub(",", "")))
+    end
+
+    local function SlotState(slot)
+        local hotbar = PlayerData:FindFirstChild("Hotbar")
+        local entry = hotbar and hotbar:FindFirstChild(tostring(slot))
+        local valueName = entry and entry:FindFirstChild("ValueName")
+        local quantity = entry and entry:FindFirstChild("Quantity")
+        if not valueName or not quantity then return nil end
+        return {
+            Name = tostring(valueName.Value or ""),
+            Quantity = tonumber(quantity.Value) or 0,
+            Weight = WeightOf(valueName.Value),
+        }
+    end
+
+    local function FishOverWeight(limit)
+        local list = {}
+        local inventory = PlayerData:FindFirstChild("Inventory")
+        if not inventory then return list end
+        for _, entry in ipairs(inventory:GetChildren()) do
+            local weight = WeightOf(entry.Name)
+            if entry:IsA("NumberValue") and weight and limit < weight and entry.Value > 0 then
+                table.insert(list, { Name = entry.Name, Weight = weight })
+            end
+        end
+        table.sort(list, function(a, b) return a.Weight > b.Weight end)
+        return list
+    end
+
+    local function MoveFishToInventory(slot)
+        local moveItems = Events:FindFirstChild("MoveItems")
+        if not moveItems then return false end
+        if not pcall(function() moveItems:FireServer("Hotbar", tonumber(slot)) end) then
+            return false
+        end
+        for _ = 1, 20 do
+            task.wait(0.1)
+            local state = SlotState(slot)
+            if state and state.Quantity <= 0 and (state.Name == "" or state.Name == "Inventory") then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function MoveFishToHotbar(name, slot)
+        local moveItems = Events:FindFirstChild("MoveItems")
+        if not moveItems or not name or not slot then return false end
+        if not pcall(function() moveItems:FireServer("Inventory", name, slot) end) then
+            return false
+        end
+        for _ = 1, 10 do
+            task.wait(0.15)
+            local hotbar = PlayerData:FindFirstChild("Hotbar")
+            local entry = hotbar and hotbar:FindFirstChild(slot)
+            local valueName = entry and entry:FindFirstChild("ValueName")
+            local quantity = entry and entry:FindFirstChild("Quantity")
+            if valueName and quantity and tostring(valueName.Value) == tostring(name)
+                and (tonumber(quantity.Value) or 0) > 0 then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function HoldingFish()
+        local char = LocalPlayer.Character
+        return char ~= nil and char:GetAttribute("Type") == "Fish"
+    end
+
+    local function SelectSlot(slot, expectedName)
+        if not pcall(function() ToggleHotbar:InvokeServer(tonumber(slot), nil) end) then
+            return false
+        end
+        for _ = 1, 12 do
+            task.wait(0.1)
+            if HoldingFish() then
+                local char = LocalPlayer.Character
+                local tool = char and char:FindFirstChildOfClass("Tool")
+                if not tool or not expectedName or tool.Name == expectedName
+                    or tool:GetAttribute("ValueName") == expectedName
+                    or tostring(tool:GetAttribute("FishName") or "") == expectedName then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function FindDumbGuy()
+        local npc = workspace:FindFirstChild("NPC")
+        local functions = npc and npc:FindFirstChild("Function")
+        local direct = functions and functions:FindFirstChild(DUMB_GUY)
+        if direct then return direct end
+        local function norm(text)
+            return string.lower((tostring(text or ""):gsub("[%s_%-]+", "")))
+        end
+        local wanted = { dumbguy = true, dumpguy = true }
+        for _, root in ipairs({ npc, workspace }) do
+            if root then
+                for _, inst in ipairs(root:GetDescendants()) do
+                    if (inst:IsA("Model") or inst:IsA("BasePart")) and wanted[norm(inst.Name)] then
+                        return inst
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function TeleportToDumpGuy()
+        local npc = FindDumbGuy()
+        local part = npc and GetModelPart(npc)
+        local char = LocalPlayer.Character
+        local hrp = (char and char:FindFirstChild("HumanoidRootPart")) or cachedHrp
+        if not part or not hrp then return false end
+        hrp.CFrame = part.CFrame + Vector3.new(0, 2, 0)
+        task.wait(0.4)
+        return true
+    end
+
+    local function InteractWithDumpGuy()
+        local choose = Events:FindFirstChild("ChooseDialogueOption")
+        if not choose then
+            Notify("Remote ChooseDialogueOption not found!", 3)
+            return false
+        end
+        local npc = FindDumbGuy()
+        if not npc then
+            Notify("Dumb guy not found in workspace!", 3)
+            return false
+        end
+        if pcall(function() choose:FireServer(DUMB_GUY, 1, "GiveFish", { npc }) end) then
+            return true
+        end
+        local prompt = npc:FindFirstChild("ProximityPrompt", true)
+        if prompt and fireproximityprompt then
+            pcall(fireproximityprompt, prompt)
+            return true
+        end
+        return false
+    end
+
+    -- returns ok, fishName | errorMessage
+    local function GiveFish()
+        local slot = GetSlot()
+        local slotText = tostring(slot)
+        local state = SlotState(slot)
+        if state and state.Weight and MAX_LIMIT <= state.Weight then
+            if not SelectSlot(slotText) then
+                return false, "Could not equip fish from hotbar slot " .. slotText
+            end
+            task.wait(0.3)
+            if not HoldingFish() then return false, "Not holding a fish!" end
+            if not TeleportToDumpGuy() then return false, "Could not reach Dump Guy." end
+            if not InteractWithDumpGuy() then return false, "Could not interact with Dump Guy." end
+            return true, state.Name ~= "" and state.Name or "Fish"
+        end
+        if state and state.Name ~= "" and state.Name ~= "Inventory" then
+            MoveFishToInventory(slot)
+            task.wait(0.3)
+        end
+        local list = FishOverWeight(MAX_LIMIT - 1)
+        if #list == 0 then
+            return false, "No fish at least 2,000,000 kg found."
+        end
+        local fish = list[1]
+        if not MoveFishToHotbar(fish.Name, slotText) then
+            return false, "Could not move " .. fish.Name .. " to hotbar"
+        end
+        task.wait(0.3)
+        if not SelectSlot(slotText, fish.Name) then
+            return false, "Could not equip " .. fish.Name
+        end
+        task.wait(0.3)
+        if not HoldingFish() then return false, "Not holding a fish!" end
+        if not TeleportToDumpGuy() then return false, "Could not reach Dump Guy." end
+        if not InteractWithDumpGuy() then return false, "Could not interact with Dump Guy." end
+        return true, fish.Name
+    end
+
+    task.spawn(function()
+        while true do
+            if Config.AutoGiveFish then
+                local ok, success, message = pcall(GiveFish)
+                if ok and success then
+                    task.wait(1)
+                elseif ok and message and not string.find(message, "No fish at least", 1, true) then
+                    Warn(message)
+                end
+            end
+            task.wait(1)
+        end
+    end)
+
+    Tabs.Main:CreateSection("Dump Guy")
+
+    Tabs.Main:CreateParagraph({
+        Title = "Give fish at least 2,000,000 kg",
+        Content = "Uses an eligible fish already in the selected slot, or moves a fish of at least 2M kg from the inventory. Default: slot 4."
+    })
+
+    Tabs.Main:CreateSlider({
+        Flag = "DumpGuyHotbarSlotSlider",
+        Name = "Hotbar slot for fish",
+        CurrentValue = GetSlot(),
+        Range = {1, 10},
+        Increment = 1,
+        Callback = function(Value)
+            Config.DumpGuyHotbarSlot = math.clamp(math.floor(tonumber(Value) or 4), 1, 10)
+            SaveConfig()
+        end
+    })
+
+    Tabs.Main:CreateButton({
+        Name = "Give 1 Fish >= 2M kg",
+        Callback = function()
+            task.spawn(function()
+                local ok, success, message = pcall(GiveFish)
+                if ok and success then
+                    Notify("Fish removed from hotbar: " .. tostring(message), 4)
+                else
+                    Notify(tostring(ok and message or "Could not give fish."), 4)
+                end
+            end)
+        end
+    })
+
+    Tabs.Main:CreateButton({
+        Name = "Teleport to Dump Guy",
+        Callback = function()
+            task.spawn(function()
+                Notify(TeleportToDumpGuy() and "Teleported to Dump Guy." or "Dump Guy NPC was not found.", 3)
+            end)
+        end
+    })
+
+    Tabs.Main:CreateToggle({
+        Flag = "AutoGiveFishToggle",
+        Name = "Auto Give Fish >= 2M kg",
+        CurrentValue = Config.AutoGiveFish,
+        Callback = function(Value)
+            Config.AutoGiveFish = Value
+            SaveConfig()
+        end
+    })
+end
 
 Tabs.Settings:CreateSection("Chung")
 
@@ -6020,86 +7801,43 @@ do
     })
 end
 
-Tabs.Shop:CreateSection("Cá")
+-------------------------------------------------------------------------------
+-- Index (ported from NNVN): marks every fish entry in the player's Index data as unlocked
+-------------------------------------------------------------------------------
+Tabs.Shop:CreateSection("Index")
 
 Tabs.Shop:CreateButton({
-    Name = "Mở khóa tất cả cá",
-    Description = "Shows every fish as unlocked in the Index menu",
+    Name = "Unlock all fish (Risk)",
+    Description = "Sets every fish in your Index data to unlocked",
     Callback = function()
-        local count = 0
-        local found = false
-        pcall(function()
-            local pg = LocalPlayer:FindFirstChild("PlayerGui")
-            local mg = (pg and pg:FindFirstChild("MainGui")) or MainGui
-            if not mg then return end
-            local root = nil
-            for _, d in ipairs(mg:GetDescendants()) do
-                if d:IsA("Frame") or d:IsA("ScrollingFrame") then
-                    local n = string.lower(d.Name)
-                    if n == "index" or string.find(n, "fishindex", 1, true) or string.find(n, "codex", 1, true)
-                        or string.find(n, "collection", 1, true) or string.find(n, "bestiary", 1, true) then
-                        root = d
-                        break
-                    end
-                end
+        local index = PlayerData and PlayerData:FindFirstChild("Index")
+        if not index then
+            pcall(function()
+                Library:Notify({
+                    Title = "Index",
+                    Content = "Index folder not found!",
+                    Type = "warning",
+                    Duration = 2,
+                })
+            end)
+            return
+        end
+        local counter = 0
+        for _, entry in ipairs(index:GetChildren()) do
+            if entry:IsA("NumberValue") or entry:IsA("IntValue") then
+                entry.Value = 1
+                counter = counter + 1
+            elseif entry:IsA("BoolValue") then
+                entry.Value = true
+                counter = counter + 1
             end
-            if not root then return end
-            found = true
-            -- First remove visual lock/cover layers.
-            for _, d in ipairs(root:GetDescendants()) do
-                local n = string.lower(d.Name)
-                if d:IsA("GuiObject") and (n == "lock" or n == "locked" or n == "unknown" or n == "hidden"
-                    or string.find(n, "question", 1, true) or n == "cover") then
-                    if d.Visible then
-                        d.Visible = false
-                        count = count + 1
-                    end
-                elseif d:IsA("ImageLabel") and d.ImageColor3 == Color3.new(0, 0, 0) then
-                    d.ImageColor3 = Color3.new(1, 1, 1)
-                    count = count + 1
-                end
-            end
-
-            -- Some Index cards keep the fish name on the card/frame while the
-            -- visible TextLabel is still "???". Recover only when the card name
-            -- itself is a meaningful name; never fabricate a fish name.
-            local genericNames = {
-                index = true, fishindex = true, codex = true, collection = true,
-                bestiary = true, fish = true, item = true, entry = true, card = true,
-                template = true, scrollingframe = true, frame = true, content = true,
-                list = true, grid = true, holder = true, container = true, unknown = true,
-                hidden = true, ["???"] = true
-            }
-            for _, label in ipairs(root:GetDescendants()) do
-                if label:IsA("TextLabel") and (label.Text == "???" or label.Text == "??? ???") then
-                    local node = label.Parent
-                    local candidate = nil
-                    for _ = 1, 5 do
-                        if not node or node == root then break end
-                        local nodeName = tostring(node.Name or "")
-                        local lowered = string.lower(nodeName)
-                        if nodeName ~= "" and not genericNames[lowered]
-                            and not string.find(lowered, "template", 1, true)
-                            and not string.find(lowered, "unknown", 1, true)
-                            and not string.find(nodeName, "?", 1, true) then
-                            candidate = nodeName
-                            break
-                        end
-                        node = node.Parent
-                    end
-                    if candidate then
-                        label.Text = candidate
-                        count = count + 1
-                    end
-                end
-            end
-        end)
+        end
         pcall(function()
             Library:Notify({
-                Title = "Unlock all fish",
-                Content = found and ("Unlocked " .. count .. " entries") or "Index menu not found - open it once, then press again",
-                Type = found and "success" or "warning",
-                Duration = 4,
+                Title = "Index",
+                Content = "Unlocked " .. counter .. " fish!",
+                Type = "success",
+                Duration = 3,
             })
         end)
     end
@@ -6549,6 +8287,7 @@ do
     local savedDecals = setmetatable({}, weak)      -- Decal/Texture -> Transparency
     local savedFx = setmetatable({}, weak)          -- effect -> true
     local savedAtmos = setmetatable({}, weak)       -- Atmosphere -> Density
+    local savedExplosions = setmetatable({}, weak)  -- Explosion -> Visible
     local savedAppearance = {}                      -- SurfaceAppearance -> original parent (strong: it is unparented)
     local savedPerf = nil
     local descConn = nil
@@ -6558,7 +8297,10 @@ do
         Fire = true, Sparkles = true, BloomEffect = true, BlurEffect = true,
         SunRaysEffect = true, DepthOfFieldEffect = true, Clouds = true,
         PointLight = true, SpotLight = true, SurfaceLight = true, Highlight = true,
+        ColorCorrectionEffect = true,
     }
+    local PERF_QUALITY = 8   -- graphics quality level while Performance Mode is on
+    local PERF_FPS_CAP = 120 -- FPS cap while Performance Mode is on
 
     -- average frames per second over a short window
     local function measureFps(seconds)
@@ -6582,17 +8324,27 @@ do
             end
         elseif inst:IsA("BasePart") then
             if savedParts[inst] == nil then
-                local fidelity
+                local fidelity, textureId
                 if inst:IsA("MeshPart") then
                     fidelity = inst.RenderFidelity
+                    textureId = inst.TextureID
                 end
-                savedParts[inst] = { inst.Material, inst.Reflectance, inst.CastShadow, fidelity }
+                savedParts[inst] = { inst.Material, inst.Reflectance, inst.CastShadow, fidelity, textureId }
                 inst.Material = Enum.Material.SmoothPlastic
                 inst.Reflectance = 0
                 inst.CastShadow = false
                 if fidelity then
                     inst.RenderFidelity = Enum.RenderFidelity.Performance
+                    if textureId and textureId ~= "" then
+                        inst.TextureID = ""
+                    end
                 end
+                optimized = optimized + 1
+            end
+        elseif class == "Explosion" then
+            if savedExplosions[inst] == nil then
+                savedExplosions[inst] = inst.Visible
+                inst.Visible = false
                 optimized = optimized + 1
             end
         elseif inst:IsA("Decal") then
@@ -6627,23 +8379,40 @@ do
                 if savedPerf ~= mine then return end
 
                 pcall(function()
-                    mine.quality = settings().Rendering.QualityLevel
-                    settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+                    local rendering = settings().Rendering
+                    mine.quality = rendering.QualityLevel
+                    mine.meshDetail = rendering.MeshPartDetailLevel
+                    rendering.QualityLevel = Enum.QualityLevel:FromValue(PERF_QUALITY)
+                    rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04
                 end)
                 pcall(function()
                     local ugs = UserSettings():GetService("UserGameSettings")
                     mine.saved = ugs.SavedQualityLevel
-                    ugs.SavedQualityLevel = Enum.SavedQualitySetting.QualityLevel1
+                    ugs.SavedQualityLevel = Enum.SavedQualitySetting["QualityLevel" .. PERF_QUALITY]
+                end)
+                -- Fast Mode: unlock FPS up to 120 (needs an executor with setfpscap)
+                pcall(function()
+                    if type(setfpscap) == "function" then
+                        mine.fpsCap = (type(getfpscap) == "function" and getfpscap()) or 60
+                        setfpscap(PERF_FPS_CAP)
+                    end
                 end)
                 pcall(function()
                     mine.lighting = {
                         Lighting.GlobalShadows, Lighting.EnvironmentDiffuseScale,
                         Lighting.EnvironmentSpecularScale, Lighting.ShadowSoftness,
+                        Lighting.Technology,
                     }
                     Lighting.GlobalShadows = false
                     Lighting.EnvironmentDiffuseScale = 0
                     Lighting.EnvironmentSpecularScale = 0
                     Lighting.ShadowSoftness = 0
+                    Lighting.Technology = Enum.Technology.Compatibility
+                end)
+                pcall(function()
+                    local materials = game:GetService("MaterialService")
+                    mine.materials2022 = materials.Use2022Materials
+                    materials.Use2022Materials = false
                 end)
                 pcall(function()
                     local terrain = workspace:FindFirstChildOfClass("Terrain")
@@ -6694,6 +8463,15 @@ do
             savedPerf = nil
             pcall(function()
                 if snapshot.quality then settings().Rendering.QualityLevel = snapshot.quality end
+                if snapshot.meshDetail then settings().Rendering.MeshPartDetailLevel = snapshot.meshDetail end
+            end)
+            pcall(function()
+                if snapshot.fpsCap and type(setfpscap) == "function" then setfpscap(snapshot.fpsCap) end
+            end)
+            pcall(function()
+                if snapshot.materials2022 ~= nil then
+                    game:GetService("MaterialService").Use2022Materials = snapshot.materials2022
+                end
             end)
             pcall(function()
                 if snapshot.saved then
@@ -6705,6 +8483,7 @@ do
                 if l then
                     Lighting.GlobalShadows, Lighting.EnvironmentDiffuseScale = l[1], l[2]
                     Lighting.EnvironmentSpecularScale, Lighting.ShadowSoftness = l[3], l[4]
+                    if l[5] then Lighting.Technology = l[5] end
                 end
             end)
             pcall(function()
@@ -6721,6 +8500,7 @@ do
                     pcall(function()
                         inst.Material, inst.Reflectance, inst.CastShadow = v[1], v[2], v[3]
                         if v[4] then inst.RenderFidelity = v[4] end
+                        if v[5] then inst.TextureID = v[5] end
                     end)
                     savedParts[inst] = nil
                     n = n + 1
@@ -6733,6 +8513,10 @@ do
                 for inst in pairs(savedFx) do
                     pcall(function() inst.Enabled = true end)
                     savedFx[inst] = nil
+                end
+                for inst, visible in pairs(savedExplosions) do
+                    pcall(function() inst.Visible = visible end)
+                    savedExplosions[inst] = nil
                 end
                 for inst, density in pairs(savedAtmos) do
                     pcall(function() inst.Density = density end)
@@ -6751,7 +8535,7 @@ do
     Tabs.Misc:CreateToggle({
         Flag = "PerformanceModeToggle",
         Name = "Chế độ hiệu năng",
-        Description = "Lower graphics: flat materials, no shadows/effects/lights/textures for more FPS",
+        Description = "Fast Mode: quality level 8, FPS cap 120, flat materials, no shadows/effects/lights/textures",
         CurrentValue = Config.PerformanceMode,
         Callback = function(Value)
             Config.PerformanceMode = Value
@@ -6816,11 +8600,27 @@ Tabs.Main:CreateToggle({
 })
 
 Tabs.Main:CreateToggle({
-    Flag = "FilterSecretFishToggle",
+    Flag = "AutoFarmSecretBossToggle",
     Name = "Tự động câu cá Secret Boss",
-    CurrentValue = Config.FilterSecretFish,
+    CurrentValue = Config.AutoFarmSecretBoss,
     Callback = function(Value)
-        Config.FilterSecretFish = Value
+        Config.AutoFarmSecretBoss = Value
+        if Value then
+            Config.AutoCast = false
+        end
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateDropdown({
+    Flag = "AutoSecretBossModeDropdown",
+    Name = "Kích hoạt Secret Boss",
+    Options = {"Always Active", "Only When Weather"},
+    CurrentOption = Config.AutoSecretBossMode == "Only When Weather" and "Only When Weather" or "Always Active",
+    MultipleOptions = false,
+    AllowNone = false,
+    Callback = function(Value)
+        Config.AutoSecretBossMode = Value == "Only When Weather" and Value or "Always Active"
         SaveConfig()
     end
 })
@@ -6875,7 +8675,8 @@ do
         end)
     end
 
-    -- keeps the fishing rod in hand (waits while the fish filter is swapping the rod itself)
+    -- keeps the fishing rod in hand only when the "Tự trang bị cần câu" toggle is on
+    -- (Auto Farm Secret Boss no longer forces it; it only equips right before casting)
     task.spawn(function()
         while task.wait(0.5) do
             if Config.AutoEquipRod and not UzexFilter.Busy and not UzexFilter.NeedRod then
@@ -6907,6 +8708,66 @@ do
         end
     })
 end
+
+Tabs.Main:CreateSection("Cá yêu thích")
+
+Tabs.Main:CreateDropdown({
+    Flag = "FavoriteFishDropdown",
+    Name = "Chọn cá",
+    Options = (function()
+        local names = UzexFilter.FishNames()
+        table.insert(names, 1, "No Selection")
+        return names
+    end)(),
+    CurrentOption = (type(Config.FavoriteFish) == "string" and Config.FavoriteFish ~= "") and Config.FavoriteFish or "No Selection",
+    MultipleOptions = false,
+    AllowNone = false,
+    Callback = function(Value)
+        if type(Value) == "table" then Value = Value[1] end
+        Config.FavoriteFish = (Value == nil or Value == "No Selection") and "" or Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoFavoriteFishToggle",
+    Name = "Tự động yêu thích cá đã chọn",
+    CurrentValue = Config.AutoFavoriteFish,
+    Callback = function(Value)
+        Config.AutoFavoriteFish = Value
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateSection("Tự động bỏ qua cá")
+
+Tabs.Main:CreateDropdown({
+    Flag = "SkipFishListDropdown",
+    Name = "Cá cần bỏ qua",
+    Options = UzexFilter.FishNames(),
+    CurrentOption = table.clone(type(Config.SkipFishList) == "table" and Config.SkipFishList or {}),
+    MultipleOptions = true,
+    Callback = function(Value)
+        local picked = {}
+        if type(Value) == "table" then
+            for _, v in ipairs(Value) do
+                table.insert(picked, v)
+            end
+        end
+        Config.SkipFishList = picked
+        SaveConfig()
+    end
+})
+
+Tabs.Main:CreateToggle({
+    Flag = "AutoSkipFishToggle",
+    Name = "Tự động bỏ qua cá đã chọn",
+    CurrentValue = Config.AutoSkipFish,
+    Callback = function(Value)
+        Config.AutoSkipFish = Value
+        SaveConfig()
+    end
+})
 
 Tabs.Main:CreateSection("Kỹ năng")
 
@@ -7033,6 +8894,18 @@ Tabs.Main:CreateToggle({
     end
 })
 
+Tabs.Main:CreateSlider({
+    Flag = "BlackTortoiseBandSlider",
+    Name = "Black Tortoise Bloodline - vùng an toàn",
+    CurrentValue = tonumber(Config.BlackTortoiseBand) or 0.12,
+    Range = {0.03, 0.17},
+    Increment = 0.01,
+    Callback = function(Value)
+        Config.BlackTortoiseBand = math.clamp(tonumber(Value) or 0.12, 0.03, 0.17)
+        SaveConfig()
+    end
+})
+
 Tabs.Main:CreateSection("Vị trí")
 
 Tabs.Main:CreateButton({
@@ -7151,516 +9024,128 @@ Tabs.Settings:CreateKeybind({
     end
 })
 
-Tabs.Settings:CreateSection("Phím tắt")
 
-Tabs.Settings:CreateToggle({
-    Flag = "DisableAllKeybindsToggle",
-    Name = "Tắt phím tắt",
-    CurrentValue = Config.DisableAllKeybinds or false,
-    Callback = function(Value)
-        Config.DisableAllKeybinds = Value
-        SaveConfig()
-    end
-})
-
-Tabs.Settings:CreateKeybind({
-    Flag = "FlyKeybind",
-    Name = "Phím bật bay",
-    CurrentKeybind = Config.FlyKeybind or "F",
-    Callback = function()
-        if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.FlyKeybindEnabled ~= false then
-            toggleFly()
-        end
-    end,
-    OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
-        if keyCode then
-            Config.FlyKeybind = keyCode.Name
-            SaveConfig()
-        end
-    end
-})
-
-Tabs.Settings:CreateKeybind({
-    Flag = "NoclipKeybind",
-    Name = "Phím bật xuyên vật thể",
-    CurrentKeybind = Config.NoclipKeybind or "J",
-    Callback = function()
-        if not UserInputService:GetFocusedTextBox() and not Config.DisableAllKeybinds and Config.NoclipKeybindEnabled ~= false then
-            toggleNoclip()
-        end
-    end,
-    OnChanged = function(NewKey)
-        local keyCode = typeof(NewKey) == "EnumItem" and NewKey or Enum.KeyCode[tostring(NewKey):gsub("Enum%.KeyCode%.", "")]
-        if keyCode then
-            Config.NoclipKeybind = keyCode.Name
-            SaveConfig()
-        end
-    end
-})
 
 
 
 do
     local function HopLowServer()
         task.spawn(function()
-            local placeId, curJobId = game.PlaceId, game.JobId
+            local placeId = game.PlaceId
+            local curJobId = game.JobId
             local requestFn = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
             local targetServer = nil
-            Library:Notify({Title = "Server Hop", Content = "Đang tìm máy chủ ít người...", Duration = 4})
-            local cursor, attempts = "", 0
+
+            pcall(function()
+                Library:Notify({
+                    Title = "Đổi máy chủ",
+                    Content = "Đang tìm máy chủ ít người...",
+                    Duration = 4
+                })
+            end)
+
+            local cursor = ""
+            local attempts = 0
             while attempts < 5 and not targetServer do
                 attempts = attempts + 1
                 local url = "https://games.roblox.com/v1/games/" .. tostring(placeId) .. "/servers/Public?sortOrder=Asc&limit=100"
-                if cursor ~= "" then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
-                local raw
+                if cursor ~= "" then
+                    url = url .. "&cursor=" .. cursor
+                end
+
+                local raw = nil
                 if requestFn then
-                    local ok, res = pcall(requestFn, {Url=url, Method="GET"})
-                    if ok and res then raw = res.Body end
+                    local res = requestFn({ Url = url, Method = "GET" })
+                    if res and res.Body then
+                        raw = res.Body
+                    end
                 else
                     local ok, res = pcall(game.HttpGet, game, url)
                     if ok then raw = res end
                 end
-                if not raw then break end
-                local data
-                pcall(function() data = HttpService:JSONDecode(raw) end)
-                if not data or type(data.data) ~= "table" then break end
-                local servers = {}
-                for _, srv in ipairs(data.data) do
-                    if type(srv) == "table" and srv.id and srv.id ~= curJobId then
-                        local playing, maxP = tonumber(srv.playing) or 0, tonumber(srv.maxPlayers) or 1
-                        if playing < maxP and playing > 0 then table.insert(servers, srv) end
+
+                if raw then
+                    local data = nil
+                    pcall(function() data = HttpService:JSONDecode(raw) end)
+                    if data and data.data then
+                        local servers = {}
+                        for _, s in ipairs(data.data) do
+                            if type(s) == "table" and s.id and s.id ~= curJobId then
+                                local playing = tonumber(s.playing) or 0
+                                local maxP = tonumber(s.maxPlayers) or 1
+                                if playing < maxP and playing > 0 then
+                                    table.insert(servers, s)
+                                end
+                            end
+                        end
+                        table.sort(servers, function(a, b)
+                            return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0)
+                        end)
+                        if #servers > 0 then
+                            targetServer = servers[1]
+                            break
+                        end
+                        if data.nextPageCursor and data.nextPageCursor ~= "" then
+                            cursor = data.nextPageCursor
+                        else
+                            break
+                        end
+                    else
+                        break
                     end
+                else
+                    break
                 end
-                table.sort(servers, function(a,b) return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0) end)
-                if #servers > 0 then targetServer = servers[1]; break end
-                cursor = data.nextPageCursor or ""
-                if cursor == "" then break end
-                task.wait(0.4)
+                task.wait(0.5)
             end
+
             if targetServer and targetServer.id then
-                Library:Notify({Title="Server Hop", Content="Đang chuyển đến server có "..tostring(targetServer.playing).." người...", Duration=3})
-                task.wait(0.4)
+                pcall(function()
+                    Library:Notify({
+                        Title = "Đổi máy chủ",
+                        Content = "Đã tìm thấy máy chủ có " .. tostring(targetServer.playing) .. " người chơi! Đang dịch chuyển...",
+                        Duration = 4
+                    })
+                end)
+                task.wait(0.5)
                 TeleportService:TeleportToPlaceInstance(placeId, targetServer.id, LocalPlayer)
             else
-                Library:Notify({Title="Server Hop", Content="Không tìm thấy server phù hợp; thử vào server ngẫu nhiên.", Duration=4})
-                task.wait(0.4)
+                pcall(function()
+                    Library:Notify({
+                        Title = "Đổi máy chủ",
+                        Content = "Không tìm thấy máy chủ ít người. Đang chuyển đến máy chủ ngẫu nhiên...",
+                        Duration = 4
+                    })
+                end)
+                task.wait(0.5)
                 TeleportService:Teleport(placeId, LocalPlayer)
             end
         end)
     end
 
-    -- Server Hop UI: target selectors, live status, refreshable server list.
-    Tabs.ServerHop:CreateSection("LIST SERVER HOP")
-    local selectedHopTarget = "Spirit"
-    local selectedWeatherTarget = "Thunderstorm"
-    local autoHopConfirmed = false
-    local serverList = {}
-    local visitedServers = {[game.JobId]=true}
-    local hopBusy = false
-    local statusText = "Chưa tải danh sách server | Spirit"
-    local statusWidget = Tabs.ServerHop:CreateStatGrid({
-        Columns=1,
-        Items={{Key="status", Label="Status", Value=statusText, Color=Theme.Accent}}
-    })
-    local function updateStatus(value)
-        statusText = tostring(value)
-        pcall(function() statusWidget:Set("status", statusText) end)
-        pcall(function() Library:Notify({Title="Server Hop", Content=statusText, Duration=2}) end)
-    end
-    local function getRequestFn()
-        return (typeof(request)=="function" and request)
-            or (typeof(http_request)=="function" and http_request)
-            or (syn and typeof(syn.request)=="function" and syn.request)
-            or (http and typeof(http.request)=="function" and http.request)
-            or nil
-    end
-    local function fetchServers()
-        local all, cursor, pages = {}, "", 0
-        local req = getRequestFn()
-        repeat
-            local url = "https://games.roblox.com/v1/games/"..tostring(game.PlaceId).."/servers/Public?sortOrder=Asc&limit=100"
-            if cursor ~= "" then url = url .. "&cursor=" .. HttpService:UrlEncode(cursor) end
-            local body
-            if req then
-                local ok, res = pcall(req, {Url=url, Method="GET"})
-                if ok and res then body = res.Body end
-            else
-                local ok, res = pcall(game.HttpGet, game, url)
-                if ok then body = res end
-            end
-            if not body then break end
-            local ok, data = pcall(function() return HttpService:JSONDecode(body) end)
-            if not ok or type(data) ~= "table" or type(data.data) ~= "table" then break end
-            for _, srv in ipairs(data.data) do
-                if srv.id and srv.id ~= game.JobId and not visitedServers[srv.id]
-                    and (tonumber(srv.playing) or 0) < (tonumber(srv.maxPlayers) or 0) then
-                    all[#all+1] = srv
-                end
-            end
-            cursor = data.nextPageCursor or ""
-            pages = pages + 1
-            task.wait(0.15)
-        until cursor == "" or pages >= 4
-        table.sort(all, function(a,b) return (tonumber(a.playing) or 0) < (tonumber(b.playing) or 0) end)
-        serverList = all
-        return #all
-    end
-    local serverListFrame = new("Frame", {
-        Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
-        BackgroundTransparency=1, BorderSizePixel=0
-    })
-    new("UIListLayout", {Padding=UDim.new(0,6), SortOrder=Enum.SortOrder.LayoutOrder}, serverListFrame)
-    Tabs.ServerHop:_add(serverListFrame)
-    local function renderServerList()
-        for _, child in ipairs(serverListFrame:GetChildren()) do
-            if not child:IsA("UIListLayout") then child:Destroy() end
-        end
-        for i, srv in ipairs(serverList) do
-            local row = new("TextButton", {
-                Name="ServerRow_"..i, LayoutOrder=i,
-                Size=UDim2.new(1,0,0,44), BackgroundColor3=Theme.Surface,
-                Text="", AutoButtonColor=true, BorderSizePixel=0
-            }, serverListFrame)
-            round(row, 9)
-            outline(row, Theme.Stroke, 1, 0.45)
-            local job = tostring(srv.id or "")
-            local shortJob = #job > 14 and (job:sub(1,6).."..."..job:sub(-5)) or job
-            text(row, {
-                Position=UDim2.new(0,12,0,0), Size=UDim2.new(1,-24,1,0),
-                Font=FONT_BOLD, TextSize=12, TextXAlignment=Enum.TextXAlignment.Left,
-                TextColor3=Theme.Text,
-                Text=tostring(selectedHopTarget).." | "..tostring(srv.playing or 0).."/"..tostring(srv.maxPlayers or "?").." | "..shortJob
-            })
-            row.MouseButton1Click:Connect(function()
-                if hopBusy then return end
-                hopBusy = true
-                visitedServers[job] = true
-                updateStatus("Đang vào server "..shortJob)
-                task.spawn(function()
-                    pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, job, LocalPlayer) end)
-                    task.wait(3)
-                    hopBusy = false
-                end)
-            end)
-        end
-    end
-    local function weatherFound()
-        local ws, light = game:GetService("Workspace"), game:GetService("Lighting")
-        local pg = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
-        local mainGui = pg and pg:FindFirstChild("MainGui")
-        local info = mainGui and mainGui:FindFirstChild("Info")
-        local info2 = info and info:FindFirstChild("Info")
-        local weatherFrame = info2 and info2:FindFirstChild("Weather")
-        local value = weatherFrame and weatherFrame:FindFirstChild("Value")
-        if value and value:IsA("TextLabel") then
-            local shown = tostring(value.Text or ""):gsub("Weather:%s*","")
-            if shown == selectedWeatherTarget then return true end
-        end
-        return ws:FindFirstChild(selectedWeatherTarget) ~= nil or light:FindFirstChild(selectedWeatherTarget) ~= nil
-    end
-    local function targetFound()
-        local ws = game:GetService("Workspace")
-        if selectedHopTarget == "Weather" then return weatherFound() end
-        local roots = {ws:FindFirstChild("Bosses"), ws:FindFirstChild("Boss"), ws:FindFirstChild("NPC")}
-        for _, root in ipairs(roots) do
-            if root then
-                for _, obj in ipairs(root:GetDescendants()) do
-                    local n = tostring(obj.Name):lower()
-                    if selectedHopTarget == "Spirit" and (n == "god" or n:find("spirit",1,true)) then return true end
-                    if selectedHopTarget == "Maoshan" and (n:find("maoshan",1,true) or n:find("merchant",1,true)) then return true end
-                    if selectedHopTarget == "Vermilion Bloodlord" and (n:find("vermilion",1,true) or n:find("bloodlord",1,true)) then return true end
-                    if selectedHopTarget == "Black Tortoise Bloodline" and (n:find("blacktortoise",1,true) or n:find("black tortoise",1,true)) then return true end
-                    if selectedHopTarget == "Enzo" and n == "enzo" then
-                        local cd = tonumber(obj:GetAttribute("Cooldown")) or tonumber(obj:GetAttribute("CooldownRemaining"))
-                        local endsAt = tonumber(obj:GetAttribute("CooldownEnd"))
-                        if obj:GetAttribute("CanAttack")==true or obj:GetAttribute("Ready")==true or (cd and cd<=0) or (endsAt and endsAt<=os.clock()) then return true end
-                    end
-                    if selectedHopTarget == "Nameless Octopariste" and (n:find("nameless",1,true) or n:find("octopariste",1,true)) then return true end
-                    if selectedHopTarget == "Taoist" and n:find("taoist",1,true) then return true end
-                    if selectedHopTarget == "Secret Boss" and n:find("secret",1,true) and n:find("boss",1,true) then return true end
-                end
-            end
-        end
-        return false
-    end
-    local function hopNextTargetServer()
-        if hopBusy then return end
-        hopBusy = true
-        task.spawn(function()
-            local ok, err = pcall(function()
-                if #serverList == 0 then
-                    updateStatus("Đang làm mới danh sách server...")
-                    fetchServers()
-                    renderServerList()
-                end
-                local target = table.remove(serverList, 1)
-                if not target then
-                    updateStatus("Không còn server trống để thử.")
-                    return
-                end
-                visitedServers[target.id] = true
-                renderServerList()
-                updateStatus("Đang chuyển server | "..selectedHopTarget)
-                task.wait(0.4)
-                TeleportService:TeleportToPlaceInstance(game.PlaceId, target.id, LocalPlayer)
-            end)
-            if not ok then updateStatus("Lỗi Server Hop: "..tostring(err)) end
-            task.wait(2)
-            hopBusy = false
-        end)
-    end
-    Tabs.ServerHop:CreateDropdown({
-        Name="Server Hop",
-        Options={"Spirit","Maoshan","Weather","Vermilion Bloodlord","Black Tortoise Bloodline","Enzo","Nameless Octopariste","Taoist","Secret Boss"},
-        CurrentOption="Spirit", MultipleOptions=false, AllowNone=false,
-        Callback=function(value)
-            if type(value)=="table" then value=value[1] end
-            selectedHopTarget=tostring(value or "Spirit")
-            updateStatus(tostring(#serverList).." server(s) | "..selectedHopTarget)
-            renderServerList()
-        end
-    })
-    Tabs.ServerHop:CreateDropdown({
-        Name="Weather Target", Options={"Thunderstorm","Rainy","Windy","Snowy","Foggy","Blazing Sun"},
-        CurrentOption="Thunderstorm", MultipleOptions=false, AllowNone=false,
-        Callback=function(value)
-            if type(value)=="table" then value=value[1] end
-            selectedWeatherTarget=tostring(value or "Thunderstorm")
-            updateStatus(tostring(#serverList).." server(s) | "..selectedHopTarget)
-        end
-    })
-    Tabs.ServerHop:CreateToggle({
-        Name="Auto Hop Confirmed Events", CurrentValue=false,
-        Description="Tự chuyển server đến khi mục tiêu được phát hiện tại server hiện tại.",
-        Callback=function(value)
-            autoHopConfirmed=value==true
-            updateStatus(autoHopConfirmed and ("Auto Hop ON | "..selectedHopTarget) or "Auto Hop OFF")
-        end
-    })
-    Tabs.ServerHop:CreateButton({
-        Name="Refresh Server List",
-        Callback=function()
-            task.spawn(function()
-                updateStatus("Đang tải danh sách server...")
-                local count=fetchServers()
-                renderServerList()
-                updateStatus(tostring(count).." server(s) | "..selectedHopTarget)
-            end)
-        end
-    })
-    task.spawn(function()
-        while task.wait(8) do
-            if autoHopConfirmed and not hopBusy then
-                local ok, found = pcall(targetFound)
-                if ok and found then
-                    autoHopConfirmed = false
-                    updateStatus("Đã phát hiện "..selectedHopTarget.." tại server này.")
-                else
-                    hopNextTargetServer()
-                end
-            end
-        end
-    end)
+    Tabs.Misc:CreateSection("Máy chủ")
 
-    Tabs.ServerHop:CreateSection("Máy chủ")
-    Tabs.ServerHop:CreateButton({
+    Tabs.Misc:CreateButton({
         Name = "Vào lại máy chủ",
         Callback = function()
-            Library:Notify({Title="Rejoin", Content="Đang vào lại máy chủ hiện tại...", Duration=3})
+            pcall(function()
+                Library:Notify({
+                    Title = "Rejoin",
+                    Content = "Đang vào lại máy chủ hiện tại...",
+                    Duration = 3
+                })
+            end)
             task.wait(0.3)
             TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
         end
     })
-    Tabs.ServerHop:CreateButton({Name="Đổi máy chủ ít người", Callback=HopLowServer})
-    Tabs.ServerHop:CreateButton({
-        Name = "Server Hop ngẫu nhiên",
+
+    Tabs.Misc:CreateButton({
+        Name = "Đổi máy chủ ít người",
         Callback = function()
-            TeleportService:Teleport(game.PlaceId, LocalPlayer)
+            HopLowServer()
         end
     })
-
-    Tabs.ServerHop:CreateSection("Quét sự kiện")
-    local function addScanToggle(name, flag, desc)
-        Tabs.ServerHop:CreateToggle({
-            Name = name, Flag = flag, Description = desc or "",
-            CurrentValue = Config[flag] == true,
-            Callback = function(v) Config[flag] = v; SaveConfig() end
-        })
-    end
-    addScanToggle("Quét Maoshan", "ScanMaoshan", "Phát hiện NPC Maoshan / Merchant.")
-    addScanToggle("Quét Taoist", "ScanTaoist", "Phát hiện NPC Taoist.")
-    addScanToggle("Quét Spirit", "ScanSpirit", "Phát hiện NPC God / Spirit.")
-    addScanToggle("Quét thời tiết", "ScanWeather", "Phát hiện thời tiết đặc biệt.")
-    addScanToggle("Theo dõi Enzo", "WatchEnzoReady", "Gửi thông báo khi Enzo sẵn sàng.")
-    addScanToggle("Gửi sự kiện lên API", "ServerHopApiEnabled", "Chỉ gửi dữ liệu khi đã tự nhập API URL; mặc định tắt.")
-
-    Tabs.ServerHop:CreateSection("Webhook Discord (tùy chọn)")
-    local function addUrlInput(name, flag, placeholder)
-        Tabs.ServerHop:CreateInput({
-            Name=name, Flag=flag, CurrentValue=tostring(Config[flag] or ""),
-            PlaceholderText=placeholder or "Để trống nếu không dùng",
-            Callback=function(value)
-                local v = tostring(value or ""):gsub("^%s+",""):gsub("%s+$","")
-                if v == "" or v:match("^https://discord%.com/api/webhooks/") then
-                    Config[flag] = v
-                    SaveConfig()
-                else
-                    Library:Notify({Title="Webhook", Content="URL không hợp lệ; hãy nhập Discord Webhook URL hoặc để trống.", Duration=4})
-                end
-            end
-        })
-    end
-    addUrlInput("Webhook Maoshan", "MaoshanWebhook", "Discord webhook URL")
-    addUrlInput("Webhook Taoist", "TaoistWebhook", "Discord webhook URL")
-    addUrlInput("Webhook Spirit", "SpiritWebhook", "Discord webhook URL")
-    addUrlInput("Webhook thời tiết", "WeatherWebhook", "Discord webhook URL")
-
-    Tabs.ServerHop:CreateSection("API Server Hop")
-    Tabs.ServerHop:CreateInput({
-        Name="API Base URL", Flag="ServerHopApiBase", CurrentValue=tostring(Config.ServerHopApiBase or ""),
-        PlaceholderText="https://your-api.example",
-        Callback=function(value)
-            Config.ServerHopApiBase = tostring(value or ""):gsub("%s+$","")
-            SaveConfig()
-        end
-    })
-    Tabs.ServerHop:CreateInput({
-        Name="API Key", Flag="ServerHopApiKey", CurrentValue=tostring(Config.ServerHopApiKey or ""),
-        PlaceholderText="API key (optional)",
-        Callback=function(value) Config.ServerHopApiKey=tostring(value or ""); SaveConfig() end
-    })
-
-    local function getRequest()
-        return (typeof(request) == "function" and request)
-            or (typeof(http_request) == "function" and http_request)
-            or (syn and typeof(syn.request) == "function" and syn.request)
-            or (http and typeof(http.request) == "function" and http.request)
-            or nil
-    end
-    local function postJson(url, payload, apiKey)
-        local req = getRequest()
-        if not req or not url or url == "" then return false end
-        local headers = {["Content-Type"]="application/json"}
-        if apiKey and apiKey ~= "" then headers["X-API-Key"] = apiKey end
-        local ok, response = pcall(req, {Url=url, Method="POST", Headers=headers, Body=HttpService:JSONEncode(payload)})
-        return ok and response ~= nil and ((tonumber(response.StatusCode) or 200) < 400)
-    end
-    local function base64Encode(data)
-        local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-        return ((data:gsub(".", function(ch)
-            local r,b="",ch:byte()
-            for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and "1" or "0") end
-            return r
-        end).."0000"):gsub("%d%d%d?%d?%d?%d?", function(bits)
-            if #bits < 6 then return "" end
-            local n=0
-            for i=1,6 do n=n+(bits:sub(i,i)=="1" and 2^(6-i) or 0) end
-            return chars:sub(n+1,n+1)
-        end)..({"","==","="})[#data%3+1])
-    end
-    local function sendEvent(eventName, attrs, webhookUrl)
-        local now = os.date("!%Y-%m-%dT%H:%M:%SZ")
-        local playerCount = #Players:GetPlayers() .. "/" .. tostring(Players.MaxPlayers)
-        if webhookUrl and webhookUrl ~= "" then
-            postJson(webhookUrl, {
-                username="Uzex Hub",
-                embeds={{
-                    title=eventName.." Found!",
-                    description="Sự kiện được phát hiện trong server hiện tại.",
-                    color=0xFF6B35,
-                    fields={
-                        {name="Join Server (tap to copy)", value="NEXUSHUB|"..base64Encode(game.JobId), inline=false},
-                        {name="Players", value=playerCount, inline=true},
-                        {name="Time", value=os.date("%Y-%m-%d %H:%M:%S"), inline=true}
-                    },
-                    timestamp=now
-                }}
-            })
-        end
-        local base = tostring(Config.ServerHopApiBase or ""):gsub("/+$","")
-        if Config.ServerHopApiEnabled and base ~= "" then
-            postJson(base.."/v1/hop-events", {
-                event_id=tostring(eventName).."-"..tostring(os.time()),
-                place_id=game.PlaceId, job_id=game.JobId,
-                reason=tostring(eventName), attributes=attrs or {}, source="uzex_hub"
-            }, tostring(Config.ServerHopApiKey or ""))
-        end
-    end
-
-    local Workspace = game:GetService("Workspace")
-    local LightingService = game:GetService("Lighting")
-    local npcWasFound = {Maoshan=false, Taoist=false, Spirit=false}
-    local lastWeather, enzoWasReady = nil, false
-    local function getWeather()
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        local mainGui = pg and pg:FindFirstChild("MainGui")
-        local info = mainGui and mainGui:FindFirstChild("Info")
-        local info2 = info and info:FindFirstChild("Info")
-        local weatherFrame = info2 and info2:FindFirstChild("Weather")
-        local value = weatherFrame and weatherFrame:FindFirstChild("Value")
-        if value and value:IsA("TextLabel") then
-            local text = tostring(value.Text or ""):gsub("Weather:%s*","")
-            if text ~= "" then return text end
-        end
-        for _, weather in ipairs({"Rainy","Thunderstorm","Foggy","Windy","Snowy","Blazing Sun"}) do
-            if Workspace:FindFirstChild(weather) or LightingService:FindFirstChild(weather) then return weather end
-        end
-        return nil
-    end
-    local function scanNpc()
-        local npcFolder = Workspace:FindFirstChild("NPC")
-        if not npcFolder then return end
-        local found = {Maoshan=false, Taoist=false, Spirit=false}
-        for _, obj in ipairs(npcFolder:GetDescendants()) do
-            if obj:IsA("Model") and obj:FindFirstChild("HumanoidRootPart") then
-                local n = obj.Name:lower()
-                if n:find("maoshan",1,true) or n:find("merchant",1,true) then found.Maoshan=true end
-                if n:find("taoist",1,true) then found.Taoist=true end
-                if obj.Name == "God" or n:find("spirit",1,true) then found.Spirit=true end
-            end
-        end
-        for kind, isFound in pairs(found) do
-            local enabled = (kind=="Maoshan" and Config.ScanMaoshan)
-                or (kind=="Taoist" and Config.ScanTaoist)
-                or (kind=="Spirit" and Config.ScanSpirit)
-            if enabled and isFound and not npcWasFound[kind] then
-                local urlKey = ({Maoshan="MaoshanWebhook", Taoist="TaoistWebhook", Spirit="SpiritWebhook"})[kind]
-                sendEvent(kind, {npc=kind}, Config[urlKey])
-            end
-            npcWasFound[kind] = isFound
-        end
-    end
-    task.spawn(function()
-        while task.wait(3) do
-            pcall(function()
-                scanNpc()
-                if Config.ScanWeather then
-                    local weather = getWeather()
-                    if weather and weather ~= "" and weather:lower() ~= "clear" and weather ~= lastWeather then
-                        sendEvent("Weather", {weather=weather}, Config.WeatherWebhook)
-                    end
-                    lastWeather = weather
-                else
-                    lastWeather = nil
-                end
-                if Config.WatchEnzoReady then
-                    local root = Workspace:FindFirstChild("Bosses") or Workspace:FindFirstChild("Boss") or Workspace:FindFirstChild("NPC")
-                    local enzo = root and root:FindFirstChild("Enzo", true)
-                    local ready = false
-                    if enzo then
-                        local cooldown = tonumber(enzo:GetAttribute("Cooldown")) or tonumber(enzo:GetAttribute("CooldownRemaining"))
-                        local endsAt = tonumber(enzo:GetAttribute("CooldownEnd"))
-                        ready = enzo:GetAttribute("CanAttack")==true or enzo:GetAttribute("Ready")==true or (cooldown and cooldown<=0) or (endsAt and endsAt<=os.clock()) or false
-                    end
-                    if ready and not enzoWasReady then sendEvent("Enzo Ready", {boss="Enzo",ready=true}, nil) end
-                    enzoWasReady = ready
-                else
-                    enzoWasReady = false
-                end
-            end)
-        end
-    end)
 end
 
 -------------------------------------------------------------------------------
@@ -7703,6 +9188,66 @@ do
         return string.format("%dh %dm", t // 3600, (t % 3600) // 60)
     end
 
+    -- Money / ticket / gem numbers added to every webhook message.
+    local currencyCache = {}
+
+    local function findCurrency(keys, exclude)
+        local best, bestScore
+        for _, root in ipairs({ PlayerData, LocalPlayer:FindFirstChild("leaderstats") }) do
+            if root then
+                for _, d in ipairs(root:GetDescendants()) do
+                    if d:IsA("ValueBase") then
+                        local n = string.lower((string.gsub(d.Name, "[%s_%-]", "")))
+                        local rank
+                        for i, key in ipairs(keys) do
+                            if n == key then
+                                rank = i
+                                break
+                            end
+                        end
+                        if not rank then
+                            for i, key in ipairs(keys) do
+                                if string.find(n, key, 1, true) and not (exclude and string.find(n, exclude, 1, true)) then
+                                    rank = 100 + i
+                                    break
+                                end
+                            end
+                        end
+                        if rank then
+                            local depth, p = 0, d.Parent
+                            while p and p ~= root do
+                                depth = depth + 1
+                                p = p.Parent
+                            end
+                            local score = rank * 100 + depth
+                            if not bestScore or score < bestScore then
+                                best, bestScore = d, score
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return best
+    end
+
+    local function readCurrency(slot, keys, exclude)
+        local inst = currencyCache[slot]
+        if not (inst and inst.Parent) then
+            inst = findCurrency(keys, exclude)
+            currencyCache[slot] = inst
+        end
+        local value = inst and tonumber(inst.Value)
+        if not value then
+            return "-"
+        end
+        local s, k = string.format("%d", math.floor(value + 0.5)), nil
+        repeat
+            s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+        until k == 0
+        return s
+    end
+
     local function sendWebhook(title, description, color, extra, bypassToggle)
         if not (Config.WebhookEnabled or bypassToggle) then
             return false, "disabled"
@@ -7725,11 +9270,15 @@ do
         local fields = {
             { name = "Player", value = LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")", inline = true },
             { name = "Uptime", value = uptime(), inline = true },
-            { name = "Game", value = gameName, inline = false },
         }
         if Library.Tier then
             table.insert(fields, 2, { name = "Tier", value = tostring(Library.Tier), inline = true })
         end
+        pcall(function()
+            fields[#fields + 1] = { name = "Money", value = readCurrency("cash", { "cash", "money", "balance", "coins", "gold" }), inline = true }
+            fields[#fields + 1] = { name = "Tickets", value = readCurrency("ticket", { "tickets", "ticket" }, "quest"), inline = true }
+            fields[#fields + 1] = { name = "Gems", value = readCurrency("gem", { "gems", "gem", "crystals", "crystal" }), inline = true }
+        end)
         for _, field in ipairs(extra or {}) do
             fields[#fields + 1] = field
         end
@@ -7740,14 +9289,14 @@ do
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = HttpService:JSONEncode({
-                    username = "Uzex Hub",
+                    username = "UZEX Hub",
                     embeds = {
                         {
                             title = title,
                             description = description,
                             color = color or COLOR_INFO,
                             fields = fields,
-                            footer = { text = "Uzex Hub" },
+                            footer = { text = "UZEX Hub" },
                             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
                         },
                     },
@@ -7784,10 +9333,7 @@ do
 
     task.spawn(function()
         task.wait(4)
-        sendWebhook("Uzex Hub started", "The script is running.", COLOR_INFO, {
-            { name = "Server", value = string.sub(game.JobId, 1, 8), inline = true },
-            { name = "Players", value = tostring(#Players:GetPlayers()), inline = true },
-        })
+        sendWebhook("UZEX Hub", "The script is running.", COLOR_INFO, {})
     end)
 
     task.spawn(function()
@@ -7796,10 +9342,8 @@ do
             local minutes = tonumber(Config.WebhookInterval) or 0
             if Config.WebhookEnabled and minutes >= 1 and os.clock() - lastReport >= minutes * 60 then
                 lastReport = os.clock()
-                sendWebhook("Status report", "Still running.", COLOR_INFO, {
+                sendWebhook(gameName, "", COLOR_INFO, {
                     { name = "Fish caught", value = tostring(fishCaught), inline = true },
-                    { name = "Last fish", value = lastFish ~= "" and lastFish or "-", inline = true },
-                    { name = "Players in server", value = tostring(#Players:GetPlayers()), inline = true },
                 })
             end
         end
@@ -8214,7 +9758,7 @@ do
     end
 
     local function isOurs(inst)
-        return inst:FindFirstAncestor("UzexHubUI") ~= nil or inst:FindFirstAncestor("UzexKeyPrompt") ~= nil
+        return inst:FindFirstAncestor("UZEXHubUI") ~= nil or inst:FindFirstAncestor("UzexKeyPrompt") ~= nil
     end
 
     local function watch(inst)
