@@ -1549,53 +1549,6 @@ end
 EN_TRANSLATIONS["Chọn..."] = "Select..."
 EN_TRANSLATIONS["Thông báo"] = "Notification"
 
--- The UZEX emblem (same logo as the UI preview), embedded as a PNG so it needs no Roblox upload.
--- It is written once as a local custom asset.
--- When local custom assets are unavailable, the library's normal fallback logo is used.
-local EMBEDDED_LOGO = "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"
-
-local function decodeBase64(data)
-    local lookup = {}
-    local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-    for i = 1, #alphabet do
-        lookup[alphabet:byte(i)] = i - 1
-    end
-    local out = {}
-    for i = 1, #data, 4 do
-        local a, b, c, d = data:byte(i, i + 3)
-        local n = lookup[a] * 262144 + lookup[b] * 4096 + (lookup[c] or 0) * 64 + (lookup[d] or 0)
-        local x, y, z = n // 65536, n // 256 % 256, n % 256
-        if d ~= 61 then
-            out[#out + 1] = string.char(x, y, z)
-        elseif c ~= 61 then
-            out[#out + 1] = string.char(x, y)
-        else
-            out[#out + 1] = string.char(x)
-        end
-    end
-    return table.concat(out)
-end
-
-pcall(function()
-    if type(writefile) ~= "function" or typeof(getcustomasset) ~= "function" then
-        return
-    end
-    local folder = "UZEXHubAssets"
-    if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(folder) then
-        makefolder(folder)
-    end
-    local path = folder .. "/UZEXHubLogo.png"
-    local png = decodeBase64(EMBEDDED_LOGO)
-    local fresh = type(isfile) == "function" and type(readfile) == "function" and isfile(path) and readfile(path) == png
-    if not fresh then
-        writefile(path, png)
-    end
-    local asset = getcustomasset(path)
-    if type(asset) == "string" and asset ~= "" then
-        Assets.Logo = asset
-    end
-end)
-
 
 -- Vietnamese-aware upper-casing (string.upper breaks accented letters)
 local function viUpper(s)
@@ -1886,18 +1839,33 @@ function Library:CreateWindow(o)
         Name = "UZEXHubUI",
         Title = tostring(o.Name or o.Title or "UZEX Hub"),
         Subtitle = tostring(o.Subtitle or ""),
-        Logo = (Assets.Logo ~= "" and Assets.Logo) or nil,
         ToggleKey = (typeof(o.ToggleUIKeybind) == "EnumItem" and o.ToggleUIKeybind)
             or (typeof(o.ToggleKey) == "EnumItem" and o.ToggleKey) or nil,
     })
     Library._window = window
 
-    -- The script keeps its own draggable logo button, so drop UZEXUI's built-in one.
-    if window.Fab then
-        pcall(function() window.Fab:Destroy() end)
-        window.Fab = nil
-    end
-    window.FabPop = nil
+    -- Match the old menu: 600x390 window, 150px sidebar (shrinks to fit small screens)
+    pcall(function()
+        local main = window.Main
+        local W, H, SIDE = 600, 390, 150
+        local cam = workspace.CurrentCamera
+        if cam then
+            W = math.floor(math.min(W, cam.ViewportSize.X * 0.94))
+            H = math.floor(math.min(H, cam.ViewportSize.Y * 0.88))
+        end
+        main.Size = UDim2.fromOffset(W, H)
+        main.Position = UDim2.new(0.5, -W // 2, 0.5, -H // 2)
+        for _, c in ipairs(main:GetChildren()) do
+            if c:IsA("ScrollingFrame") then
+                c.Size = UDim2.new(0, SIDE, 1, -86)
+            elseif c:IsA("Frame") and c.Position.X.Offset == 138 and c.Position.Y.Offset == 40 then
+                c.Position = UDim2.fromOffset(SIDE, 40)
+                c.Size = UDim2.new(1, -SIDE, 1, -40)
+            elseif c:IsA("Frame") and c.Position.Y.Scale == 1 and c.Position.Y.Offset == -46 then
+                c.Size = UDim2.fromOffset(SIDE, 46)
+            end
+        end
+    end)
 
     -- Translate everything UZEXUI builds (now and later)
     for _, d in ipairs(window.Gui:GetDescendants()) do registerText(d) end
@@ -6696,7 +6664,6 @@ local DISCORD_INVITE = "https://discord.gg/QPux5hHVY"
 local Window = Library:CreateWindow({
     Name = "UZEX Hub",
     Subtitle = "Heavyweigh Fishing",
-    Icon = Library.Assets.Logo,
     Size = UDim2.fromOffset(640, 460),
     MinSize = Vector2.new(480, 360),
     SidebarWidth = 170,
@@ -6741,143 +6708,6 @@ local Window = Library:CreateWindow({
     ToggleButton = false,
     OpenButton = false
 })
-
--- Keep the draggable UZEX Hub logo; all window visibility changes
--- go through Uzex UI, including restoring a hidden window.
-do
-    local LogoGui = Instance.new("ScreenGui")
-    LogoGui.Name = "UZEXHubLogoGui"
-    LogoGui.ResetOnSpawn = false
-    LogoGui.DisplayOrder = 10000
-    pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
-    if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-
-    local LogoFrame = Instance.new("Frame")
-    LogoFrame.Size = UDim2.new(0, 36, 0, 36)
-    LogoFrame.Position = UDim2.new(0, 8, 0.5, -18)
-    LogoFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
-    LogoFrame.BorderSizePixel = 0
-    LogoFrame.Parent = LogoGui
-    Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
-
-    local logoStroke = Instance.new("UIStroke", LogoFrame)
-    logoStroke.Thickness = 1.5
-    logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    local logoGrad = Instance.new("UIGradient", logoStroke)
-    logoGrad.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 70, 70)),
-        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(244, 244, 244)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 70, 70)),
-    })
-    task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
-
-    local LogoImg = Instance.new("ImageLabel")
-    LogoImg.Size = UDim2.new(1, -4, 1, -4)
-    LogoImg.Position = UDim2.new(0, 2, 0, 2)
-    LogoImg.BackgroundTransparency = 1
-    LogoImg.Image = Library.Assets.Logo
-    LogoImg.ScaleType = Enum.ScaleType.Fit
-    LogoImg.Parent = LogoFrame
-
-    local LogoBtn = Instance.new("TextButton")
-    LogoBtn.Size = UDim2.new(1, 0, 1, 0)
-    LogoBtn.BackgroundTransparency = 1
-    LogoBtn.Text = ""
-    LogoBtn.ZIndex = 5
-    LogoBtn.Parent = LogoFrame
-
-    local logoMoved = false -- true once the logo has been dragged, so releasing it never opens the menu
-    do
-        local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
-        LogoBtn.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
-                logoMoved = false
-            end
-        end)
-        UserInputService.InputChanged:Connect(function(input)
-            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-                local delta = input.Position - dragStart
-                if Vector2.new(delta.X, delta.Y).Magnitude > 8 then
-                    logoMoved = true
-                end
-                if logoMoved then
-                    LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-                end
-            end
-        end)
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                dragging = false
-                dragInput = nil
-            end
-        end)
-    end
-
-    local lastToggleTime = 0
-    local clickStartPos = Vector2.new()
-
-    -- press effect: the logo squeezes on press, springs back on release, and a ring pulses out
-    local logoScale = Instance.new("UIScale", LogoFrame)
-    local function pulseRing()
-        local ring = Instance.new("Frame")
-        ring.AnchorPoint = Vector2.new(0.5, 0.5)
-        ring.Position = UDim2.new(0.5, 0, 0.5, 0)
-        ring.Size = UDim2.new(1, 0, 1, 0)
-        ring.BackgroundTransparency = 1
-        ring.ZIndex = 4
-        ring.Parent = LogoFrame
-        Instance.new("UICorner", ring).CornerRadius = UDim.new(0.3, 0)
-        local ringStroke = Instance.new("UIStroke", ring)
-        ringStroke.Color = Color3.fromRGB(110, 170, 255)
-        ringStroke.Thickness = 2
-        local info = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-        TweenService:Create(ring, info, { Size = UDim2.new(1.9, 0, 1.9, 0) }):Play()
-        TweenService:Create(ringStroke, info, { Transparency = 1 }):Play()
-        task.delay(0.42, function() ring:Destroy() end)
-    end
-    -- Decide "tap" vs "drag" from the whole gesture (global input events), not from the button's own
-    -- InputEnded, which can fire early or never when the logo is dragged fast and slips out from under the finger.
-    local pressInput, maxDist = nil, 0
-    local function isPointerDown(input)
-        return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
-    end
-    local function distFromStart(input)
-        return (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
-    end
-    LogoBtn.InputBegan:Connect(function(input)
-        if isPointerDown(input) then
-            pressInput = input
-            clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
-            maxDist = 0
-            TweenService:Create(logoScale, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.82 }):Play()
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if pressInput and (input == pressInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
-            local d = distFromStart(input)
-            if d > maxDist then maxDist = d end
-            if maxDist >= 10 then logoMoved = true end
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if pressInput and isPointerDown(input) and (input == pressInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
-            pressInput = nil
-            local d = distFromStart(input)
-            if d > maxDist then maxDist = d end
-            local now = tick()
-            TweenService:Create(logoScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-            if not logoMoved and maxDist < 10 and now - lastToggleTime >= 0.12 then
-                lastToggleTime = now
-                pulseRing()
-                Window:Toggle()
-            end
-        end
-    end)
-    Window.Gui.Destroying:Connect(function()
-        LogoGui:Destroy()
-    end)
-end
 
 local Tabs = {
     Main = Window:CreateTab({ Name = "Chính", Icon = "home" }),
