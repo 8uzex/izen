@@ -93,7 +93,7 @@ local EN_TRANSLATIONS = {
     ["Chọn thời tiết"] = "Select Weather", ["Độ trễ chuyển server"] = "Hop Delay", ["Job ID"] = "Job ID",
     ["Nhập Job ID..."] = "Enter Job ID...", ["Vào server theo Job ID"] = "Join Job ID",
     ["Sao chép Job ID hiện tại"] = "Copy Current Job ID",
-    ["Sự kiện giới hạn"] = "Limited Event", ["Tự động đưa cá"] = "Auto Give Fish", ["Chọn cá boss"] = "Select Boss Fish",
+    ["Sự kiện giới hạn"] = "Limited Event", ["Tự động đưa cá"] = "Auto Give Fish", ["Chọn cá boss"] = "Select Boss Fish", ["Tự dịch chuyển tới NPC"] = "Auto Teleport to NPC",
     ["UZEX Hub"] = "UZEX Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
     ["Dịch chuyển"] = "Teleport", ["Cửa hàng"] = "Shop", ["Nâng cấp"] = "Upgrade",
     ["Khác"] = "Misc", ["Cài đặt"] = "Settings", ["Bán cá"] = "Sell Fish",
@@ -1782,6 +1782,7 @@ local Config = {
     AutoGiveFish = false,
     AutoGiveEventFish = false,
     AutoGiveEventFishTarget = {},
+    EventGiveTeleport = true,
     HopAutoCheck = false,
     AutoHopGodSpirit = false,
     AutoHopMaoshan = false,
@@ -2621,7 +2622,7 @@ UzexFilter.SecretFarmAllowed = function() return false end
 
 local function LockFishingBar()
     if isLockingBar then return end
-    if UzexFilter.Skip then return end
+    if UzexFilter.Skip or UzexFilter.SkippingFish then return end
     if UzexFilter.SecretFarmAllowed() then return end
     if not FishingGui or not FishingGui.Visible or not FishingBar then return end
     if not (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) then return end
@@ -4153,28 +4154,115 @@ do
     local skipRequestId = 0
     local lastHookedName = ""
 
+    local function SkipSet()
+        local set = {}
+        if type(Config.SkipFishList) == "table" then
+            for _, name in ipairs(Config.SkipFishList) do
+                set[string.lower(UzexCleanName(name))] = true
+            end
+        end
+        return set
+    end
+
+    -- Every place the game exposes the name of the fish on the line.
+    local function HookedNames(arg)
+        local out = {}
+        local function add(v)
+            if v ~= nil and tostring(v) ~= "" and tostring(v) ~= "???" then
+                table.insert(out, tostring(v))
+            end
+        end
+        if type(arg) == "table" then
+            add(arg.FishName); add(arg.Name); add(arg.Fish); add(arg.fishName)
+        elseif typeof(arg) == "Instance" then
+            add(arg:GetAttribute("FishName")); add(arg.Name)
+        elseif type(arg) == "string" then
+            add(arg)
+        end
+        pcall(function()
+            local fishId = LocalPlayer:GetAttribute("FishID")
+            local fishes = workspace:FindFirstChild("Fishes")
+            local entry = fishId and fishes and fishes:FindFirstChild(tostring(fishId))
+            if entry then
+                add(entry:GetAttribute("FishName")); add(entry.Name)
+            end
+        end)
+        pcall(function()
+            local pb = FishingGui and FishingGui:FindFirstChild("ProgressionBar")
+            local label = pb and pb:FindFirstChild("FishName")
+            if label and label:IsA("TextLabel") then
+                add(label.Text)
+            end
+        end)
+        return out
+    end
+
+    local function MatchesSkip(names, set)
+        for _, raw in ipairs(names) do
+            local clean = string.lower(UzexCleanName(raw))
+            if set[clean] then return clean end
+            local stripped = string.gsub(clean, "%s*[%(%[|].-$", "")
+            stripped = string.gsub(stripped, "%s+$", "")
+            if stripped ~= "" and set[stripped] then return stripped end
+        end
+        return nil
+    end
+
     pcall(function()
         local minigame = Events:FindFirstChild("FishingMinigame")
         if not minigame then return end
         minigame.OnClientEvent:Connect(function(data, _, token)
-            local fishName = type(data) == "table" and data.FishName or nil
-            lastHookedName = tostring(fishName or "")
-            if not Config.AutoSkipFish or not fishName then return end
-            local skipSet = {}
-            if type(Config.SkipFishList) == "table" then
-                for _, name in ipairs(Config.SkipFishList) do
-                    skipSet[name] = true
-                end
-            end
-            if not skipSet[fishName] then return end
+            local rawName = type(data) == "table" and (data.FishName or data.Name or data.Fish) or nil
+            lastHookedName = tostring(rawName or "")
+            if not Config.AutoSkipFish or token == nil then return end
             skipRequestId = skipRequestId + 1
             local myId = skipRequestId
-            task.delay(3, function()
-                if Config.AutoSkipFish and myId == skipRequestId and token ~= nil then
+            task.spawn(function()
+                local set = SkipSet()
+                if next(set) == nil then return end
+                -- the fish name can show up a moment after the event, so look for ~0.6s (checked fast)
+                local matched
+                for _ = 1, 20 do
+                    if not Config.AutoSkipFish or myId ~= skipRequestId then return end
+                    matched = MatchesSkip(HookedNames(data), set)
+                    if matched then break end
+                    task.wait(0.03)
+                end
+                if not matched then return end
+                pcall(function()
+                    Library:Notify({ Title = "Bỏ qua cá", Content = "Đang bỏ qua: " .. matched, Duration = 2 })
+                end)
+                UzexFilter.SkippingFish = true
+                local lastRetract = 0
+                for _ = 1, 60 do
+                    if not Config.AutoSkipFish or myId ~= skipRequestId then break end
+                    pcall(function()
+                        local fishing = MainGui and MainGui:FindFirstChild("Fishing")
+                        local frame = fishing and fishing:FindFirstChild("BarFrame")
+                        local bar = frame and frame:FindFirstChild("Bar")
+                        if bar then
+                            bar.Position = UDim2.new(-0.15, 0, bar.Position.Y.Scale, bar.Position.Y.Offset)
+                        end
+                    end)
                     pcall(function()
                         minigame:FireServer(false, token)
                     end)
+                    local char = LocalPlayer.Character
+                    if char and char:GetAttribute("Retractable") and os.clock() - lastRetract > 0.12 then
+                        lastRetract = os.clock()
+                        pcall(function()
+                            local hrp = char:FindFirstChild("HumanoidRootPart")
+                            if hrp then
+                                FishingEvent:FireServer(hrp.CFrame)
+                            else
+                                FishingEvent:FireServer()
+                            end
+                        end)
+                    end
+                    task.wait(0.08)
+                    if not (FishingGui and FishingGui.Visible) then break end
                 end
+                UzexFilter.SkippingFish = false
             end)
         end)
     end)
@@ -4398,7 +4486,7 @@ task.spawn(function()
                 end)
             end
         end
-        local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip and not secretFarmOn
+        local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip and not UzexFilter.SkippingFish and not secretFarmOn
         local secretFarmOn = UzexFilter.SecretFarmAllowed()
         local activeCast = (Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish) and not secretFarmOn
             and not (UzexFilter.HasPendingEventFish and UzexFilter.HasPendingEventFish())
@@ -7813,6 +7901,9 @@ do
 
     -- Noro Derasu NPC (cached; the slow recursive search is throttled)
     local noroCache, lastNoroSearch = nil, 0
+    local function normName(text)
+        return string.lower((tostring(text or ""):gsub("[%s_%-]+", "")))
+    end
     local function GetNoro()
         if noroCache and noroCache.Parent then
             return noroCache
@@ -7821,21 +7912,27 @@ do
         local npc = workspace:FindFirstChild("NPC")
         local fn = npc and npc:FindFirstChild("Function")
         local noro = fn and fn:FindFirstChild("Noro Derasu")
-        if not noro and os.clock() - lastNoroSearch > 5 then
+        if not noro and os.clock() - lastNoroSearch > 3 then
             lastNoroSearch = os.clock()
             noro = workspace:FindFirstChild("Noro Derasu", true)
+            if not noro then
+                -- tolerant search: ignores case / spaces / underscores (e.g. "NoroDerasu", "Noro_Derasu")
+                for _, inst in ipairs(workspace:GetDescendants()) do
+                    if (inst:IsA("Model") or inst:IsA("BasePart")) and normName(inst.Name) == "noroderasu" then
+                        noro = inst
+                        break
+                    end
+                end
+            end
         end
         noroCache = noro
         return noro
     end
 
+    -- only a fish that is exactly one of the selected boss fish counts (favorited / locked ones are kept)
     local function MatchesEventFish(itemName, targets)
         if not itemName or itemName == "" then return false end
         if string.find(itemName, "Favorite", 1, true) or string.find(itemName, "Lock", 1, true) then
-            return false
-        end
-        local lower = string.lower(itemName)
-        if string.find(lower, "bait", 1, true) or string.find(lower, "rod", 1, true) then
             return false
         end
         if not targets or next(targets) == nil then return false end
@@ -7861,82 +7958,216 @@ do
         return "4"
     end
 
-    local function FindEventFishHotbarSlot(targets)
+    -- returns slotName, itemInstance, key (the key changes when a fish is handed in)
+    local function FindEventFish(targets)
         local hotbar = PlayerData:FindFirstChild("Hotbar")
-        if not hotbar then return nil end
-        for i = 2, 10 do
-            local slot = hotbar:FindFirstChild(tostring(i))
-            local valName = slot and slot:FindFirstChild("ValueName")
-            local qty = slot and slot:FindFirstChild("Quantity")
-            if valName and valName.Value ~= "" and (not qty or qty.Value > 0)
-                and MatchesEventFish(valName.Value, targets) then
-                return tostring(i)
+        if hotbar then
+            for i = 2, 10 do
+                local slot = hotbar:FindFirstChild(tostring(i))
+                local valName = slot and slot:FindFirstChild("ValueName")
+                local qty = slot and slot:FindFirstChild("Quantity")
+                if valName and valName.Value ~= "" and (not qty or (tonumber(qty.Value) or 0) > 0)
+                    and MatchesEventFish(valName.Value, targets) then
+                    return tostring(i), nil, "H" .. i .. valName.Value .. "#" .. tostring(qty and qty.Value or 1)
+                end
+            end
+        end
+        local inv = PlayerData:FindFirstChild("Inventory")
+        if inv then
+            for _, child in ipairs(inv:GetChildren()) do
+                if child.Name ~= "" and (not child:IsA("ValueBase") or (tonumber(child.Value) or 0) > 0)
+                    and MatchesEventFish(child.Name, targets) then
+                    local amount = child:IsA("ValueBase") and tostring(child.Value) or "1"
+                    return nil, child, "I" .. child.Name .. "#" .. amount
+                end
             end
         end
         return nil
     end
 
-    local function FindEventFishInventoryItem(targets)
-        local inv = PlayerData:FindFirstChild("Inventory")
-        if not inv then return nil end
-        for _, child in ipairs(inv:GetChildren()) do
-            if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0)
-                and MatchesEventFish(child.Name, targets) then
-                return child
-            end
-        end
-        return nil
+    local function NoroPart(noro)
+        if not noro then return nil end
+        if noro:IsA("BasePart") then return noro end
+        return noro.PrimaryPart or noro:FindFirstChild("HumanoidRootPart")
+            or noro:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    local function HoldingFish()
+        local char = LocalPlayer.Character
+        return char ~= nil and char:GetAttribute("Type") == "Fish"
+    end
+
+    local lastNotify = 0
+    local function Notify(content)
+        if os.clock() - lastNotify < 6 then return end
+        lastNotify = os.clock()
+        pcall(function()
+            Library:Notify({ Title = "Limited Event", Content = content, Duration = 4 })
+        end)
     end
 
     -- Used by the auto-cast loop to stop casting while a fish is waiting to be handed in.
+    local blockedUntil = 0
     local pendingCache, pendingAt = false, 0
     function UzexFilter.HasPendingEventFish()
         if not Config.AutoGiveEventFish then return false end
         local now = os.clock()
+        if now < blockedUntil then return false end
         if now - pendingAt < 0.5 then return pendingCache end
         pendingAt = now
         pendingCache = false
         local targets, hasAny = GetTargetSet()
         if hasAny and GetNoro() then
-            pendingCache = (FindEventFishHotbarSlot(targets) or FindEventFishInventoryItem(targets)) ~= nil
+            local _, _, pendingKey = FindEventFish(targets)
+            pendingCache = pendingKey ~= nil
         end
         return pendingCache
     end
 
-    local lastGiveTick = 0
+    local lastGiveTick, stuckKey, stuckCount = 0, nil, 0
     local function StepAutoGiveEventFish()
         if not Config.AutoGiveEventFish then return end
-        if os.clock() - lastGiveTick < 1.2 then return end
+        local now = os.clock()
+        if now < blockedUntil or now - lastGiveTick < 1.5 then return end
         local targets, hasAny = GetTargetSet()
         if not hasAny then return end
-        local noro = GetNoro()
-        if not noro then return end
 
-        local slot = FindEventFishHotbarSlot(targets)
+        local slot, item, key = FindEventFish(targets)
+        if not key then
+            stuckKey, stuckCount = nil, 0
+            return
+        end
+        local noro = GetNoro()
+        if not noro then
+            Notify("Không tìm thấy NPC Noro Derasu.")
+            return
+        end
+
+        -- the same fish still there after several tries -> pause so Auto Cast is not blocked forever
+        if key == stuckKey then
+            stuckCount = stuckCount + 1
+        else
+            stuckKey, stuckCount = key, 1
+        end
+        if stuckCount > 4 then
+            stuckKey, stuckCount = nil, 0
+            blockedUntil = os.clock() + 60
+            Notify("Không đưa được cá cho Noro Derasu, tạm dừng 60 giây.")
+            return
+        end
+        lastGiveTick = now
+
+        -- move the fish from the inventory to a free hotbar slot and wait until it is there
         if not slot then
-            local item = FindEventFishInventoryItem(targets)
-            if item then
-                local free = FindFreeHotbarSlot()
-                local moveItems = Events:FindFirstChild("MoveItems")
-                if moveItems then
-                    pcall(function()
-                        moveItems:FireServer("Inventory", item.Name, free)
-                    end)
-                    task.wait(0.25)
+            local free = FindFreeHotbarSlot()
+            local moveItems = Events:FindFirstChild("MoveItems")
+            if not moveItems then return end
+            pcall(function()
+                moveItems:FireServer("Inventory", item.Name, free)
+            end)
+            for _ = 1, 10 do
+                task.wait(0.15)
+                local hotbar = PlayerData:FindFirstChild("Hotbar")
+                local entry = hotbar and hotbar:FindFirstChild(free)
+                local valName = entry and entry:FindFirstChild("ValueName")
+                local qty = entry and entry:FindFirstChild("Quantity")
+                if valName and tostring(valName.Value) == item.Name and (not qty or (tonumber(qty.Value) or 0) > 0) then
+                    slot = free
+                    break
                 end
-                slot = free
+            end
+            if not slot then return end
+        end
+
+        -- the fish now sits in the hotbar: take its key again so "fish is gone" is measured from here
+        do
+            local _, _, hotbarKey = FindEventFish(targets)
+            if hotbarKey then key = hotbarKey end
+        end
+
+        -- go next to the NPC (the server can ignore far away requests), come back afterwards
+        local origin
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        local part = NoroPart(noro)
+        if Config.EventGiveTeleport ~= false and hrp and part and (hrp.Position - part.Position).Magnitude > 8 then
+            origin = hrp.CFrame
+            hrp.CFrame = part.CFrame + Vector3.new(0, 3, 0)
+            task.wait(0.5)
+        end
+
+        local function restore()
+            if origin then
+                local c2 = LocalPlayer.Character
+                local h2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+                if h2 then h2.CFrame = origin end
             end
         end
-        if not slot then return end
 
-        lastGiveTick = os.clock()
-        pcall(function()
-            ToggleHotbar:InvokeServer(slot)
-        end)
-        task.wait(0.2)
-        pcall(function()
-            ChooseDialogueOption:FireServer("Noro Derasu", 1, "GiveFish", { noro })
-        end)
+        -- the fish must really be in hand, otherwise the NPC rejects the request
+        for attempt = 1, 2 do
+            pcall(function()
+                ToggleHotbar:InvokeServer(tonumber(slot), nil)
+            end)
+            for _ = 1, 12 do
+                task.wait(0.1)
+                if HoldingFish() then break end
+            end
+            if HoldingFish() then break end
+        end
+        if not HoldingFish() then
+            Notify("Không cầm được cá ở ô " .. tostring(slot) .. ".")
+            restore()
+            return
+        end
+
+        local function fishGone()
+            local _, _, k2 = FindEventFish(targets)
+            return k2 ~= key
+        end
+
+        local choose = ChooseDialogueOption or Events:FindFirstChild("ChooseDialogueOption")
+        local given = false
+
+        -- 1) dialogue remote (same call the Dump Guy uses)
+        if choose then
+            pcall(function()
+                choose:FireServer("Noro Derasu", 1, "GiveFish", { noro })
+            end)
+            for _ = 1, 8 do
+                task.wait(0.1)
+                if fishGone() then given = true break end
+            end
+            -- 1b) same call with the real instance name (in case it differs from "Noro Derasu")
+            if not given and noro.Name ~= "Noro Derasu" then
+                pcall(function()
+                    choose:FireServer(noro.Name, 1, "GiveFish", { noro })
+                end)
+                for _ = 1, 8 do
+                    task.wait(0.1)
+                    if fishGone() then given = true break end
+                end
+            end
+        end
+
+        -- 2) fallback: trigger the NPC's ProximityPrompt
+        if not given then
+            local prompt = noro:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt and fireproximityprompt then
+                pcall(fireproximityprompt, prompt)
+                for _ = 1, 10 do
+                    task.wait(0.1)
+                    if fishGone() then given = true break end
+                end
+            end
+        end
+
+        if not given then
+            print("[Uzex] Noro Derasu: GiveFish did not remove the fish. NPC =", noro:GetFullName(), "| slot =", slot)
+            Notify("Gửi cá cho Noro Derasu chưa thành công (" .. noro:GetFullName() .. ").")
+        end
+
+        restore()
     end
 
     task.spawn(function()
@@ -7955,6 +8186,16 @@ do
         CurrentValue = Config.AutoGiveEventFish,
         Callback = function(Value)
             Config.AutoGiveEventFish = Value
+            SaveConfig()
+        end
+    })
+
+    Tabs.LimitedEvent:CreateToggle({
+        Flag = "EventGiveTeleportToggle",
+        Name = "Tự dịch chuyển tới NPC",
+        CurrentValue = Config.EventGiveTeleport ~= false,
+        Callback = function(Value)
+            Config.EventGiveTeleport = Value
             SaveConfig()
         end
     })
