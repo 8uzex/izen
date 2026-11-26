@@ -117,7 +117,7 @@ local EN_TRANSLATIONS = {
     ["Tăng sáng tối đa"] = "Full Bright", ["Tắt sương mù"] = "Disable Fog", ["Chế độ hiệu năng"] = "Performance Mode",
     ["Bật thông báo"] = "Enable Notifications", ["Thông báo"] = "Notification", ["Đã bật thông báo"] = "Notifications enabled",
     ["Câu cá"] = "Fishing", ["Khóa thanh bắt cá"] = "Lock Catch Bar", ["Tự động thả câu"] = "Auto Cast",
-    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss", ["Kích hoạt Secret Boss"] = "Secret Boss Activation", ["Chuyển server"] = "Server Hop", ["Tự động kiểm tra trạng thái"] = "Auto Check Status", ["Tự động chuyển server tìm God Spirit"] = "Auto Hop to God Spirit Server", ["Tự động chuyển server tìm Maoshan"] = "Auto Hop to Maoshan Server", ["Tự động chuyển server tìm Taoist"] = "Auto Hop to Taoist Server", ["Chuyển server ngay (God Spirit)"] = "Hop Now (God Spirit)", ["Chuyển server ngay (Maoshan)"] = "Hop Now (Maoshan)", ["Chuyển server ngay (Taoist)"] = "Hop Now (Taoist)", ["Cá yêu thích"] = "Favourite Fish", ["Chọn cá"] = "Select Fish", ["Tự động yêu thích cá đã chọn"] = "Auto Favourite Selected Fish", ["Tự động bỏ qua cá"] = "Auto Skip Fish", ["Cá cần bỏ qua"] = "Fishes to Skip", ["Tự động bỏ qua cá đã chọn"] = "Auto Skip Selected Fish", ["Black Tortoise Bloodline - vùng an toàn"] = "Black Tortoise Bloodline - Safe Band",
+    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss", ["Kích hoạt Secret Boss"] = "Secret Boss Activation", ["Chuyển server"] = "Server Hop", ["Tự động kiểm tra trạng thái"] = "Auto Check Status", ["Tự động chuyển server tìm God Spirit"] = "Auto Hop to God Spirit Server", ["Tự động chuyển server tìm Maoshan"] = "Auto Hop to Maoshan Server", ["Tự động chuyển server tìm Taoist"] = "Auto Hop to Taoist Server", ["Chuyển server ngay (God Spirit)"] = "Hop Now (God Spirit)", ["Chuyển server ngay (Maoshan)"] = "Hop Now (Maoshan)", ["Chuyển server ngay (Taoist)"] = "Hop Now (Taoist)", ["Tìm cá"] = "Search Fish", ["Cá yêu thích"] = "Favourite Fish", ["Chọn cá"] = "Select Fish", ["Tự động yêu thích cá đã chọn"] = "Auto Favourite Selected Fish", ["Tự động bỏ qua cá"] = "Auto Skip Fish", ["Cá cần bỏ qua"] = "Fishes to Skip", ["Tự động bỏ qua cá đã chọn"] = "Auto Skip Selected Fish", ["Black Tortoise Bloodline - vùng an toàn"] = "Black Tortoise Bloodline - Safe Band",
     ["Cách thả câu"] = "Cast Method", ["Độ trễ thả câu"] = "Cast Delay", ["Tự trang bị mồi tốt nhất"] = "Auto Equip Best Bait",
     ["Tự trang bị cần câu"] = "Auto Equip Rod", ["Kỹ năng"] = "Skills", ["Tự động dùng kỹ năng"] = "Auto Use Skills",
     ["Chọn kỹ năng"] = "Select Skills", ["Boss"] = "Boss", ["Chọn chế độ Boss"] = "Select Boss Mode",
@@ -1790,6 +1790,7 @@ local Config = {
     AutoHopWeather = false,
     SelectedWeather = "Thunderstorm",
     HopWeatherDelay = 5,
+    HopWeatherResumeAt = 0,
     CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
@@ -1879,7 +1880,15 @@ local function LoadConfig()
 end
 
 LoadConfig()
-Config.AutoHopWeather = false -- not persisted: always starts OFF
+-- Auto Hop Weather is not saved as ON, but a hop started by the script itself must carry on
+-- in the next server: it resumes only if the last hop was less than 2 minutes ago.
+do
+    local resumeAt = tonumber(Config.HopWeatherResumeAt) or 0
+    Config.AutoHopWeather = resumeAt > 0 and (os.time() - resumeAt) >= 0 and (os.time() - resumeAt) < 120
+    if not Config.AutoHopWeather then
+        Config.HopWeatherResumeAt = 0
+    end
+end
 if type(Config.AutoGiveEventFishTarget) == "string" then
     Config.AutoGiveEventFishTarget = Config.AutoGiveEventFishTarget ~= "" and { Config.AutoGiveEventFishTarget } or {}
 elseif type(Config.AutoGiveEventFishTarget) ~= "table" then
@@ -4111,6 +4120,89 @@ do
         end
         table.sort(list)
         return list
+    end
+
+    ---------------------------------------------------------------------------
+    -- Fish search box: type part of a fish name and the dropdown below only lists
+    -- the matching fish. Selections of fish hidden by the filter are never lost.
+    -- o.Tab, o.Flag, o.Name, o.Options (all names), o.Multi, o.Pinned (names always
+    -- shown, e.g. "No Selection"), o.GetSelected() -> list, o.SetSelected(list)
+    ---------------------------------------------------------------------------
+    function UzexFilter.CreateFishSearchDropdown(o)
+        local all = o.Options
+        local filter = ""
+        local dropdown
+
+        local function toList(value)
+            local out = {}
+            if type(value) == "table" then
+                for _, v in ipairs(value) do out[#out + 1] = v end
+            elseif type(value) == "string" and value ~= "" then
+                out[1] = value
+            end
+            return out
+        end
+
+        local function visibleOptions()
+            if filter == "" then return all end
+            local pinned, out = {}, {}
+            for _, n in ipairs(o.Pinned or {}) do pinned[n] = true end
+            for _, n in ipairs(all) do
+                if pinned[n] or string.find(string.lower(n), filter, 1, true) then
+                    out[#out + 1] = n
+                end
+            end
+            return out
+        end
+
+        o.Tab:CreateInput({
+            Flag = o.Flag .. "Search",
+            Name = "Tìm cá",
+            Placeholder = "Nhập tên cá...",
+            Finished = false,
+            Callback = function(Value)
+                filter = string.lower((tostring(Value or ""):gsub("^%s+", ""):gsub("%s+$", "")))
+                if not dropdown then return end
+                local visible = visibleOptions()
+                dropdown:Refresh(visible, true, true)
+                -- put the stored selection back on whatever is visible now
+                local chosen, inVisible = {}, {}
+                for _, n in ipairs(visible) do inVisible[n] = true end
+                for _, n in ipairs(o.GetSelected()) do
+                    if inVisible[n] then chosen[#chosen + 1] = n end
+                end
+                if o.Multi then
+                    dropdown:Set(chosen, true)
+                else
+                    dropdown:Set(chosen[1] or visible[1], true)
+                end
+            end
+        })
+
+        dropdown = o.Tab:CreateDropdown({
+            Flag = o.Flag,
+            Name = o.Name,
+            Options = all,
+            CurrentOption = o.Current,
+            MultipleOptions = o.Multi == true,
+            AllowNone = false,
+            Callback = function(Value)
+                local picked = toList(Value)
+                if o.Multi then
+                    -- keep the selected fish that the filter is hiding
+                    local shown = {}
+                    for _, n in ipairs(visibleOptions()) do shown[n] = true end
+                    local merged = {}
+                    for _, n in ipairs(o.GetSelected()) do
+                        if not shown[n] then merged[#merged + 1] = n end
+                    end
+                    for _, n in ipairs(picked) do merged[#merged + 1] = n end
+                    picked = merged
+                end
+                o.SetSelected(picked)
+            end
+        })
+        return dropdown
     end
 
     ---------------------------------------------------------------------------
@@ -7177,21 +7269,43 @@ do
         return (string.lower(tostring(text or "")):gsub("[^%a]", ""))
     end
 
-    -- "Rain" matches "Rainy", "Snow" matches "Snowy", "Fog" matches "Foggy", ...
-    local function WeatherMatches(sources, target)
-        local want = NormWeather(target)
-        if #want < 3 then return false end
-        for _, source in ipairs(sources) do
-            local have = NormWeather(source)
-            if #have >= 3 and (have == want or string.find(have, want, 1, true) or string.find(want, have, 1, true)) then
-                return true
+    local weatherNames = GetWeatherList()
+
+    -- Turns any wording into the game's own weather name ("Rainy" -> "rain"). Only the
+    -- game's weather names count, so "Rain" can never match "Rainbow" or something else.
+    local function CanonicalWeather(text)
+        local have = NormWeather(text)
+        if have == "" then return "" end
+        local best = ""
+        for _, name in ipairs(weatherNames) do
+            local w = NormWeather(name)
+            if w == have then return w end
+            -- tolerate a short suffix only (Rain/Rainy, Snow/Snowy, Fog/Foggy)
+            if #w >= 3 and #have - #w >= 1 and #have - #w <= 3 and string.sub(have, 1, #w) == w and #w > #best then
+                best = w
             end
         end
-        return false
+        return best ~= "" and best or have
+    end
+
+    -- true only when EVERY weather source that has a value shows the chosen weather
+    local function WeatherMatches(sources, target)
+        local want = CanonicalWeather(target)
+        if #want < 3 then return false end
+        local any = false
+        for _, source in ipairs(sources) do
+            local have = CanonicalWeather(source)
+            if have ~= "" then
+                any = true
+                if have ~= want then return false end
+            end
+        end
+        return any
     end
 
     local function StopWeatherHop(message)
         Config.AutoHopWeather = false
+        Config.HopWeatherResumeAt = 0
         SaveConfig()
         local flag = Library.Flags["AutoHopWeatherToggle"]
         if flag and flag.Set then
@@ -7208,6 +7322,9 @@ do
         CurrentValue = Config.AutoHopWeather,
         Callback = function(Value)
             Config.AutoHopWeather = Value
+            if not Value then
+                Config.HopWeatherResumeAt = 0
+            end
             SaveConfig()
         end
     })
@@ -7238,16 +7355,23 @@ do
         end
     })
 
+    local stableKey, stableSince = nil, 0
     task.spawn(function()
         while true do
-            task.wait(2)
-            if Config.AutoHopWeather and not hopping and os.clock() - bootAt > 6
+            task.wait(1)
+            if Config.AutoHopWeather and not hopping and os.clock() - bootAt > 10
                 and LocalPlayer.Character and game:IsLoaded() then
                 local sources = ReadWeatherSources()
                 local cur = table.concat(sources, " / ")
                 local target = tostring(Config.SelectedWeather or "")
-                if cur == "" and os.clock() - bootAt < 20 then
-                    -- weather value has not loaded yet, check again
+                -- right after joining, the game can still show a default weather for a moment:
+                -- only decide once the reading has stayed the same for 3 seconds
+                if cur ~= stableKey then
+                    stableKey, stableSince = cur, os.clock()
+                end
+                local stable = cur ~= "" and (os.clock() - stableSince) >= 3
+                if not stable and os.clock() - bootAt < 25 then
+                    -- still loading, check again
                 elseif WeatherMatches(sources, target) then
                     StopWeatherHop("Đã tìm thấy thời tiết " .. cur .. "! Đã dừng tự động chuyển server.")
                 elseif os.clock() - lastHop > 10 then
@@ -7259,7 +7383,23 @@ do
                     task.spawn(function()
                         task.wait(delaySec)
                         if Config.AutoHopWeather then
-                            pcall(HopServer)
+                            -- last check: the weather may have just arrived while waiting
+                            if WeatherMatches(ReadWeatherSources(), target) then
+                                StopWeatherHop("Đã tìm thấy thời tiết " .. target .. "! Đã dừng tự động chuyển server.")
+                                hopping = false
+                                return
+                            end
+                            -- remember that this hop must continue in the next server
+                            Config.HopWeatherResumeAt = os.time()
+                            SaveConfig()
+                            local hopped = false
+                            local okHop, res = pcall(HopServer)
+                            hopped = okHop and res == true
+                            if not hopped then
+                                -- no server joined: nothing to resume
+                                Config.HopWeatherResumeAt = 0
+                                SaveConfig()
+                            end
                         end
                         task.wait(8)
                         hopping = false
@@ -8200,16 +8340,20 @@ do
         end
     })
 
-    Tabs.LimitedEvent:CreateDropdown({
+    UzexFilter.CreateFishSearchDropdown({
+        Tab = Tabs.LimitedEvent,
         Flag = "AutoGiveEventFishDropdown",
         Name = "Chọn cá boss",
         Options = bossListItems,
-        CurrentOption = table.clone(Config.AutoGiveEventFishTarget),
-        MultipleOptions = true,
-        Callback = function(Value)
-            Config.AutoGiveEventFishTarget = ExtractSelected(Value)
+        Multi = true,
+        Current = table.clone(Config.AutoGiveEventFishTarget),
+        GetSelected = function()
+            return Config.AutoGiveEventFishTarget
+        end,
+        SetSelected = function(list)
+            Config.AutoGiveEventFishTarget = ExtractSelected(list)
             SaveConfig()
-        end
+        end,
     })
 end
 
@@ -9326,23 +9470,28 @@ end
 
 Tabs.Main:CreateSection("Cá yêu thích")
 
-Tabs.Main:CreateDropdown({
-    Flag = "FavoriteFishDropdown",
-    Name = "Chọn cá",
-    Options = (function()
-        local names = UzexFilter.FishNames()
-        table.insert(names, 1, "No Selection")
-        return names
-    end)(),
-    CurrentOption = (type(Config.FavoriteFish) == "string" and Config.FavoriteFish ~= "") and Config.FavoriteFish or "No Selection",
-    MultipleOptions = false,
-    AllowNone = false,
-    Callback = function(Value)
-        if type(Value) == "table" then Value = Value[1] end
-        Config.FavoriteFish = (Value == nil or Value == "No Selection") and "" or Value
-        SaveConfig()
-    end
-})
+do
+    local favNames = UzexFilter.FishNames()
+    table.insert(favNames, 1, "No Selection")
+    UzexFilter.CreateFishSearchDropdown({
+        Tab = Tabs.Main,
+        Flag = "FavoriteFishDropdown",
+        Name = "Chọn cá",
+        Options = favNames,
+        Pinned = { "No Selection" },
+        Multi = false,
+        Current = (type(Config.FavoriteFish) == "string" and Config.FavoriteFish ~= "") and Config.FavoriteFish or "No Selection",
+        GetSelected = function()
+            local cur = (type(Config.FavoriteFish) == "string" and Config.FavoriteFish ~= "") and Config.FavoriteFish or "No Selection"
+            return { cur }
+        end,
+        SetSelected = function(list)
+            local v = list[1]
+            Config.FavoriteFish = (v == nil or v == "No Selection") and "" or v
+            SaveConfig()
+        end,
+    })
+end
 
 Tabs.Main:CreateToggle({
     Flag = "AutoFavoriteFishToggle",
@@ -9356,22 +9505,20 @@ Tabs.Main:CreateToggle({
 
 Tabs.Main:CreateSection("Tự động bỏ qua cá")
 
-Tabs.Main:CreateDropdown({
+UzexFilter.CreateFishSearchDropdown({
+    Tab = Tabs.Main,
     Flag = "SkipFishListDropdown",
     Name = "Cá cần bỏ qua",
     Options = UzexFilter.FishNames(),
-    CurrentOption = table.clone(type(Config.SkipFishList) == "table" and Config.SkipFishList or {}),
-    MultipleOptions = true,
-    Callback = function(Value)
-        local picked = {}
-        if type(Value) == "table" then
-            for _, v in ipairs(Value) do
-                table.insert(picked, v)
-            end
-        end
-        Config.SkipFishList = picked
+    Multi = true,
+    Current = table.clone(type(Config.SkipFishList) == "table" and Config.SkipFishList or {}),
+    GetSelected = function()
+        return type(Config.SkipFishList) == "table" and Config.SkipFishList or {}
+    end,
+    SetSelected = function(list)
+        Config.SkipFishList = list
         SaveConfig()
-    end
+    end,
 })
 
 Tabs.Main:CreateToggle({
