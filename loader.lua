@@ -89,6 +89,11 @@ local Assets = Library.Assets
 Library.Language = "English"
 Library._TextObjects = setmetatable({}, { __mode = "k" })
 local EN_TRANSLATIONS = {
+    ["Hop thời tiết"] = "Weather Hop", ["Tự động chuyển server tìm thời tiết"] = "Auto Hop Weather",
+    ["Chọn thời tiết"] = "Select Weather", ["Độ trễ chuyển server"] = "Hop Delay", ["Job ID"] = "Job ID",
+    ["Nhập Job ID..."] = "Enter Job ID...", ["Vào server theo Job ID"] = "Join Job ID",
+    ["Sao chép Job ID hiện tại"] = "Copy Current Job ID",
+    ["Sự kiện giới hạn"] = "Limited Event", ["Tự động đưa cá"] = "Auto Give Fish", ["Chọn cá boss"] = "Select Boss Fish",
     ["UZEX Hub"] = "UZEX Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
     ["Dịch chuyển"] = "Teleport", ["Cửa hàng"] = "Shop", ["Nâng cấp"] = "Upgrade",
     ["Khác"] = "Misc", ["Cài đặt"] = "Settings", ["Bán cá"] = "Sell Fish",
@@ -1775,13 +1780,19 @@ local Config = {
     BlackTortoiseBand = 0.12,
     DumpGuyHotbarSlot = 4,
     AutoGiveFish = false,
+    AutoGiveEventFish = false,
+    AutoGiveEventFishTarget = {},
     HopAutoCheck = false,
     AutoHopGodSpirit = false,
     AutoHopMaoshan = false,
     AutoHopTaoist = false,
+    AutoHopWeather = false,
+    SelectedWeather = "Thunderstorm",
+    HopWeatherDelay = 5,
     CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
+    BossHitDelay = 15,
     BossMode = "Normal",
     AutoBoss = false,
     AutoSecretBoss = false,
@@ -1846,7 +1857,10 @@ local SAVE_FILE = SAVE_FOLDER .. "/HeavyweighFishingConfig.json"
 local function SaveConfig()
     pcall(function()
         if not isfolder(SAVE_FOLDER) then makefolder(SAVE_FOLDER) end
-        writefile(SAVE_FILE, HttpService:JSONEncode(Config))
+        -- Auto Hop Weather is never saved, so joining a server never starts a hop by itself
+        local toSave = table.clone(Config)
+        toSave.AutoHopWeather = false
+        writefile(SAVE_FILE, HttpService:JSONEncode(toSave))
     end)
 end
 
@@ -1864,6 +1878,12 @@ local function LoadConfig()
 end
 
 LoadConfig()
+Config.AutoHopWeather = false -- not persisted: always starts OFF
+if type(Config.AutoGiveEventFishTarget) == "string" then
+    Config.AutoGiveEventFishTarget = Config.AutoGiveEventFishTarget ~= "" and { Config.AutoGiveEventFishTarget } or {}
+elseif type(Config.AutoGiveEventFishTarget) ~= "table" then
+    Config.AutoGiveEventFishTarget = {}
+end
 Config.AutoFarmIsland = false -- Auto Farm Fish was removed from the UI
 Library.NotificationsEnabled = Config.NotificationsEnabled ~= false
 Library.Language = (Config.Language == "Tiếng Việt") and "Tiếng Việt" or "English" -- saved language
@@ -2705,6 +2725,11 @@ local function StepPhase2MiniGame()
         table.remove(phase2BarHistory, 1)
     end
 
+    local hitDelay = (tonumber(Config.BossHitDelay) or 15) / 1000
+    if hitDelay < 0.005 then
+        hitDelay = 0.005
+    end
+
     local handledViaUpval = false
     local onClickFn = nil
 
@@ -2726,7 +2751,7 @@ local function StepPhase2MiniGame()
                     if u12 == true and type(u14) == "number" and type(u27) == "number" and type(u26) == "number" and type(u1) == "number" and type(u25) == "number" and type(u23) == "number" and type(u2) == "number" and type(u15) == "number" then
                         if math.abs(u2 - hbW) < 0.005 and math.abs(u15 - hbLeft) < 0.005 then
                             handledViaUpval = true
-                            if now - u14 >= 0.035 and now - lastPhase2HitTick >= 0.035 then
+                            if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
                                 local v91 = (now - 0.025 - u27) % u26 * u1
                                 if u25 < v91 then
                                     v91 = u25 * 2 - v91
@@ -2747,17 +2772,9 @@ local function StepPhase2MiniGame()
     end
 
     if handledViaUpval then return end
-    if now - lastPhase2HitTick < 0.04 then return end
+    if now - lastPhase2HitTick < hitDelay then return end
 
     local evalX = barCenter
-    local targetTime = now - 0.041
-    for i = #phase2BarHistory, 1, -1 do
-        if phase2BarHistory[i].t <= targetTime then
-            evalX = phase2BarHistory[i].x
-            break
-        end
-    end
-
     local pad = hbW * 0.2
 
     local badBox = BossFightBar:FindFirstChild("HitboxBad")
@@ -2802,12 +2819,44 @@ local function StepPhase2MiniGame()
         if not clicked then
             pcall(function()
                 VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-                task.delay(0.01, function()
+                task.delay(0.005, function()
                     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
                 end)
             end)
         end
     end
+end
+
+local function IsTrapNote(gui)
+    if not gui or not gui:IsA("GuiObject") then
+        return false
+    end
+    if gui:GetAttribute("Trap") == true or gui:GetAttribute("trap") == true or gui:GetAttribute("IsTrap") == true then
+        return true
+    end
+    if string.find(string.lower(gui.Name), "trap", 1, true) then
+        return true
+    end
+    local function isRed(c)
+        return c and c.R > 0.65 and c.G < 0.45 and c.B < 0.45 and c.R > c.G * 1.8 and c.R > c.B * 1.8
+    end
+    if isRed(gui.BackgroundColor3) then
+        return true
+    end
+    if (gui:IsA("ImageLabel") or gui:IsA("ImageButton")) and isRed(gui.ImageColor3) then
+        return true
+    end
+    for _, desc in ipairs(gui:GetDescendants()) do
+        if desc:IsA("GuiObject") then
+            if isRed(desc.BackgroundColor3) then
+                return true
+            end
+            if (desc:IsA("ImageLabel") or desc:IsA("ImageButton")) and isRed(desc.ImageColor3) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 local function StepRhythmMiniGame()
@@ -2823,17 +2872,17 @@ local function StepRhythmMiniGame()
                 local barFrame = laneFrame:FindFirstChild("BarFrame")
                 local targetY = barFrame and barFrame.Position.Y.Scale or 0.85
                 local targetNote = nil
-                local bestDist = 0.18
+                local bestDist = 999
                 for _, child in ipairs(laneFrame:GetChildren()) do
                     if child.Name == "Note_FX" and child:IsA("GuiObject") and child.Visible then
                         local dist = math.abs(child.Position.Y.Scale - targetY)
-                        if dist <= bestDist then
+                        if dist < bestDist then
                             bestDist = dist
                             targetNote = child
                         end
                     end
                 end
-                if targetNote then
+                if targetNote and not IsTrapNote(targetNote) and bestDist <= 0.18 then
                     lastRhythmLaneHit[lane] = now
                     local btn = laneFrame:FindFirstChild("Button")
                     if btn then
@@ -2862,31 +2911,28 @@ local function StepRhythmMiniGame()
     end
 end
 
-RunService.RenderStepped:Connect(function()
+local function StepFishingFrame(includeRhythm)
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
     if Config.AutoMiniGame then
         StepPhase2MiniGame()
-    end
-end)
-
-RunService.Stepped:Connect(function()
-    if not FishingGui or not FishingGui.Visible then return end
-    BindFishingBarLock()
-    LockFishingBar()
-end)
-
-RunService.Heartbeat:Connect(function()
-    if not FishingGui or not FishingGui.Visible then return end
-    BindFishingBarLock()
-    LockFishingBar()
-    if Config.AutoMiniGame then
-        StepPhase2MiniGame()
-        if not UzexFilter.BTActive then
+        if includeRhythm and not UzexFilter.BTActive then
             StepRhythmMiniGame()
         end
     end
+end
+
+RunService.RenderStepped:Connect(function()
+    StepFishingFrame(false)
+end)
+
+RunService.Stepped:Connect(function()
+    StepFishingFrame(false)
+end)
+
+RunService.Heartbeat:Connect(function()
+    StepFishingFrame(true)
 end)
 
 end
@@ -4355,6 +4401,7 @@ task.spawn(function()
         local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip and not secretFarmOn
         local secretFarmOn = UzexFilter.SecretFarmAllowed()
         local activeCast = (Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish) and not secretFarmOn
+            and not (UzexFilter.HasPendingEventFish and UzexFilter.HasPendingEventFish())
         local activeSkill = (Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
 
         if not isMinigame then
@@ -6466,7 +6513,7 @@ ApplyLightingSettings()
 -- remains authoritative; Uzex UI keeps no settings of its own.
 -- Replace this placeholder with the real UZEX Hub Discord invite when it is available.
 -- The Home tab exposes this URL and copies it when its link button is pressed.
-local DISCORD_INVITE = "https://discord.gg/pzVJV34AH8"
+local DISCORD_INVITE = "https://discord.gg/QPux5hHVY"
 
 local Window = Library:CreateWindow({
     Name = "UZEX Hub",
@@ -6656,6 +6703,7 @@ end
 
 local Tabs = {
     Main = Window:CreateTab({ Name = "Chính", Icon = "home" }),
+    LimitedEvent = Window:CreateTab({ Name = "Sự kiện giới hạn", Icon = "gift" }),
     Teleport = Window:CreateTab({ Name = "Dịch chuyển", Icon = "map-pin" }),
     Hop = Window:CreateTab({ Name = "Chuyển server", Icon = "server" }),
     Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
@@ -6974,6 +7022,220 @@ do
             end
         end
     end)
+
+    ---------------------------------------------------------------------------
+    -- Weather hop: keeps changing server until the chosen weather is active
+    ---------------------------------------------------------------------------
+    local function GetWeatherList()
+        local list = {}
+        pcall(function()
+            local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
+            local wScript = clientMod and clientMod:FindFirstChild("Weather")
+            local wFolder = wScript and wScript:FindFirstChild("Weather")
+            if not wFolder then return end
+            for _, child in ipairs(wFolder:GetChildren()) do
+                if child:IsA("ModuleScript") or child:IsA("Folder") then
+                    local lower = string.lower(child.Name)
+                    if lower ~= "clear" and not string.find(lower, "blood", 1, true) then
+                        table.insert(list, child.Name)
+                    end
+                end
+            end
+        end)
+        if #list == 0 then
+            list = { "Rain", "Thunderstorm", "Snow", "Fog", "Windy", "Cloudy", "Solar Eclipse" }
+        else
+            table.sort(list)
+        end
+        return list
+    end
+
+    local function CleanWeatherText(text)
+        text = tostring(text or ""):gsub("<[^>]+>", "")
+        text = text:gsub("^%s*[Ww]eather%s*:?%s*", "")
+        return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+    end
+
+    -- Reads the weather from every place the game exposes it (workspace attribute
+    -- and the on-screen Weather label). The two can use different wording.
+    local function ReadWeatherSources()
+        local sources = {}
+        local attr = workspace:GetAttribute("Weather")
+        if attr ~= nil and tostring(attr) ~= "" then
+            table.insert(sources, CleanWeatherText(attr))
+        end
+        pcall(function()
+            local gui = LocalPlayer.PlayerGui:FindFirstChild("MainGui")
+            local i1 = gui and gui:FindFirstChild("Info")
+            local i2 = i1 and i1:FindFirstChild("Info")
+            local w = i2 and i2:FindFirstChild("Weather")
+            local v = w and w:FindFirstChild("Value")
+            if not v then return end
+            local raw
+            if v:IsA("TextLabel") or v:IsA("TextButton") then
+                raw = v.Text
+            else
+                raw = v.Value
+            end
+            local text = CleanWeatherText(raw)
+            if text ~= "" and not table.find(sources, text) then
+                table.insert(sources, text)
+            end
+        end)
+        return sources
+    end
+
+    local function NormWeather(text)
+        return (string.lower(tostring(text or "")):gsub("[^%a]", ""))
+    end
+
+    -- "Rain" matches "Rainy", "Snow" matches "Snowy", "Fog" matches "Foggy", ...
+    local function WeatherMatches(sources, target)
+        local want = NormWeather(target)
+        if #want < 3 then return false end
+        for _, source in ipairs(sources) do
+            local have = NormWeather(source)
+            if #have >= 3 and (have == want or string.find(have, want, 1, true) or string.find(want, have, 1, true)) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function StopWeatherHop(message)
+        Config.AutoHopWeather = false
+        SaveConfig()
+        local flag = Library.Flags["AutoHopWeatherToggle"]
+        if flag and flag.Set then
+            pcall(flag.Set, flag, false, true)
+        end
+        Notify("Hop thời tiết", message, 6)
+    end
+
+    Tabs.Hop:CreateSection("Hop thời tiết")
+
+    Tabs.Hop:CreateToggle({
+        Flag = "AutoHopWeatherToggle",
+        Name = "Tự động chuyển server tìm thời tiết",
+        CurrentValue = Config.AutoHopWeather,
+        Callback = function(Value)
+            Config.AutoHopWeather = Value
+            SaveConfig()
+        end
+    })
+
+    Tabs.Hop:CreateDropdown({
+        Flag = "SelectWeatherDropdown",
+        Name = "Chọn thời tiết",
+        Options = GetWeatherList(),
+        CurrentOption = tostring(Config.SelectedWeather or "Thunderstorm"),
+        MultipleOptions = false,
+        AllowNone = false,
+        Callback = function(Value)
+            if type(Value) == "table" then Value = Value[1] end
+            Config.SelectedWeather = Value or "Thunderstorm"
+            SaveConfig()
+        end
+    })
+
+    Tabs.Hop:CreateSlider({
+        Flag = "HopWeatherDelaySlider",
+        Name = "Độ trễ chuyển server",
+        CurrentValue = math.clamp(tonumber(Config.HopWeatherDelay) or 5, 5, 20),
+        Range = {5, 20},
+        Increment = 1,
+        Callback = function(Value)
+            Config.HopWeatherDelay = math.clamp(tonumber(Value) or 5, 5, 20)
+            SaveConfig()
+        end
+    })
+
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            if Config.AutoHopWeather and not hopping and os.clock() - bootAt > 6
+                and LocalPlayer.Character and game:IsLoaded() then
+                local sources = ReadWeatherSources()
+                local cur = table.concat(sources, " / ")
+                local target = tostring(Config.SelectedWeather or "")
+                if cur == "" and os.clock() - bootAt < 20 then
+                    -- weather value has not loaded yet, check again
+                elseif WeatherMatches(sources, target) then
+                    StopWeatherHop("Đã tìm thấy thời tiết " .. cur .. "! Đã dừng tự động chuyển server.")
+                elseif os.clock() - lastHop > 10 then
+                    lastHop = os.clock()
+                    hopping = true
+                    local delaySec = math.clamp(tonumber(Config.HopWeatherDelay) or 5, 5, 20)
+                    Notify("Hop thời tiết", "Hiện tại: " .. (cur ~= "" and cur or "Unknown")
+                        .. ". Mục tiêu: " .. target .. ". Chuyển server sau " .. delaySec .. "s...", 5)
+                    task.spawn(function()
+                        task.wait(delaySec)
+                        if Config.AutoHopWeather then
+                            pcall(HopServer)
+                        end
+                        task.wait(8)
+                        hopping = false
+                    end)
+                end
+            end
+        end
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Join / copy Job ID
+    ---------------------------------------------------------------------------
+    Tabs.Hop:CreateSection("Job ID")
+
+    local targetJobId = ""
+
+    Tabs.Hop:CreateInput({
+        Flag = "JobIdInput",
+        Name = "Job ID",
+        Placeholder = "Nhập Job ID...",
+        Finished = false,
+        Callback = function(Value)
+            targetJobId = (tostring(Value or ""):gsub("%s+", ""))
+        end
+    })
+
+    Tabs.Hop:CreateButton({
+        Name = "Vào server theo Job ID",
+        Callback = function()
+            if targetJobId == "" then
+                Notify("Job ID", "Hãy nhập Job ID hợp lệ.", 3)
+                return
+            end
+            Notify("Job ID", "Đang vào server " .. targetJobId .. "...", 3)
+            task.wait(0.3)
+            local ok = pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, targetJobId, LocalPlayer)
+            end)
+            if not ok then
+                Notify("Job ID", "Không vào được server này.", 4)
+            end
+        end
+    })
+
+    Tabs.Hop:CreateButton({
+        Name = "Sao chép Job ID hiện tại",
+        Callback = function()
+            local jobId = tostring(game.JobId or "")
+            local copied = false
+            pcall(function()
+                if setclipboard then
+                    setclipboard(jobId)
+                    copied = true
+                elseif toclipboard then
+                    toclipboard(jobId)
+                    copied = true
+                elseif syn and syn.write_clipboard then
+                    syn.write_clipboard(jobId)
+                    copied = true
+                end
+            end)
+            Notify("Job ID", (copied and "Đã sao chép: " or "Job ID: ") .. jobId, 4)
+        end
+    })
 end
 
 
@@ -7368,6 +7630,343 @@ do
         CurrentValue = Config.AutoGiveFish,
         Callback = function(Value)
             Config.AutoGiveFish = Value
+            SaveConfig()
+        end
+    })
+end
+
+-------------------------------------------------------------------------------
+-- Limited Event tab: Auto Give Fish to Noro Derasu (ported from star.lua)
+-------------------------------------------------------------------------------
+do
+    local BOSS_FALLBACK = {
+        "Azure Carp",
+        "Jiaolong Dragonfish",
+        "Chainbound Shark",
+        "Adult Jiaolong Dragonfish",
+        "Elder Chainbound Shark",
+        "Elder Jiaolong Dragonfish",
+        "Trueform Jiaolongfish",
+        "Trueform Perch",
+        "Ascended Perch",
+        "Primordial Kunfish",
+        "Primordial Kunfish Overlord",
+        "Warbringer Shark",
+        "Dreadscale Grouper",
+        "Mutated Koid Whale",
+        "Radiant Goldfish",
+        "Serpent Fish",
+        "Dreadmare Eel",
+        "Chromatic Koi",
+        "Toxic Chromatic Koi",
+        "Crimson Bream Sovereign",
+        "Silver Bream Sovereign",
+        "Golden Guardian Fish",
+        "Colossal Tigerfish",
+        "Mountain Fish",
+        "Tiger Mirefish",
+        "Octoparasitic Fish",
+        "Dark kingfish",
+        "Golden Shark",
+        "Darkness Shark",
+        "White Heaven Kunfish",
+        "Crimson Bonefiend",
+        "Dragonfish Devourer",
+        "Yangfish Sovereign",
+        "Yangfish Empress",
+        "Yinfish Sovereign",
+        "Demon Bladefish",
+        "Apollo Swordfish",
+        "Killer Sawshark",
+        "Thunder Fish",
+        "Wind Fish",
+        "Intuitive Fish King",
+        "Aquatic Fish",
+        "Flame Fish",
+        "Verdant Alligator Gar",
+        "Verdant Grouper",
+        "Verdant Bonefang",
+        "Scarlet Fish",
+        "Mountain Dragonwhale",
+        "Flying Fish Emperor",
+        "Crimson Bonefang",
+        "Elder ScarletFish",
+        "Colossal Bull Shark",
+        "Flying Fish Empress",
+        "Draconic Koi",
+        "Tigerfang Whale",
+        "Golden Dragonfish",
+        "Crimson Electric Eel",
+        "Reborn Puffer Beast",
+        "Heavenpiercer Turtle",
+        "Sanguine Fish",
+        "Frost Kingfish",
+        "Dark Lionfish",
+        "Rainbow Dragonfish",
+        "Mirage lanternfish",
+        "Nameless Octoparasite",
+        "Frost QueenFish",
+        "Thunder Bull Shark",
+        "Black Tortoise Bloodline",
+        "Vermilion Birdblood"
+    }
+
+    local function trim(s)
+        return (tostring(s or ""):gsub("^%s*(.-)%s*$", "%1"))
+    end
+
+    local function GetFishNameFromItem(itemName)
+        if not itemName or itemName == "" then return "" end
+        local clean = string.split(tostring(itemName), "| Favorite")[1]
+        clean = string.split(clean, "|")[1]
+        clean = trim(clean)
+        local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
+        local gs = clientMod and clientMod:FindFirstChild("GameService")
+        if gs then
+            local ok, res = pcall(function()
+                local mod = require(gs)
+                return mod and mod.DestringFish and mod.DestringFish(clean)
+            end)
+            if ok and res and res.FishName then
+                return res.FishName
+            end
+        end
+        local parts = string.split(clean, ",")
+        if #parts >= 1 and parts[1] ~= "" then
+            return parts[1]
+        end
+        return clean
+    end
+
+    local function GetEventBossList()
+        local list, seen = {}, {}
+        pcall(function()
+            local inventory = Info:FindFirstChild("Inventory")
+            if not inventory then return end
+            for _, child in ipairs(inventory:GetChildren()) do
+                if not seen[child.Name] then
+                    local data = GetModuleData(child)
+                    if data and data.Boss == true then
+                        seen[child.Name] = true
+                        table.insert(list, child.Name)
+                    end
+                end
+            end
+        end)
+        if #list == 0 then
+            for _, name in ipairs(BOSS_FALLBACK) do
+                if not seen[name] then
+                    seen[name] = true
+                    table.insert(list, name)
+                end
+            end
+        end
+        table.sort(list)
+        return list
+    end
+
+    local bossListItems = GetEventBossList()
+
+    local function ExtractSelected(raw)
+        local selected = {}
+        if type(raw) == "table" then
+            for k, v in pairs(raw) do
+                local name
+                if type(k) == "string" and v == true then
+                    name = k
+                elseif type(v) == "string" and v ~= "" then
+                    name = v
+                end
+                if name and table.find(bossListItems, name) and not table.find(selected, name) then
+                    table.insert(selected, name)
+                end
+            end
+        elseif type(raw) == "string" and table.find(bossListItems, raw) then
+            table.insert(selected, raw)
+        end
+        return selected
+    end
+    Config.AutoGiveEventFishTarget = ExtractSelected(Config.AutoGiveEventFishTarget)
+
+    local function GetTargetSet()
+        local set, hasAny = {}, false
+        local raw = Config.AutoGiveEventFishTarget
+        if type(raw) == "table" then
+            for k, v in pairs(raw) do
+                local name
+                if type(k) == "string" and v == true then
+                    name = k
+                elseif type(v) == "string" and v ~= "" then
+                    name = v
+                end
+                if name then
+                    local clean = string.lower(trim(name))
+                    if clean ~= "" then
+                        set[clean] = true
+                        hasAny = true
+                    end
+                end
+            end
+        end
+        return set, hasAny
+    end
+
+    -- Noro Derasu NPC (cached; the slow recursive search is throttled)
+    local noroCache, lastNoroSearch = nil, 0
+    local function GetNoro()
+        if noroCache and noroCache.Parent then
+            return noroCache
+        end
+        noroCache = nil
+        local npc = workspace:FindFirstChild("NPC")
+        local fn = npc and npc:FindFirstChild("Function")
+        local noro = fn and fn:FindFirstChild("Noro Derasu")
+        if not noro and os.clock() - lastNoroSearch > 5 then
+            lastNoroSearch = os.clock()
+            noro = workspace:FindFirstChild("Noro Derasu", true)
+        end
+        noroCache = noro
+        return noro
+    end
+
+    local function MatchesEventFish(itemName, targets)
+        if not itemName or itemName == "" then return false end
+        if string.find(itemName, "Favorite", 1, true) or string.find(itemName, "Lock", 1, true) then
+            return false
+        end
+        local lower = string.lower(itemName)
+        if string.find(lower, "bait", 1, true) or string.find(lower, "rod", 1, true) then
+            return false
+        end
+        if not targets or next(targets) == nil then return false end
+        local clean = string.lower(trim(GetFishNameFromItem(itemName)))
+        if clean ~= "" and targets[clean] then return true end
+        local stripped = trim(string.gsub(clean, "%s*[%(%[].-$", ""))
+        return stripped ~= "" and targets[stripped] == true
+    end
+
+    local function FindFreeHotbarSlot()
+        local hotbar = PlayerData:FindFirstChild("Hotbar")
+        if not hotbar then return "4" end
+        for i = 4, 10 do
+            local slot = hotbar:FindFirstChild(tostring(i))
+            if slot then
+                local valName = slot:FindFirstChild("ValueName")
+                local qty = slot:FindFirstChild("Quantity")
+                if (not valName or valName.Value == "") or (qty and qty.Value <= 0) then
+                    return tostring(i)
+                end
+            end
+        end
+        return "4"
+    end
+
+    local function FindEventFishHotbarSlot(targets)
+        local hotbar = PlayerData:FindFirstChild("Hotbar")
+        if not hotbar then return nil end
+        for i = 2, 10 do
+            local slot = hotbar:FindFirstChild(tostring(i))
+            local valName = slot and slot:FindFirstChild("ValueName")
+            local qty = slot and slot:FindFirstChild("Quantity")
+            if valName and valName.Value ~= "" and (not qty or qty.Value > 0)
+                and MatchesEventFish(valName.Value, targets) then
+                return tostring(i)
+            end
+        end
+        return nil
+    end
+
+    local function FindEventFishInventoryItem(targets)
+        local inv = PlayerData:FindFirstChild("Inventory")
+        if not inv then return nil end
+        for _, child in ipairs(inv:GetChildren()) do
+            if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0)
+                and MatchesEventFish(child.Name, targets) then
+                return child
+            end
+        end
+        return nil
+    end
+
+    -- Used by the auto-cast loop to stop casting while a fish is waiting to be handed in.
+    local pendingCache, pendingAt = false, 0
+    function UzexFilter.HasPendingEventFish()
+        if not Config.AutoGiveEventFish then return false end
+        local now = os.clock()
+        if now - pendingAt < 0.5 then return pendingCache end
+        pendingAt = now
+        pendingCache = false
+        local targets, hasAny = GetTargetSet()
+        if hasAny and GetNoro() then
+            pendingCache = (FindEventFishHotbarSlot(targets) or FindEventFishInventoryItem(targets)) ~= nil
+        end
+        return pendingCache
+    end
+
+    local lastGiveTick = 0
+    local function StepAutoGiveEventFish()
+        if not Config.AutoGiveEventFish then return end
+        if os.clock() - lastGiveTick < 1.2 then return end
+        local targets, hasAny = GetTargetSet()
+        if not hasAny then return end
+        local noro = GetNoro()
+        if not noro then return end
+
+        local slot = FindEventFishHotbarSlot(targets)
+        if not slot then
+            local item = FindEventFishInventoryItem(targets)
+            if item then
+                local free = FindFreeHotbarSlot()
+                local moveItems = Events:FindFirstChild("MoveItems")
+                if moveItems then
+                    pcall(function()
+                        moveItems:FireServer("Inventory", item.Name, free)
+                    end)
+                    task.wait(0.25)
+                end
+                slot = free
+            end
+        end
+        if not slot then return end
+
+        lastGiveTick = os.clock()
+        pcall(function()
+            ToggleHotbar:InvokeServer(slot)
+        end)
+        task.wait(0.2)
+        pcall(function()
+            ChooseDialogueOption:FireServer("Noro Derasu", 1, "GiveFish", { noro })
+        end)
+    end
+
+    task.spawn(function()
+        while task.wait(0.25) do
+            if Config.AutoGiveEventFish then
+                pcall(StepAutoGiveEventFish)
+            end
+        end
+    end)
+
+    Tabs.LimitedEvent:CreateSection("Tự động đưa cá")
+
+    Tabs.LimitedEvent:CreateToggle({
+        Flag = "AutoGiveEventFishToggle",
+        Name = "Tự động đưa cá",
+        CurrentValue = Config.AutoGiveEventFish,
+        Callback = function(Value)
+            Config.AutoGiveEventFish = Value
+            SaveConfig()
+        end
+    })
+
+    Tabs.LimitedEvent:CreateDropdown({
+        Flag = "AutoGiveEventFishDropdown",
+        Name = "Chọn cá boss",
+        Options = bossListItems,
+        CurrentOption = table.clone(Config.AutoGiveEventFishTarget),
+        MultipleOptions = true,
+        Callback = function(Value)
+            Config.AutoGiveEventFishTarget = ExtractSelected(Value)
             SaveConfig()
         end
     })
