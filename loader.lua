@@ -142,6 +142,92 @@ local EN_TRANSLATIONS = {
     ["Đang tự động kết nối lại..."] = "Reconnecting automatically...",
     ["Đã lưu URL Webhook."] = "Webhook URL saved.", ["Đây không phải liên kết Discord Webhook."] = "This is not a Discord Webhook URL.",
 }
+-- Extra English translations (whole strings).
+local EXTRA_EN_TRANSLATIONS = {
+    ["Đã ẩn"] = "Hidden",
+    ["Hãy đặt liên kết script trong autoExecPayload trước."] = "Set the script link in autoExecPayload first.",
+    ["Nhập tên cá..."] = "Enter fish name...",
+    ["Bỏ qua cá"] = "Skip Fish",
+    ["Bộ lọc cá"] = "Fish Filter",
+    ["Không đọc được sức chứa túi cá, phương thức này sẽ bán cá mỗi 60 giây."] = "Could not read fish bag capacity; this method will sell fish every 60 seconds.",
+    ["Tự trang bị mồi"] = "Auto Equip Bait",
+    ["Không tìm thấy mồi trong túi đồ"] = "No bait found in inventory",
+    ["Dịch chuyển người chơi"] = "Teleport Player",
+    ["Không tìm được server phù hợp, thử lại sau."] = "No suitable server found, try again later.",
+    ["Thời tiết"] = "Weather",
+    ["không có"] = "none",
+    ["KHÔNG KHỚP"] = "NO MATCH",
+    ["KHỚP"] = "MATCH",
+    ["Hãy nhập Job ID hợp lệ."] = "Enter a valid Job ID.",
+    ["Không vào được server này."] = "Could not join this server.",
+    ["Nhiệm vụ hàng ngày"] = "Daily Quest",
+    ["Tự nhận nhiệm vụ hàng ngày"] = "Auto Claim Daily Quest",
+    ["Tự tương tác với NPC nhiệm vụ hàng ngày và nhận thưởng"] = "Automatically interact with the daily quest NPC and claim rewards",
+    ["Không tìm thấy NPC Noro Derasu."] = "Noro Derasu NPC not found.",
+    ["Không đưa được cá cho Noro Derasu, tạm dừng 60 giây."] = "Could not give the fish to Noro Derasu, pausing for 60 seconds.",
+    ["Tự chạy script"] = "Auto Execute",
+    ["Tài nguyên"] = "Resources",
+    ["Không tìm thấy chức năng tái sinh trong game này"] = "Rebirth feature not found in this game",
+    ["Giao diện tiện ích"] = "Utility UI",
+    ["Phím thu nhỏ giao diện"] = "UI Minimize Key",
+    ["Đổi máy chủ"] = "Change Server",
+    ["Không tìm thấy máy chủ ít người. Đang chuyển đến máy chủ ngẫu nhiên..."] = "No low-population server found. Moving to a random server...",
+    ["Đang vào lại máy chủ hiện tại..."] = "Rejoining the current server...",
+    ["Tạm dừng tự vào lại"] = "Auto Rejoin Paused",
+    ["Đã vào lại quá nhiều lần trong 10 phút. Vui lòng vào lại thủ công."] = "Rejoined too many times in 10 minutes. Please rejoin manually.",
+    ["Mất kết nối"] = "Disconnected",
+    ["Báo cáo trạng thái (phút, 0 = tắt)"] = "Status Report (minutes, 0 = off)",
+    ["Thông báo mỗi lần câu được cá"] = "Notify on Every Catch",
+}
+for vi, en in pairs(EXTRA_EN_TRANSLATIONS) do
+    if EN_TRANSLATIONS[vi] == nil then EN_TRANSLATIONS[vi] = en end
+end
+
+-- Pieces of messages that are built at runtime ("Đang vào server " .. id .. "..."):
+-- translated inside the text when the language is English. Longest piece first.
+local FRAGMENT_TRANSLATIONS = {
+    { "Gửi cá cho Noro Derasu chưa thành công (", "Giving the fish to Noro Derasu was not successful (" },
+    { "Đã dừng tự động chuyển server - ", "Auto hop stopped - " },
+    { "! Đã dừng tự động chuyển server.", "! Auto hop stopped." },
+    { " hoặc chạm vào logo để mở lại.", " or tap the logo to show it again." },
+    { " người chơi! Đang dịch chuyển...", " players! Teleporting..." },
+    { "Tự động chuyển server tìm ", "Auto Hop Server to find " },
+    { "Tiếp tục tìm thời tiết: ", "Continuing weather search: " },
+    { "Không cầm được cá ở ô ", "Could not hold the fish in slot " },
+    { "Phát hiện quản trị viên: ", "Admin detected: " },
+    { "Đã tìm thấy máy chủ có ", "Found a server with " },
+    { "Đã tìm thấy thời tiết ", "Found weather " },
+    { " đã có trong server này!", " is already in this server!" },
+    { ". Đang chuyển server...", ". Hopping server..." },
+    { " - đang rời máy chủ", " - leaving the server" },
+    { "Đang farm Secret Boss: ", "Farming Secret Boss: " },
+    { "Chuyển server ngay (", "Hop Now (" },
+    { ". Chuyển server sau ", ". Hopping server in " },
+    { " không tìm thấy!", " not found!" },
+    { "Đã tìm thấy: ", "Found: " },
+    { "Đang vào server ", "Joining server " },
+    { " đang ở đây!", " is here!" },
+    { "Đọc được: ", "Read: " },
+    { "Đang bỏ qua: ", "Skipping: " },
+    { "Đã trang bị ", "Equipped " },
+    { "Đã sao chép: ", "Copied: " },
+    { "Đã bỏ qua: ", "Skipped: " },
+    { "Người chơi ", "Player " },
+    { ". Mục tiêu: ", ". Target: " },
+    { "Không thấy ", "Not seeing " },
+    { "Hiện tại: ", "Current: " },
+    { "KHÔNG KHỚP", "NO MATCH" },
+    { " (bí mật)", " (secret)" },
+    { "Không có ", "No " },
+    { "không có", "none" },
+    { "Nhấn ", "Press " },
+    { "KHỚP", "MATCH" },
+}
+for _, pair in ipairs(FRAGMENT_TRANSLATIONS) do
+    pair[3] = (pair[1]:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"))
+    pair[4] = (pair[2]:gsub("%%", "%%%%"))
+end
+
 local function translateText(value)
     if type(value) ~= "string" then return value end
 
@@ -167,6 +253,17 @@ local function translateText(value)
         if string.upper(source) == upper then
             return string.upper(target)
         end
+    end
+
+    -- English mode: translate the known pieces inside text built at runtime
+    if Library.Language == "English" then
+        local out = value
+        for _, pair in ipairs(FRAGMENT_TRANSLATIONS) do
+            if string.find(out, pair[1], 1, true) then
+                out = string.gsub(out, pair[3], pair[4])
+            end
+        end
+        return out
     end
     return value
 end
@@ -1938,6 +2035,13 @@ task.spawn(function()
             if isfile("UZEXHub/HeavyweighFishingConfig.json") then
                 local dec = HttpService:JSONDecode(readfile("UZEXHub/HeavyweighFishingConfig.json"))
                 allow = (type(dec) == "table" and dec.AutoExecute == true)
+                -- a weather hop that is in progress must carry on in the next server
+                if type(dec) == "table" and not allow then
+                    local at = tonumber(dec.HopWeatherResumeAt) or 0
+                    if at > 0 and (os.time() - at) >= 0 and (os.time() - at) < 180 then
+                        allow = true
+                    end
+                end
             end
         end
     end)
@@ -1967,9 +2071,9 @@ task.spawn(function()
 end)
 ]]
 
-local function QueueAutoExecute(force)
+local function QueueAutoExecute(force, ignoreSetting)
     if not queueTeleport then return end
-    if not Config.AutoExecute then return end
+    if not Config.AutoExecute and not ignoreSetting then return end
     if autoExecQueued and not force then return end
     if autoExecPayload:find("YOUR-USER", 1, true) then
         pcall(function()
@@ -7392,6 +7496,12 @@ do
         end
     })
 
+    if Config.AutoHopWeather then
+        task.defer(function()
+            Notify("Hop thời tiết", "Tiếp tục tìm thời tiết: " .. tostring(Config.SelectedWeather), 4)
+        end)
+    end
+
     local stableKey, stableSince = nil, 0
     task.spawn(function()
         while true do
@@ -7429,6 +7539,7 @@ do
                             -- remember that this hop must continue in the next server
                             Config.HopWeatherResumeAt = os.time()
                             SaveConfig()
+                            pcall(QueueAutoExecute, true, true)
                             local hopped = false
                             local okHop, res = pcall(HopServer)
                             hopped = okHop and res == true
