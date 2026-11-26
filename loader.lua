@@ -117,7 +117,7 @@ local EN_TRANSLATIONS = {
     ["Tăng sáng tối đa"] = "Full Bright", ["Tắt sương mù"] = "Disable Fog", ["Chế độ hiệu năng"] = "Performance Mode",
     ["Bật thông báo"] = "Enable Notifications", ["Thông báo"] = "Notification", ["Đã bật thông báo"] = "Notifications enabled",
     ["Câu cá"] = "Fishing", ["Khóa thanh bắt cá"] = "Lock Catch Bar", ["Tự động thả câu"] = "Auto Cast",
-    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss", ["Kích hoạt Secret Boss"] = "Secret Boss Activation", ["Chuyển server"] = "Server Hop", ["Tự động kiểm tra trạng thái"] = "Auto Check Status", ["Tự động chuyển server tìm God Spirit"] = "Auto Hop to God Spirit Server", ["Tự động chuyển server tìm Maoshan"] = "Auto Hop to Maoshan Server", ["Tự động chuyển server tìm Taoist"] = "Auto Hop to Taoist Server", ["Chuyển server ngay (God Spirit)"] = "Hop Now (God Spirit)", ["Chuyển server ngay (Maoshan)"] = "Hop Now (Maoshan)", ["Chuyển server ngay (Taoist)"] = "Hop Now (Taoist)", ["Tìm cá"] = "Search Fish", ["Cá yêu thích"] = "Favourite Fish", ["Chọn cá"] = "Select Fish", ["Tự động yêu thích cá đã chọn"] = "Auto Favourite Selected Fish", ["Tự động bỏ qua cá"] = "Auto Skip Fish", ["Cá cần bỏ qua"] = "Fishes to Skip", ["Tự động bỏ qua cá đã chọn"] = "Auto Skip Selected Fish", ["Black Tortoise Bloodline - vùng an toàn"] = "Black Tortoise Bloodline - Safe Band",
+    ["Tự động câu cá Boss"] = "Auto Farm Boss", ["Tự động câu cá Secret Boss"] = "Auto Farm Secret Boss", ["Kích hoạt Secret Boss"] = "Secret Boss Activation", ["Chuyển server"] = "Server Hop", ["Tự động kiểm tra trạng thái"] = "Auto Check Status", ["Tự động chuyển server tìm God Spirit"] = "Auto Hop to God Spirit Server", ["Tự động chuyển server tìm Maoshan"] = "Auto Hop to Maoshan Server", ["Tự động chuyển server tìm Taoist"] = "Auto Hop to Taoist Server", ["Chuyển server ngay (God Spirit)"] = "Hop Now (God Spirit)", ["Chuyển server ngay (Maoshan)"] = "Hop Now (Maoshan)", ["Chuyển server ngay (Taoist)"] = "Hop Now (Taoist)", ["Tìm cá"] = "Search Fish", ["Kiểm tra thời tiết hiện tại"] = "Check Current Weather", ["Cá yêu thích"] = "Favourite Fish", ["Chọn cá"] = "Select Fish", ["Tự động yêu thích cá đã chọn"] = "Auto Favourite Selected Fish", ["Tự động bỏ qua cá"] = "Auto Skip Fish", ["Cá cần bỏ qua"] = "Fishes to Skip", ["Tự động bỏ qua cá đã chọn"] = "Auto Skip Selected Fish", ["Black Tortoise Bloodline - vùng an toàn"] = "Black Tortoise Bloodline - Safe Band",
     ["Cách thả câu"] = "Cast Method", ["Độ trễ thả câu"] = "Cast Delay", ["Tự trang bị mồi tốt nhất"] = "Auto Equip Best Bait",
     ["Tự trang bị cần câu"] = "Auto Equip Rod", ["Kỹ năng"] = "Skills", ["Tự động dùng kỹ năng"] = "Auto Use Skills",
     ["Chọn kỹ năng"] = "Select Skills", ["Boss"] = "Boss", ["Chọn chế độ Boss"] = "Select Boss Mode",
@@ -7271,21 +7271,43 @@ do
 
     local weatherNames = GetWeatherList()
 
-    -- Turns any wording into the game's own weather name ("Rainy" -> "rain"). Only the
-    -- game's weather names count, so "Rain" can never match "Rainbow" or something else.
+    -- lower-case words only; drops (...) / [...] parts, digits and timers ("Rain (02:15)" -> "rain")
+    local function WordsOf(text)
+        local t = string.lower(tostring(text or ""))
+        t = t:gsub("%b()", " "):gsub("%b[]", " ")
+        t = t:gsub("[^%a]+", " ")
+        t = t:gsub("^%s+", ""):gsub("%s+$", "")
+        return t
+    end
+
+    local weatherEntries = {}
+    for _, name in ipairs(weatherNames) do
+        local words = WordsOf(name)
+        if words ~= "" then
+            table.insert(weatherEntries, { words = words, key = (words:gsub("%s+", "")) })
+        end
+    end
+    table.sort(weatherEntries, function(x, y) return #x.words > #y.words end)
+
+    -- Turns any wording into the game's own weather name. The weather has to be at the START
+    -- of the text, so "Rain" never matches "Rainbow" and a text like "Clear (Rain in 5m)" is Clear.
     local function CanonicalWeather(text)
-        local have = NormWeather(text)
-        if have == "" then return "" end
-        local best = ""
-        for _, name in ipairs(weatherNames) do
-            local w = NormWeather(name)
-            if w == have then return w end
-            -- tolerate a short suffix only (Rain/Rainy, Snow/Snowy, Fog/Foggy)
-            if #w >= 3 and #have - #w >= 1 and #have - #w <= 3 and string.sub(have, 1, #w) == w and #w > #best then
-                best = w
+        local words = WordsOf(text)
+        if words == "" then return "" end
+        for _, e in ipairs(weatherEntries) do
+            if words == e.words or string.sub(words, 1, #e.words + 1) == e.words .. " " then
+                return e.key
             end
         end
-        return best ~= "" and best or have
+        -- short suffix on the first word only (Rain/Rainy, Snow/Snowy, Fog/Foggy)
+        local first = words:match("^(%a+)")
+        for _, e in ipairs(weatherEntries) do
+            if not e.words:find(" ", 1, true) and #e.words >= 3 and first
+                and (first == e.words .. "y" or first == e.words .. "gy" or first == e.words .. "ing") then
+                return e.key
+            end
+        end
+        return (words:gsub("%s+", ""))
     end
 
     -- true only when EVERY weather source that has a value shows the chosen weather
@@ -7352,6 +7374,21 @@ do
         Callback = function(Value)
             Config.HopWeatherDelay = math.clamp(tonumber(Value) or 5, 5, 20)
             SaveConfig()
+        end
+    })
+
+    Tabs.Hop:CreateButton({
+        Name = "Kiểm tra thời tiết hiện tại",
+        Callback = function()
+            local sources = ReadWeatherSources()
+            local target = tostring(Config.SelectedWeather or "")
+            local seen = {}
+            for _, src in ipairs(sources) do
+                table.insert(seen, '"' .. src .. '" -> ' .. CanonicalWeather(src))
+            end
+            Notify("Thời tiết", "Đọc được: " .. (#seen > 0 and table.concat(seen, " | ") or "không có")
+                .. ". Mục tiêu: " .. target .. " -> " .. CanonicalWeather(target)
+                .. ". " .. (WeatherMatches(sources, target) and "KHỚP" or "KHÔNG KHỚP"), 8)
         end
     })
 
