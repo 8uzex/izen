@@ -1891,7 +1891,7 @@ local Config = {
     CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
-    BossHitDelay = 15,
+    BossHitDelay = 35,
     BossMode = "Normal",
     AutoBoss = false,
     AutoSecretBoss = false,
@@ -2821,6 +2821,7 @@ local function StepPhase2MiniGame()
         if #phase2BarHistory > 0 then
             table.clear(phase2BarHistory)
         end
+        UzexFilter.P2Locked = false
         return
     end
 
@@ -2839,10 +2840,8 @@ local function StepPhase2MiniGame()
         table.remove(phase2BarHistory, 1)
     end
 
-    local hitDelay = (tonumber(Config.BossHitDelay) or 15) / 1000
-    if hitDelay < 0.005 then
-        hitDelay = 0.005
-    end
+    -- never click faster than every 35ms (older saved configs may hold 15ms, which spams misses)
+    local hitDelay = math.max(tonumber(Config.BossHitDelay) or 35, 35) / 1000
 
     local handledViaUpval = false
     local onClickFn = nil
@@ -2865,17 +2864,23 @@ local function StepPhase2MiniGame()
                     if u12 == true and type(u14) == "number" and type(u27) == "number" and type(u26) == "number" and type(u1) == "number" and type(u25) == "number" and type(u23) == "number" and type(u2) == "number" and type(u15) == "number" then
                         if math.abs(u2 - hbW) < 0.005 and math.abs(u15 - hbLeft) < 0.005 then
                             handledViaUpval = true
-                            if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
-                                local v91 = (now - 0.025 - u27) % u26 * u1
-                                if u25 < v91 then
-                                    v91 = u25 * 2 - v91
-                                end
-                                local v92 = u23 + v91
-                                local v93 = u2 * 0.3
-                                if v92 >= (u15 - v93 * 0.8) and v92 <= (u15 + u2 + v93 * 0.8) then
-                                    lastPhase2HitTick = now
-                                    fn(false)
-                                end
+                            local v91 = (now - 0.025 - u27) % u26 * u1
+                            if u25 < v91 then
+                                v91 = u25 * 2 - v91
+                            end
+                            local v92 = u23 + v91
+                            local v93 = u2 * 0.3
+                            local inZone = v92 >= (u15 - v93 * 0.8) and v92 <= (u15 + u2 + v93 * 0.8)
+                            -- one click per pass: wait until the bar has left the zone (or 0.6s) before clicking again
+                            if UzexFilter.P2Locked and (not inZone or now - UzexFilter.P2LockTick > 0.6) then
+                                UzexFilter.P2Locked = false
+                            end
+                            if inZone and not UzexFilter.P2Locked
+                                and (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
+                                lastPhase2HitTick = now
+                                UzexFilter.P2Locked = true
+                                UzexFilter.P2LockTick = now
+                                fn(false)
                             end
                         end
                         break
@@ -2889,6 +2894,14 @@ local function StepPhase2MiniGame()
     if now - lastPhase2HitTick < hitDelay then return end
 
     local evalX = barCenter
+    local targetTime = now - 0.041
+    for i = #phase2BarHistory, 1, -1 do
+        if phase2BarHistory[i].t <= targetTime then
+            evalX = phase2BarHistory[i].x
+            break
+        end
+    end
+
     local pad = hbW * 0.2
 
     local badBox = BossFightBar:FindFirstChild("HitboxBad")
@@ -2900,8 +2913,14 @@ local function StepPhase2MiniGame()
         end
     end
 
-    if evalX >= (hbLeft - pad) and evalX <= (hbLeft + hbW + pad) then
+    local inZone = evalX >= (hbLeft - pad) and evalX <= (hbLeft + hbW + pad)
+    if UzexFilter.P2Locked and (not inZone or now - UzexFilter.P2LockTick > 0.6) then
+        UzexFilter.P2Locked = false
+    end
+    if inZone and not UzexFilter.P2Locked then
         lastPhase2HitTick = now
+        UzexFilter.P2Locked = true
+        UzexFilter.P2LockTick = now
         local clicked = false
         if onClickFn then
             pcall(function()
@@ -2933,7 +2952,7 @@ local function StepPhase2MiniGame()
         if not clicked then
             pcall(function()
                 VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-                task.delay(0.005, function()
+                task.delay(0.01, function()
                     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
                 end)
             end)
@@ -6480,9 +6499,16 @@ local function TeleportToNPC(npcName)
             end
         end
     elseif string.find(lowerNpc, "longdiaohai") or lowerNpc == "enzo" then
-        local _, bossPart = FindBossTarget(string.find(lowerNpc, "longdiaohai") ~= nil)
-        if bossPart and bossPart:IsDescendantOf(workspace) then
-            targetPart = bossPart
+        -- Go to the fixed safe fishing spot (the same one Auto Boss uses). Teleporting
+        -- right next to the boss itself makes it damage the player every time.
+        local safeCF = GetBossFarmCFrame(string.find(lowerNpc, "longdiaohai") ~= nil)
+        local safeChar = LocalPlayer.Character or cachedChar
+        local safeHrp = (safeChar and safeChar:FindFirstChild("HumanoidRootPart")) or cachedHrp
+        if safeHrp and safeCF then
+            safeHrp.AssemblyLinearVelocity = Vector3.zero
+            safeHrp.AssemblyAngularVelocity = Vector3.zero
+            safeHrp.CFrame = safeCF
+            return
         end
     end
 
