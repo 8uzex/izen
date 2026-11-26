@@ -68,1383 +68,17 @@ end)
 print(ProtectionConfig.HubName .. " Loaded Successfully!")
 
 
-
 -------------------------------------------------------------------------------
--- UZEXUI (new UI library)
--- The old UI library was removed. UZEXUI is embedded below and a thin adapter
--- keeps the Library / Window / Tab API (CreateWindow, CreateTab, CreateToggle,
--- CreateSlider, ...) the rest of the script already uses.
+-- Uzex UI: a small, smooth, dependency-free UI library.
+-- Same Library / Window / Tab API the rest of this script already uses.
+-- Colours live in Library.Theme below.
 -------------------------------------------------------------------------------
 local Library = (function()
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
 
------------------------------------------------------------------ UZEXUI
-local UzexUI = (function()
---[[
-    UzexUI - UI library nhẹ, đẹp, ít lag (PC + Mobile)
-    - Không dùng RenderStepped/Heartbeat loop
-    - Chỉ tween ngắn khi tương tác, kéo thả chỉ xử lý khi đang kéo
-    - Tab chỉ bật/tắt Visible, không tạo lại
-]]
-
-local UzexUI = {}
-
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local Players = game:GetService("Players")
-
-local Theme = {
-    Bg = Color3.fromRGB(12, 12, 12),
-    Sidebar = Color3.fromRGB(8, 8, 8),
-    Element = Color3.fromRGB(24, 24, 24),
-    ElementHover = Color3.fromRGB(36, 36, 36),
-    Accent = Color3.fromRGB(255, 255, 255),
-    OnAccent = Color3.fromRGB(10, 10, 10),
-    Text = Color3.fromRGB(240, 240, 240),
-    SubText = Color3.fromRGB(140, 140, 140),
-    Stroke = Color3.fromRGB(50, 50, 50),
-}
-
-local TI = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
-local function New(class, props, children)
-    local o = Instance.new(class)
-    local parent
-    for k, v in pairs(props or {}) do
-        if k == "Parent" then parent = v else o[k] = v end
-    end
-    for _, c in ipairs(children or {}) do c.Parent = o end
-    if parent then o.Parent = parent end
-    return o
-end
-
-local function Corner(o, r)
-    return New("UICorner", { CornerRadius = UDim.new(0, r or 8), Parent = o })
-end
-
-local function Stroke(o, color, t)
-    return New("UIStroke", {
-        Color = color or Theme.Stroke, Thickness = t or 1,
-        ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = o,
-    })
-end
-
-local HasBg = false -- bật khi có ảnh nền, để các hàng hơi trong suốt
-
-local function Card(o, r)
-    Corner(o, r or 9)
-    if HasBg then o.BackgroundTransparency = 0.25 end
-    local st = Stroke(o, Color3.fromRGB(255, 255, 255), 1)
-    st.Transparency = 0.93
-    return st
-end
-
-local function Tween(o, props, info)
-    TweenService:Create(o, info or TI, props):Play()
-end
-
-local function Label(props)
-    props.BackgroundTransparency = 1
-    props.Font = props.Font or Enum.Font.GothamMedium
-    props.TextSize = props.TextSize or 13
-    props.TextColor3 = props.TextColor3 or Theme.Text
-    props.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
-    return New("TextLabel", props)
-end
-
-local function IsPress(i)
-    return i.UserInputType == Enum.UserInputType.MouseButton1
-        or i.UserInputType == Enum.UserInputType.Touch
-end
-
-local function IsMove(i)
-    return i.UserInputType == Enum.UserInputType.MouseMovement
-        or i.UserInputType == Enum.UserInputType.Touch
-end
-
-local GlobalConns = {}
-local function UIS(signal, fn)
-    local c = signal:Connect(fn)
-    table.insert(GlobalConns, c)
-    return c
-end
-
-local function MakeDraggable(handle, target)
-    local dragging, startInput, startPos
-    handle.InputBegan:Connect(function(i)
-        if IsPress(i) then
-            dragging, startInput, startPos = true, i.Position, target.Position
-            i.Changed:Connect(function()
-                if i.UserInputState == Enum.UserInputState.End then dragging = false end
-            end)
-        end
-    end)
-    UIS(UserInputService.InputChanged, function(i)
-        if dragging and IsMove(i) then
-            local d = i.Position - startInput
-            target.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y
-            )
-        end
-    end)
-end
-
-local function GetGuiParent()
-    local ok, ui = pcall(function() return gethui and gethui() end)
-    if ok and ui then return ui end
-    ok, ui = pcall(function() return game:GetService("CoreGui") end)
-    if ok and ui then return ui end
-    return Players.LocalPlayer:WaitForChild("PlayerGui")
-end
-
--- ========================= LOGO =========================
--- Logo nhúng sẵn (PNG base64). Cần executor có writefile + getcustomasset.
--- Nếu executor không hỗ trợ thì dùng opts.Logo = "rbxassetid://ID" hoặc tự về thanh trắng nhỏ.
-local LOGO_FILE = "uzex_logo_v2.png"
-local LOGO_B64 = [[
-iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAWfmNhQlgAABZ+anVtYgAAAB5qdW1kYzJwYQARABCAAACqADibcQNjMnBhAAAAFlhqdW1iAAAA
-R2p1bWRjMm1hABEAEIAAAKoAOJtxA3VybjpjMnBhOjhmZWQ0N2I4LTdhZmItNDc1MC1hNDI4LWQxMDY2ZDdiZWM4MQAAAAOTanVtYgAAAClqdW1kYzJhcwAR
-ABCAAACqADibcQNjMnBhLmFzc2VydGlvbnMAAAAAuGp1bWIAAABEanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5pbmdyZWRpZW50LnYzAAAAABhjMnNoSQLh
-yXJ0ToZ28cLCXQERyQAAAGxjYm9yo2lkYzpmb3JtYXRpaW1hZ2UvcG5namluc3RhbmNlSUR4LHhtcDppaWQ6MzNkMjc5ZmYtYzE0Yy00Zjc3LWExZTQtN2Iy
-YWM0ZWRmN2MzbHJlbGF0aW9uc2hpcGhwYXJlbnRPZgAAAeJqdW1iAAAAQWp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuYWN0aW9ucy52MgAAAAAYYzJzaPsm
-X+5oSSPOaCFV++gUa28AAAGZY2JvcqJnYWN0aW9uc4KiZmFjdGlvbmtjMnBhLm9wZW5lZGpwYXJhbWV0ZXJzoWtpbmdyZWRpZW50c4GiY3VybHgtc2VsZiNq
-dW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5pbmdyZWRpZW50LnYzZGhhc2hYINlLO1vOwpmzR1w3pWjqOdPdbjfpwWq+GX5THYbhTc9tpGZhY3Rpb254HWNv
-bS5hbnRocm9waWMuY2xhdWRlLnByb3ZpZGVkanBhcmFtZXRlcnOheB9jb20uYW50aHJvcGljLm9yaWdpbi1jb25maWRlbmNlZ3Vua25vd25rZGVzY3JpcHRp
-b254ZkNsYXVkZSBwcm92aWRlZCB0aGlzIGZpbGUgYXQgdGhlIHJlcXVlc3Qgb2YgYSB1c2VyIGFuZCBtYXkgaGF2ZSBjcmVhdGVkIG9yIG1vZGlmaWVkIHRo
-ZSBmaWxlIGNvbnRlbnRzLm1zb2Z0d2FyZUFnZW50oWRuYW1lZkNsYXVkZXJhbGxBY3Rpb25zSW5jbHVkZWT1AAAAyGp1bWIAAABAanVtZGNib3IAEQAQgAAA
-qgA4m3ETYzJwYS5oYXNoLmRhdGEAAAAAGGMyc2jgPYD1GREGdlX9K61Wl4k7AAAAgGNib3KlY2FsZ2ZzaGEyNTZjcGFkTQAAAAAAAAAAAAAAAABkaGFzaFgg
-u8qEz/eVIsqSVYj0ND0Dv6lmLBw+oARM2JdtBbH4NWxkbmFtZW5qdW1iZiBtYW5pZmVzdGpleGNsdXNpb25zgaJlc3RhcnQYIWZsZW5ndGgZFooAAAI+anVt
-YgAAACdqdW1kYzJjbAARABCAAACqADibcQNjMnBhLmNsYWltLnYyAAAAAg9jYm9ypWNhbGdmc2hhMjU2aXNpZ25hdHVyZXhNc2VsZiNqdW1iZj0vYzJwYS91
-cm46YzJwYTo4ZmVkNDdiOC03YWZiLTQ3NTAtYTQyOC1kMTA2NmQ3YmVjODEvYzJwYS5zaWduYXR1cmVqaW5zdGFuY2VJRHgseG1wOmlpZDowNDZhZjNhNS04
-MjFiLTQxMzktOWEwMC1lNDZjYWQ0YjU5OGFyY3JlYXRlZF9hc3NlcnRpb25zg6JjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3Jl
-ZGllbnQudjNkaGFzaFgg2Us7W87CmbNHXDelaOo5091uN+nBar4ZflMdhuFNz22iY3VybHgqc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5hY3Rp
-b25zLnYyZGhhc2hYINNpeLGAwPhH3mi4lxdjlQGFSuAjKXqU6SSAlVkssnBtomN1cmx4KXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaGFzaC5k
-YXRhZGhhc2hYIIf+H/StsJR3XaaLfCNNQfdTb05vmupSX8gCSs4z3PxBdGNsYWltX2dlbmVyYXRvcl9pbmZvo2RuYW1lb0FudGhyb3BpYyBGaWxlc2d2ZXJz
-aW9uZTEuMC4wa3NwZWNWZXJzaW9uZTIuNC4wAAAQOGp1bWIAAAAoanVtZGMyY3MAEQAQgAAAqgA4m3EDYzJwYS5zaWduYXR1cmUAAAAQCGNib3LShFkCEqIB
-JhghWQIKMIICBjCCAY2gAwIBAgIUQOWgCu7COdC+uIP6BkIFPWdVEwAwCgYIKoZIzj0EAwMwSTEXMBUGA1UEChMOQW50aHJvcGljLCBQQkMxLjAsBgNVBAMT
-JUFudGhyb3BpYyBDb250ZW50IENyZWRlbnRpYWxzIFJvb3QgQ0EwHhcNMjYwODA3MTg0MzU2WhcNMjgwODA2MTk0MzU2WjBEMRcwFQYDVQQKEw5BbnRocm9w
-aWMsIFBCQzEpMCcGA1UEAxMgQW50aHJvcGljIENsYXVkZSBDb250ZW50IFNpZ25pbmcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAASYegpry1AYBRTVNL1C
-pTlbROnY3dey+UrsF9C3phYrATN3ZHf93Mo8RQN0KOUuOn19P4oWNFWe5n2/She9N7eTo1gwVjAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lBA4wDAYKKwYBBAGD
-6F4CATAMBgNVHRMBAf8EAjAAMB8GA1UdIwQYMBaAFM5R4gSBTmRbI/jjxM+aPpzB11zCMAoGCCqGSM49BAMDA2cAMGQCMDFzHRSeAXrSy1WOzkbhPZ6Km2wG
-TmZ/2gK18k8BQGXyqz88Rdrz6CTX9flAnYNVxgIwcF9c3fVhqmJKpi+UhasNUMko69cyX6STPfta3Q8EjyzDjzoyrol46FP6VFHhvUcJoWNwYWRZDZ4AAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-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
-]]
-
-local B64CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-local function B64Decode(data)
-    data = data:gsub("[^%w%+/=]", "")
-    local lookup = {}
-    for i = 1, #B64CHARS do lookup[B64CHARS:sub(i, i)] = i - 1 end
-    local out, n = {}, 0
-    for i = 1, #data, 4 do
-        local a, b = data:sub(i, i), data:sub(i + 1, i + 1)
-        local c, d = data:sub(i + 2, i + 2), data:sub(i + 3, i + 3)
-        local v = (lookup[a] or 0) * 262144 + (lookup[b] or 0) * 4096
-            + (lookup[c] or 0) * 64 + (lookup[d] or 0)
-        local b1, b2, b3 = math.floor(v / 65536) % 256, math.floor(v / 256) % 256, v % 256
-        n = n + 1
-        if c == "=" then
-            out[n] = string.char(b1)
-        elseif d == "=" then
-            out[n] = string.char(b1, b2)
-        else
-            out[n] = string.char(b1, b2, b3)
-        end
-    end
-    return table.concat(out)
-end
-
-local function LoadLogo(custom)
-    if custom and custom ~= "" then return custom end
-    local ok, asset = pcall(function()
-        if not (isfile and isfile(LOGO_FILE)) then
-            writefile(LOGO_FILE, B64Decode(LOGO_B64))
-        end
-        return getcustomasset(LOGO_FILE)
-    end)
-    if ok and asset and asset ~= "" then return asset end
-    return nil
-end
-
--- ========================= BACKGROUND (ảnh tĩnh) =========================
--- Mặc định dùng ảnh nền nhúng sẵn (JPG base64), không cần video hay file ngoài.
--- opts.Background:
---   (bỏ trống)         -> không nền (mặc định)
---   "rbxassetid://ID"  -> ảnh đã upload lên Roblox
---   "ten_file.png"     -> file ảnh trong thư mục workspace của executor
---   false              -> tắt nền ảnh
-local BG_FILE = "uzex_bg_v1.jpg"
-local BG_B64 = ""
-
-local function LoadBackground(src)
-    if type(src) == "string" and src ~= "" then
-        if src:find("^rbxasset") then return src end
-        local ok, asset = pcall(function() return getcustomasset(src) end)
-        return ok and asset or nil
-    end
-    return nil -- mặc định: không dùng ảnh nền
-end
-
--- ========================= WINDOW =========================
-function UzexUI:CreateWindow(opts)
-    opts = opts or {}
-    local guiName = opts.Name or "UzexUI"
-    local parent = GetGuiParent()
-    if UzexUI._current then UzexUI._current:Destroy() end
-    local old = parent:FindFirstChild(guiName)
-    if old then old:Destroy() end
-
-    local Gui = New("ScreenGui", {
-        Name = guiName, ResetOnSpawn = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        IgnoreGuiInset = true, Parent = parent,
-    })
-
-    local Main = New("Frame", {
-        Name = "Main", Size = UDim2.fromOffset(560, 340),
-        Position = UDim2.new(0.5, -280, 0.5, -170),
-        BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
-        ClipsDescendants = true, Parent = Gui,
-    })
-    Corner(Main, 14)
-    New("UIGradient", {
-        Rotation = 90,
-        Color = ColorSequence.new(Color3.fromRGB(22, 22, 22), Color3.fromRGB(9, 9, 9)),
-        Parent = Main,
-    })
-    local mainStroke = Stroke(Main, Color3.new(1, 1, 1), 1)
-    New("UIGradient", {
-        Rotation = 90,
-        Transparency = NumberSequence.new({
-            NumberSequenceKeypoint.new(0, 0.55), NumberSequenceKeypoint.new(1, 0.9),
-        }),
-        Parent = mainStroke,
-    })
-    local introScale = New("UIScale", { Scale = 0.92, Parent = Main })
-    -- Lớp phủ mờ dùng cho hiệu ứng đóng/mở (chỉ hiện trong lúc chạy hiệu ứng)
-    local fade = New("Frame", {
-        Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0),
-        BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 100, Visible = false, Parent = Main,
-    })
-    Corner(fade, 14)
-    Tween(introScale, { Scale = 1 }, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
-
-    -- Ảnh nền (tạo trước để nằm dưới mọi thứ khác)
-    HasBg = false
-    local bgAsset = LoadBackground(opts.Background)
-    if bgAsset then
-        HasBg = true
-        local bg = New("ImageLabel", {
-            Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Image = bgAsset,
-            ScaleType = Enum.ScaleType.Crop, Parent = Main,
-        })
-        Corner(bg, 14)
-        local shade = New("Frame", {
-            Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0),
-            BackgroundTransparency = 0, BorderSizePixel = 0, Parent = Main,
-        })
-        Corner(shade, 14)
-        New("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(0.35, 0.6), Parent = shade })
-    end
-
-    local Top = New("Frame", {
-        Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = Theme.Sidebar,
-        BorderSizePixel = 0, Parent = Main,
-    })
-    Corner(Top, 12)
-    New("Frame", { -- che góc bo dưới của topbar
-        Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12),
-        BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = Top,
-    })
-    New("Frame", {
-        Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1),
-        BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = Top,
-    })
-    local logoAsset = LoadLogo(opts.Logo) -- chỉ dùng cho nút mở menu
-    New("Frame", {
-        Size = UDim2.fromOffset(4, 16), Position = UDim2.fromOffset(14, 12),
-        BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, Parent = Top,
-    }, { New("UICorner", { CornerRadius = UDim.new(1, 0) }) })
-    Label({
-        Text = opts.Title or "UZEX Hub", Font = Enum.Font.GothamBold, TextSize = 15,
-        Position = UDim2.fromOffset(26, 0), Size = UDim2.new(0.5, 0, 1, 0), Parent = Top,
-    })
-    Label({
-        Text = opts.Subtitle or "", TextSize = 12, TextColor3 = Theme.SubText,
-        TextXAlignment = Enum.TextXAlignment.Right,
-        Position = UDim2.new(0.4, 0, 0, 0), Size = UDim2.new(0.6, -84, 1, 0), Parent = Top,
-    })
-
-    local function TopButton(text, xOff, color)
-        local b = New("TextButton", {
-            Text = text, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = Theme.Text,
-            AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, xOff, 0.5, 0),
-            Size = UDim2.fromOffset(26, 26), BackgroundColor3 = Theme.Element,
-            AutoButtonColor = false, Parent = Top,
-        })
-        Corner(b, 7)
-        b.MouseEnter:Connect(function() Tween(b, { BackgroundColor3 = color }) end)
-        b.MouseLeave:Connect(function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
-        return b
-    end
-    local CloseBtn = TopButton("×", -10, Color3.fromRGB(220, 70, 80))
-    local MinBtn = TopButton("–", -42, Theme.ElementHover)
-
-    MakeDraggable(Top, Main)
-
-    -- Sidebar + content
-    local Side = New("ScrollingFrame", {
-        Position = UDim2.fromOffset(0, 40), Size = UDim2.new(0, 138, 1, -86),
-        BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0,
-        ScrollBarThickness = 0, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        Parent = Main,
-    })
-    New("UIListLayout", { Padding = UDim.new(0, 4), Parent = Side })
-    New("UIPadding", {
-        PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8),
-        PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), Parent = Side,
-    })
-
-    local Content = New("Frame", {
-        Position = UDim2.fromOffset(138, 40), Size = UDim2.new(1, -138, 1, -40),
-        BackgroundTransparency = 1, Parent = Main,
-    })
-
-    -- Footer (chỉ avatar)
-    local Footer = New("Frame", {
-        Position = UDim2.new(0, 0, 1, -46), Size = UDim2.fromOffset(138, 46),
-        BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = Main,
-    })
-    New("Frame", {
-        Size = UDim2.new(1, -16, 0, 1), Position = UDim2.fromOffset(8, 0),
-        BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = Footer,
-    })
-    local lp = Players.LocalPlayer
-    local avatar = New("ImageLabel", {
-        Size = UDim2.fromOffset(32, 32), Position = UDim2.fromOffset(10, 8),
-        BackgroundColor3 = Theme.Element, BorderSizePixel = 0, Parent = Footer,
-    })
-    Corner(avatar, 16)
-    task.spawn(function()
-        if not lp then return end
-        local ok, img = pcall(function()
-            return Players:GetUserThumbnailAsync(lp.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-        end)
-        if ok and avatar.Parent then avatar.Image = img end
-    end)
-
-    if HasBg then
-        Top.BackgroundTransparency = 0.35
-        for _, f in ipairs(Top:GetChildren()) do
-            if f:IsA("Frame") and f.BackgroundColor3 == Theme.Sidebar then
-                f.BackgroundTransparency = 0.35
-            end
-        end
-        Side.BackgroundTransparency = 0.45
-        Footer.BackgroundTransparency = 0.45
-    end
-
-    -- Notifications
-    local NotifyHolder = New("Frame", {
-        AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -14, 1, -14),
-        Size = UDim2.fromOffset(250, 300), BackgroundTransparency = 1, Parent = Gui,
-    })
-    New("UIListLayout", {
-        Padding = UDim.new(0, 6), VerticalAlignment = Enum.VerticalAlignment.Bottom,
-        HorizontalAlignment = Enum.HorizontalAlignment.Right,
-        SortOrder = Enum.SortOrder.LayoutOrder, Parent = NotifyHolder,
-    })
-
-    local Window = { Gui = Gui, Main = Main, Tabs = {}, Active = nil, ToggleList = {} }
-    UzexUI._current = Window
-
-    -- Tắt hẳn script UI: tắt các toggle đang bật, ngắt sự kiện, xoá menu + logo
-    function Window:Destroy()
-        if Window.Destroyed then return end
-        Window.Destroyed = true
-        for _, t in ipairs(Window.ToggleList) do
-            if t.get() and t.cb then task.spawn(t.cb, false) end
-        end
-        for _, c in ipairs(GlobalConns) do pcall(function() c:Disconnect() end) end
-        table.clear(GlobalConns)
-        if UzexUI._current == Window then UzexUI._current = nil end
-        Gui:Destroy()
-        if opts.OnClose then task.spawn(opts.OnClose) end
-    end
-
-    function Window:Notify(o)
-        o = o or {}
-        local card = New("Frame", {
-            Size = UDim2.fromOffset(250, 52), BackgroundColor3 = Theme.Bg,
-            BackgroundTransparency = 1, Parent = NotifyHolder,
-        })
-        Corner(card, 9)
-        local st = Stroke(card, Theme.Accent)
-        st.Transparency = 1
-        local bar = New("Frame", {
-            Size = UDim2.new(0, 3, 1, -16), Position = UDim2.fromOffset(0, 8),
-            BackgroundColor3 = Theme.Accent, BackgroundTransparency = 1,
-            BorderSizePixel = 0, Parent = card,
-        })
-        local t1 = Label({
-            Text = o.Title or "Thông báo", Font = Enum.Font.GothamBold, TextSize = 13,
-            Position = UDim2.fromOffset(12, 7), Size = UDim2.new(1, -24, 0, 16),
-            TextTransparency = 1, Parent = card,
-        })
-        local t2 = Label({
-            Text = o.Content or "", TextSize = 12, TextColor3 = Theme.SubText,
-            Position = UDim2.fromOffset(12, 25), Size = UDim2.new(1, -24, 0, 20),
-            TextTruncate = Enum.TextTruncate.AtEnd, TextTransparency = 1, Parent = card,
-        })
-        Tween(card, { BackgroundTransparency = 0.05 })
-        Tween(bar, { BackgroundTransparency = 0 })
-        Tween(st, { Transparency = 0 })
-        Tween(t1, { TextTransparency = 0 })
-        Tween(t2, { TextTransparency = 0 })
-        task.delay(o.Duration or 3, function()
-            if not card.Parent then return end
-            Tween(card, { BackgroundTransparency = 1 })
-            Tween(bar, { BackgroundTransparency = 1 })
-            Tween(st, { Transparency = 1 })
-            Tween(t1, { TextTransparency = 1 })
-            Tween(t2, { TextTransparency = 1 })
-            task.wait(0.2)
-            card:Destroy()
-        end)
-    end
-
-    -- Hiện/ẩn
-    local visible = true
-    local toggleId = 0
-    local EASE_OUT = TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-    local EASE_IN = TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
-    function Window:Toggle(v)
-        if v == nil then v = not visible end
-        if v == visible then return end
-        visible = v
-        toggleId = toggleId + 1
-        local id = toggleId
-        if v then
-            -- MỞ: phóng to bật nhẹ + mờ dần
-            if Window.Fab then Window.Fab.Visible = false end
-            Main.Visible = true
-            introScale.Scale = 0.8
-            fade.BackgroundTransparency = 0.4
-            fade.Visible = true
-            Tween(introScale, { Scale = 1 }, EASE_OUT)
-            Tween(fade, { BackgroundTransparency = 1 }, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out))
-            task.delay(0.22, function()
-                if toggleId == id and not Window.Destroyed then fade.Visible = false end
-            end)
-        else
-            -- ĐÓNG: thu nhỏ nhanh + tối dần, rồi hiện nút logo (bật ra)
-            fade.BackgroundTransparency = 1
-            fade.Visible = true
-            Tween(introScale, { Scale = 0.8 }, EASE_IN)
-            Tween(fade, { BackgroundTransparency = 0.35 }, EASE_IN)
-            task.delay(0.14, function()
-                if toggleId ~= id or Window.Destroyed then return end
-                Main.Visible = false
-                fade.Visible = false
-                fade.BackgroundTransparency = 1
-                if Window.Fab then
-                    Window.Fab.Visible = true
-                    if Window.FabPop then Window.FabPop() end
-                end
-            end)
-        end
-    end
-    MinBtn.MouseButton1Click:Connect(function() Window:Toggle(false) end)
-    CloseBtn.MouseButton1Click:Connect(function()
-        if Window.Destroyed then return end
-        fade.BackgroundTransparency = 1
-        fade.Visible = true
-        Tween(introScale, { Scale = 0.8 }, EASE_IN)
-        Tween(fade, { BackgroundTransparency = 0.35 }, EASE_IN)
-        task.delay(0.14, function() Window:Destroy() end)
-    end)
-
-    Window.ToggleKey = opts.ToggleKey or Enum.KeyCode.RightShift
-    UIS(UserInputService.InputBegan, function(i, gpe)
-        if not gpe and i.KeyCode == Window.ToggleKey then Window:Toggle() end
-    end)
-
-    function Window:SetKeybind(k)
-        if typeof(k) == "EnumItem" then Window.ToggleKey = k end
-    end
-    function Window:SelectTab(tab)
-        if not tab or Window.Active == tab then return end
-        if Window.Active then Window.Active.SetActive(false) end
-        Window.Active = tab
-        tab.SetActive(true)
-    end
-
-    -- Nút logo: chỉ hiện khi menu đang ẩn, bấm để mở menu (kéo được, kéo xong không mở)
-    do
-        local fab
-        if logoAsset then
-            fab = New("ImageButton", {
-                Size = UDim2.fromOffset(34, 34), Position = UDim2.new(0, 14, 0.5, -17),
-                BackgroundTransparency = 1, Image = logoAsset, AutoButtonColor = false,
-                Visible = false, Parent = Gui,
-            })
-            Corner(fab, 9)
-        else
-            fab = New("TextButton", {
-                Text = "U", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = Theme.OnAccent,
-                Size = UDim2.fromOffset(40, 40), Position = UDim2.new(0, 14, 0.5, -20),
-                BackgroundColor3 = Theme.Accent, AutoButtonColor = false,
-                Visible = false, Parent = Gui,
-            })
-            Corner(fab, 20)
-        end
-        Window.Fab = fab
-        MakeDraggable(fab, fab)
-
-        -- Hiệu ứng logo: viền sáng nhấp nháy, bật ra khi hiện, phóng nhẹ khi rê chuột, nhấn thì co lại
-        local fabScale = New("UIScale", { Scale = 1, Parent = fab })
-        local glow = Stroke(fab, Color3.new(1, 1, 1), 1.5)
-        glow.Transparency = 0.8
-        Tween(glow, { Transparency = 0.15 },
-            TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true))
-        function Window.FabPop()
-            fabScale.Scale = 0
-            Tween(fabScale, { Scale = 1 }, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
-        end
-        fab.MouseEnter:Connect(function() Tween(fabScale, { Scale = 1.12 }) end)
-        fab.MouseLeave:Connect(function() Tween(fabScale, { Scale = 1 }) end)
-
-        local downPos
-        fab.InputBegan:Connect(function(i)
-            if IsPress(i) then
-                downPos = i.Position
-                Tween(fabScale, { Scale = 0.88 }, TweenInfo.new(0.08))
-            end
-        end)
-        fab.InputEnded:Connect(function(i)
-            if IsPress(i) then
-                Tween(fabScale, { Scale = 1 }, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
-                if downPos and (i.Position - downPos).Magnitude < 6 then
-                    Window:Toggle(true)
-                end
-            end
-            downPos = nil
-        end)
-    end
-
-    -- ========================= TAB =========================
-    function Window:AddTab(name)
-        local Tab = {}
-
-        local btn = New("TextButton", {
-            Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Theme.Element,
-            BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = Side,
-        })
-        Corner(btn, 8)
-        local bar = New("Frame", {
-            Size = UDim2.fromOffset(3, 14), Position = UDim2.new(0, 4, 0.5, -7),
-            BackgroundColor3 = Theme.Accent, BackgroundTransparency = 1,
-            BorderSizePixel = 0, Parent = btn,
-        })
-        Corner(bar, 2)
-        local txt = Label({
-            Text = name, TextColor3 = Theme.SubText,
-            Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -20, 1, 0), Parent = btn,
-        })
-
-        local Page = New("ScrollingFrame", {
-            Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Visible = false,
-            BorderSizePixel = 0, ScrollBarThickness = 3, ScrollBarImageColor3 = Theme.Accent, ScrollBarImageTransparency = 0.6,
-            CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = Content,
-        })
-        New("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = Page })
-        New("UIPadding", {
-            PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10),
-            PaddingRight = UDim.new(0, 12), PaddingBottom = UDim.new(0, 10), Parent = Page,
-        })
-        Tab.Page = Page
-        Label({
-            Text = name, Font = Enum.Font.GothamBold, TextSize = 18, LayoutOrder = -10,
-            Size = UDim2.new(1, 0, 0, 28), Parent = Page,
-        })
-
-        local function setActive(on)
-            Page.Visible = on
-            Tween(btn, { BackgroundTransparency = on and (HasBg and 0.25 or 0) or 1 })
-            Tween(bar, { BackgroundTransparency = on and 0 or 1 })
-            Tween(txt, { TextColor3 = on and Theme.Text or Theme.SubText })
-        end
-        Tab.SetActive = setActive
-
-        btn.MouseButton1Click:Connect(function()
-            if Window.Active == Tab then return end
-            if Window.Active then Window.Active.SetActive(false) end
-            Window.Active = Tab
-            setActive(true)
-        end)
-        btn.MouseEnter:Connect(function()
-            if Window.Active ~= Tab then Tween(btn, { BackgroundTransparency = 0.55 }) end
-        end)
-        btn.MouseLeave:Connect(function()
-            if Window.Active ~= Tab then Tween(btn, { BackgroundTransparency = 1 }) end
-        end)
-        if not Window.Active then
-            Window.Active = Tab
-            setActive(true)
-        end
-
-        local function Row(h)
-            local r = New("Frame", {
-                Size = UDim2.new(1, 0, 0, h or 36), BackgroundColor3 = Theme.Element,
-                BorderSizePixel = 0, Parent = Page,
-            })
-            Card(r)
-            return r
-        end
-
-        function Tab:AddSection(title)
-            local f = New("Frame", { Size = UDim2.new(1, 0, 0, 20), BackgroundTransparency = 1, Parent = Page })
-            local dot = New("Frame", {
-                Size = UDim2.fromOffset(5, 5), Position = UDim2.new(0, 2, 0.5, -2),
-                BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, Parent = f,
-            })
-            Corner(dot, 3)
-            Label({
-                Text = string.upper(title), Font = Enum.Font.GothamBold, TextSize = 11,
-                TextColor3 = Theme.SubText, Position = UDim2.fromOffset(14, 0),
-                Size = UDim2.new(1, -14, 1, 0), Parent = f,
-            })
-        end
-
-        function Tab:AddLabel(text)
-            local r = Row(30)
-            local l = Label({
-                Text = text, TextColor3 = Theme.SubText, TextSize = 12,
-                Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -24, 1, 0), Parent = r,
-            })
-            return { Set = function(_, t) l.Text = t end }
-        end
-
-        function Tab:AddButton(o)
-            local b = New("TextButton", {
-                Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Element,
-                Text = "", AutoButtonColor = false, Parent = Page,
-            })
-            Card(b)
-            Label({
-                Text = o.Name, Position = UDim2.fromOffset(12, 0),
-                Size = UDim2.new(1, -24, 1, 0), Parent = b,
-            })
-            b.MouseEnter:Connect(function() Tween(b, { BackgroundColor3 = Theme.ElementHover }) end)
-            b.MouseLeave:Connect(function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
-            b.MouseButton1Click:Connect(function()
-                Tween(b, { BackgroundColor3 = Theme.Stroke })
-                task.delay(0.12, function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
-                if o.Callback then task.spawn(o.Callback) end
-            end)
-        end
-
-        function Tab:AddToggle(o)
-            local state = o.Default == true
-            local r = New("TextButton", {
-                Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Element,
-                Text = "", AutoButtonColor = false, Parent = Page,
-            })
-            Card(r)
-            Label({
-                Text = o.Name, Position = UDim2.fromOffset(12, 0),
-                Size = UDim2.new(1, -70, 1, 0), Parent = r,
-            })
-            local pill = New("Frame", {
-                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
-                Size = UDim2.fromOffset(36, 18), BackgroundColor3 = Theme.Stroke,
-                BorderSizePixel = 0, Parent = r,
-            })
-            Corner(pill, 9)
-            local knob = New("Frame", {
-                Size = UDim2.fromOffset(14, 14), Position = UDim2.new(0, 2, 0.5, -7),
-                BackgroundColor3 = Theme.Text, BorderSizePixel = 0, Parent = pill,
-            })
-            Corner(knob, 7)
-
-            local function render(animate)
-                local pos = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
-                local col = state and Theme.Accent or Theme.Stroke
-                local kcol = state and Theme.OnAccent or Theme.Text
-                if animate then
-                    Tween(knob, { Position = pos, BackgroundColor3 = kcol })
-                    Tween(pill, { BackgroundColor3 = col })
-                else
-                    knob.Position, knob.BackgroundColor3, pill.BackgroundColor3 = pos, kcol, col
-                end
-            end
-            render(false)
-
-            local obj = {}
-            table.insert(Window.ToggleList, { get = function() return state end, cb = o.Callback })
-            function obj:Set(v, fire)
-                state = v and true or false
-                render(true)
-                if fire ~= false and o.Callback then task.spawn(o.Callback, state) end
-            end
-            function obj:Get() return state end
-
-            r.MouseButton1Click:Connect(function() obj:Set(not state) end)
-            r.MouseEnter:Connect(function() Tween(r, { BackgroundColor3 = Theme.ElementHover }) end)
-            r.MouseLeave:Connect(function() Tween(r, { BackgroundColor3 = Theme.Element }) end)
-            if state and o.Callback then task.spawn(o.Callback, state) end
-            return obj
-        end
-
-        function Tab:AddSlider(o)
-            local min, max, step = o.Min or 0, o.Max or 100, o.Step or 1
-            local value = math.clamp(o.Default or min, min, max)
-            local suffix = tostring(o.Suffix or "")
-            local function fmt(v)
-                local t = tostring(math.floor(v * 1000 + 0.5) / 1000)
-                return suffix ~= "" and (t .. " " .. suffix) or t
-            end
-            local r = Row(48)
-            Label({
-                Text = o.Name, Position = UDim2.fromOffset(12, 6),
-                Size = UDim2.new(1, -120, 0, 16), Parent = r,
-            })
-            local valLbl = Label({
-                Text = fmt(value), TextColor3 = Theme.SubText, TextSize = 12,
-                TextXAlignment = Enum.TextXAlignment.Right,
-                Position = UDim2.new(1, -112, 0, 6), Size = UDim2.fromOffset(100, 16), Parent = r,
-            })
-            local track = New("Frame", {
-                Position = UDim2.new(0, 12, 1, -16), Size = UDim2.new(1, -24, 0, 6),
-                BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = r,
-            })
-            Corner(track, 3)
-            local fill = New("Frame", {
-                Size = UDim2.new((value - min) / (max - min), 0, 1, 0),
-                BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, Parent = track,
-            })
-            Corner(fill, 3)
-            New("UIGradient", {
-                Color = ColorSequence.new(Color3.fromRGB(150, 150, 150), Color3.fromRGB(255, 255, 255)),
-                Parent = fill,
-            })
-            local knob = New("Frame", {
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.new((value - min) / (max - min), 0, 0.5, 0),
-                Size = UDim2.fromOffset(12, 12), BackgroundColor3 = Theme.Text,
-                BorderSizePixel = 0, ZIndex = 2, Parent = track,
-            })
-            Corner(knob, 6)
-
-            local obj = {}
-            function obj:Set(v, fire)
-                v = math.clamp(math.floor((v - min) / step + 0.5) * step + min, min, max)
-                if v == value then return end
-                value = v
-                valLbl.Text = fmt(v)
-                fill.Size = UDim2.new((v - min) / (max - min), 0, 1, 0)
-                knob.Position = UDim2.new((v - min) / (max - min), 0, 0.5, 0)
-                if fire ~= false and o.Callback then task.spawn(o.Callback, v) end
-            end
-            function obj:Get() return value end
-
-            local dragging = false
-            local function update(x)
-                local a = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
-                obj:Set(min + (max - min) * a)
-            end
-            r.InputBegan:Connect(function(i)
-                if IsPress(i) then
-                    dragging = true
-                    update(i.Position.X)
-                    i.Changed:Connect(function()
-                        if i.UserInputState == Enum.UserInputState.End then dragging = false end
-                    end)
-                end
-            end)
-            UIS(UserInputService.InputChanged, function(i)
-                if dragging and IsMove(i) then update(i.Position.X) end
-            end)
-            return obj
-        end
-
-        -- Dropdown: chọn 1 hoặc nhiều (Multi = true), có cuộn khi nhiều mục, Refresh đổi danh sách
-        function Tab:AddDropdown(o)
-            local options = table.clone(o.Options or {})
-            local multi = o.Multi == true
-            local ITEM_H, MAX_VIS = 28, 6
-            local open = false
-            local selected, current = {}, nil
-
-            local function has(list, v)
-                for _, x in ipairs(list) do if x == v then return true end end
-                return false
-            end
-            local d = o.Default
-            if multi then
-                if type(d) == "table" then
-                    for _, v in ipairs(d) do selected[v] = true end
-                elseif d ~= nil then
-                    selected[d] = true
-                end
-            else
-                if type(d) == "table" then d = d[1] end
-                if d == nil or not has(options, d) then d = options[1] end
-                current = d
-            end
-            local function selectedList()
-                local out = {}
-                for _, v in ipairs(options) do
-                    if selected[v] then table.insert(out, v) end
-                end
-                return out
-            end
-            local function headText()
-                if multi then
-                    local l = selectedList()
-                    if #l == 0 then return "Chọn..." end
-                    local t = {}
-                    for _, v in ipairs(l) do t[#t + 1] = tostring(v) end
-                    return table.concat(t, ", ")
-                end
-                return current ~= nil and tostring(current) or "Chọn..."
-            end
-
-            local holder = New("Frame", {
-                Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Element,
-                BorderSizePixel = 0, ClipsDescendants = true, Parent = Page,
-            })
-            Card(holder)
-            local head = New("TextButton", {
-                Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1,
-                Text = "", Parent = holder,
-            })
-            Label({
-                Text = o.Name, Position = UDim2.fromOffset(12, 0),
-                Size = UDim2.new(0.45, -12, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = head,
-            })
-            local valLbl = Label({
-                Text = headText(), TextColor3 = Theme.SubText, TextSize = 12,
-                TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd,
-                Position = UDim2.new(0.45, 0, 0, 0), Size = UDim2.new(0.55, -28, 1, 0), Parent = head,
-            })
-            local arrow = Label({
-                Text = "▾", TextColor3 = Theme.SubText, TextSize = 14,
-                TextXAlignment = Enum.TextXAlignment.Center,
-                Position = UDim2.new(1, -24, 0, 0), Size = UDim2.fromOffset(20, 36), Parent = head,
-            })
-            local list = New("ScrollingFrame", {
-                Position = UDim2.fromOffset(0, 36), Size = UDim2.new(1, 0, 0, 0),
-                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-                ScrollBarImageColor3 = Theme.Accent, ScrollBarImageTransparency = 0.6,
-                CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = holder,
-            })
-            New("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
-
-            local function listHeight() return math.min(#options, MAX_VIS) * ITEM_H end
-            local function resize()
-                list.Size = UDim2.new(1, 0, 0, listHeight())
-                Tween(holder, { Size = UDim2.new(1, 0, 0, open and (36 + listHeight() + 4) or 36) })
-                Tween(arrow, { Rotation = open and 180 or 0 })
-            end
-
-            local items = {}
-            local function paint()
-                valLbl.Text = headText()
-                for i, it in pairs(items) do
-                    local opt = options[i]
-                    local on = multi and selected[opt] == true or (not multi and opt == current)
-                    it.bar.BackgroundTransparency = on and 0 or 1
-                    it.label.TextColor3 = on and Theme.Text or Theme.SubText
-                end
-            end
-
-            local obj = {}
-            local function fireCb()
-                if o.Callback then
-                    task.spawn(o.Callback, multi and selectedList() or current)
-                end
-            end
-
-            local function rebuild()
-                for _, c in ipairs(list:GetChildren()) do
-                    if c:IsA("TextButton") then c:Destroy() end
-                end
-                table.clear(items)
-                for i, opt in ipairs(options) do
-                    local ob = New("TextButton", {
-                        Size = UDim2.new(1, 0, 0, ITEM_H), BackgroundColor3 = Theme.ElementHover,
-                        BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
-                        LayoutOrder = i, Parent = list,
-                    })
-                    local bar = New("Frame", {
-                        Size = UDim2.fromOffset(3, 14), Position = UDim2.new(0, 4, 0.5, -7),
-                        BackgroundColor3 = Theme.Accent, BackgroundTransparency = 1,
-                        BorderSizePixel = 0, Parent = ob,
-                    })
-                    Corner(bar, 2)
-                    local lbl = Label({
-                        Text = tostring(opt), TextSize = 12, TextColor3 = Theme.SubText,
-                        TextTruncate = Enum.TextTruncate.AtEnd,
-                        Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -24, 1, 0), Parent = ob,
-                    })
-                    items[i] = { bar = bar, label = lbl }
-                    ob.MouseEnter:Connect(function() Tween(ob, { BackgroundTransparency = 0.4 }) end)
-                    ob.MouseLeave:Connect(function() Tween(ob, { BackgroundTransparency = 1 }) end)
-                    ob.MouseButton1Click:Connect(function()
-                        if multi then
-                            selected[opt] = (not selected[opt]) or nil
-                            paint()
-                            fireCb()
-                        else
-                            open = false
-                            resize()
-                            if opt ~= current then
-                                current = opt
-                                paint()
-                                fireCb()
-                            end
-                        end
-                    end)
-                end
-                paint()
-            end
-            rebuild()
-
-            function obj:Get()
-                if multi then return selectedList() end
-                return current
-            end
-            function obj:Set(v, fire)
-                if multi then
-                    selected = {}
-                    if type(v) == "table" then
-                        for _, x in ipairs(v) do selected[x] = true end
-                    end
-                else
-                    current = v
-                end
-                paint()
-                if fire ~= false then fireCb() end
-            end
-            function obj:Refresh(newOptions, keep, fire)
-                options = table.clone(newOptions or {})
-                if multi then
-                    local kept = {}
-                    if keep then
-                        for k in pairs(selected) do
-                            if has(options, k) then kept[k] = true end
-                        end
-                    end
-                    selected = kept
-                elseif not (keep and current ~= nil and has(options, current)) then
-                    current = options[1]
-                end
-                rebuild()
-                if open then resize() end
-                if fire ~= false then fireCb() end
-            end
-
-            head.MouseButton1Click:Connect(function()
-                open = not open
-                resize()
-            end)
-            return obj
-        end
-
-        function Tab:AddInput(o)
-            local r = Row(36)
-            Label({
-                Text = o.Name, Position = UDim2.fromOffset(12, 0),
-                Size = UDim2.new(1, -170, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = r,
-            })
-            local box = New("TextBox", {
-                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
-                Size = UDim2.fromOffset(140, 24), BackgroundColor3 = Theme.ElementHover,
-                BorderSizePixel = 0, Font = Enum.Font.GothamMedium, TextSize = 12,
-                TextColor3 = Theme.Text, PlaceholderText = tostring(o.Placeholder or ""),
-                PlaceholderColor3 = Theme.SubText, ClearTextOnFocus = false,
-                ClipsDescendants = true, TextXAlignment = Enum.TextXAlignment.Left,
-                Text = o.Default ~= nil and tostring(o.Default) or "", Parent = r,
-            })
-            Corner(box, 6)
-            New("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingRight = UDim.new(0, 8), Parent = box })
-            local state = box.Text
-            box.FocusLost:Connect(function()
-                state = box.Text
-                if o.Finished ~= false and o.Callback then task.spawn(o.Callback, state) end
-            end)
-            box:GetPropertyChangedSignal("Text"):Connect(function()
-                if o.Numeric == true then
-                    local cleaned = box.Text:gsub("[^%d%.]", "")
-                    if cleaned ~= box.Text then box.Text = cleaned return end
-                end
-                state = box.Text
-                if o.Finished == false and o.Callback then task.spawn(o.Callback, state) end
-            end)
-            local obj = {}
-            function obj:Get() return state end
-            function obj:Set(v, fire)
-                state = tostring(v)
-                box.Text = state
-                if fire ~= false and o.Finished ~= false and o.Callback then task.spawn(o.Callback, state) end
-            end
-            return obj
-        end
-
-        function Tab:AddKeybind(o)
-            local function keyFrom(v)
-                if typeof(v) == "EnumItem" then return v end
-                local ok, found = pcall(function() return Enum.KeyCode[tostring(v)] end)
-                return (ok and found) or Enum.KeyCode.Unknown
-            end
-            local current = keyFrom(o.Default)
-            local listening, lastFire = false, 0
-            local function keyText()
-                return current == Enum.KeyCode.Unknown and "None" or current.Name
-            end
-            local r = Row(36)
-            Label({
-                Text = o.Name, Position = UDim2.fromOffset(12, 0),
-                Size = UDim2.new(1, -120, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = r,
-            })
-            local btn = New("TextButton", {
-                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -8, 0.5, 0),
-                Size = UDim2.fromOffset(90, 24), BackgroundColor3 = Theme.ElementHover,
-                BorderSizePixel = 0, Font = Enum.Font.GothamBold, TextSize = 12,
-                TextColor3 = Theme.Text, AutoButtonColor = false, Text = keyText(), Parent = r,
-            })
-            Corner(btn, 6)
-            btn.MouseButton1Click:Connect(function()
-                if listening then return end
-                listening = true
-                btn.Text = "..."
-                local c
-                c = UserInputService.InputBegan:Connect(function(i)
-                    if i.UserInputType ~= Enum.UserInputType.Keyboard then return end
-                    c:Disconnect()
-                    listening = false
-                    lastFire = os.clock()
-                    if i.KeyCode ~= Enum.KeyCode.Escape and i.KeyCode ~= current then
-                        current = i.KeyCode
-                        if o.OnChanged then task.spawn(o.OnChanged, current.Name) end
-                    end
-                    btn.Text = keyText()
-                end)
-            end)
-            UIS(UserInputService.InputBegan, function(i)
-                if listening or i.UserInputType ~= Enum.UserInputType.Keyboard then return end
-                if current ~= Enum.KeyCode.Unknown and i.KeyCode == current
-                    and not UserInputService:GetFocusedTextBox() then
-                    local now = os.clock()
-                    if now - lastFire > 0.15 then
-                        lastFire = now
-                        if o.Callback then task.spawn(o.Callback) end
-                    end
-                end
-            end)
-            local obj = {}
-            function obj:Get() return current.Name end
-            function obj:Set(v) current = keyFrom(v); btn.Text = keyText() end
-            return obj
-        end
-
-        function Tab:AddParagraph(o)
-            local r = New("Frame", {
-                Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
-                BackgroundColor3 = Theme.Element, BorderSizePixel = 0, Parent = Page,
-            })
-            Card(r)
-            New("UIPadding", {
-                PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
-                PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), Parent = r,
-            })
-            New("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder, Parent = r })
-            Label({
-                Text = tostring(o.Title or ""), Font = Enum.Font.GothamBold, TextSize = 14,
-                Size = UDim2.new(1, 0, 0, 18), LayoutOrder = 1, Parent = r,
-            })
-            if o.Content and o.Content ~= "" then
-                Label({
-                    Text = tostring(o.Content), TextColor3 = Theme.SubText, TextSize = 12,
-                    TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top,
-                    AutomaticSize = Enum.AutomaticSize.Y, Size = UDim2.new(1, 0, 0, 0),
-                    LayoutOrder = 2, Parent = r,
-                })
-            end
-        end
-
-        function Tab:AddStatGrid(o)
-            local items = o.Items or {}
-            local cols = math.max(1, tonumber(o.Columns) or 3)
-            local rows = math.max(1, math.ceil(#items / cols))
-            local CELL_H, GAP = 46, 6
-            local g = New("Frame", {
-                Size = UDim2.new(1, 0, 0, rows * CELL_H + (rows - 1) * GAP),
-                BackgroundTransparency = 1, Parent = Page,
-            })
-            New("UIGridLayout", {
-                CellSize = UDim2.new(1 / cols, -GAP, 0, CELL_H),
-                CellPadding = UDim2.fromOffset(GAP, GAP),
-                SortOrder = Enum.SortOrder.LayoutOrder, Parent = g,
-            })
-            local vals = {}
-            for i, it in ipairs(items) do
-                local c = New("Frame", {
-                    BackgroundColor3 = Theme.Element, BorderSizePixel = 0, LayoutOrder = i, Parent = g,
-                })
-                Card(c)
-                Label({
-                    Text = tostring(it.Label or it.Key), TextColor3 = Theme.SubText, TextSize = 11,
-                    TextTruncate = Enum.TextTruncate.AtEnd,
-                    Position = UDim2.fromOffset(10, 5), Size = UDim2.new(1, -20, 0, 14), Parent = c,
-                })
-                vals[it.Key] = Label({
-                    Text = tostring(it.Value or "-"), Font = Enum.Font.GothamBold, TextSize = 14,
-                    TextColor3 = it.Color or Theme.Text, TextTruncate = Enum.TextTruncate.AtEnd,
-                    Position = UDim2.fromOffset(10, 22), Size = UDim2.new(1, -20, 0, 18), Parent = c,
-                })
-            end
-            local obj = {}
-            function obj:Set(key, value)
-                local l = vals[key]
-                if l then l.Text = tostring(value) end
-            end
-            return obj
-        end
-
-        return Tab
-    end
-
-    return Window
-end
-
-return UzexUI
-
---[[ ============ VÍ DỤ SỬ DỤNG ============
-
-local UzexUI = loadstring(readfile("UzexUI.lua"))()  -- hoặc loadstring(game:HttpGet("link raw"))()
-
-local Win = UzexUI:CreateWindow({
-    Title = "UZEX Hub",
-    Subtitle = "Heavyweight Fishing",
-    ToggleKey = Enum.KeyCode.RightShift,
-})
-
-local Main = Win:AddTab("Main")
-Main:AddSection("Auto")
-Main:AddToggle({ Name = "Auto Fish", Default = false, Callback = function(v) print("Auto Fish", v) end })
-Main:AddSlider({ Name = "Delay", Min = 0, Max = 5, Step = 0.1, Default = 1, Callback = function(v) print(v) end })
-Main:AddDropdown({ Name = "Mode", Options = { "Legit", "Fast", "Instant" }, Default = "Legit", Callback = print })
-Main:AddButton({ Name = "Teleport", Callback = function() Win:Notify({ Title = "UZEX", Content = "Đã teleport!" }) end })
-
-local Shop = Win:AddTab("Shop")
-Shop:AddSection("Index")
-Shop:AddLabel("Đặt các chức năng Index ở đây")
-
-]]
-
-end)()
-
------------------------------------------------------------------ adapter
 local Library = {}
 Library.Flags = {}
 Library.Assets = { Logo = "", Background = "" }
@@ -1455,6 +89,11 @@ local Assets = Library.Assets
 Library.Language = "English"
 Library._TextObjects = setmetatable({}, { __mode = "k" })
 local EN_TRANSLATIONS = {
+    ["Hop thời tiết"] = "Weather Hop", ["Tự động chuyển server tìm thời tiết"] = "Auto Hop Weather",
+    ["Chọn thời tiết"] = "Select Weather", ["Độ trễ chuyển server"] = "Hop Delay", ["Job ID"] = "Job ID",
+    ["Nhập Job ID..."] = "Enter Job ID...", ["Vào server theo Job ID"] = "Join Job ID",
+    ["Sao chép Job ID hiện tại"] = "Copy Current Job ID",
+    ["Sự kiện giới hạn"] = "Limited Event", ["Tự động đưa cá"] = "Auto Give Fish", ["Chọn cá boss"] = "Select Boss Fish",
     ["UZEX Hub"] = "UZEX Hub", ["Trang chủ"] = "Home", ["Chính"] = "Main",
     ["Dịch chuyển"] = "Teleport", ["Cửa hàng"] = "Shop", ["Nâng cấp"] = "Upgrade",
     ["Khác"] = "Misc", ["Cài đặt"] = "Settings", ["Bán cá"] = "Sell Fish",
@@ -1546,339 +185,1504 @@ function Library:SetLanguage(language)
         end
     end
 end
-EN_TRANSLATIONS["Chọn..."] = "Select..."
-EN_TRANSLATIONS["Thông báo"] = "Notification"
 
+-- The UZEX emblem (same logo as the UI preview), embedded as a PNG so it needs no Roblox upload.
+-- It is written once as a local custom asset.
+-- When local custom assets are unavailable, the library's normal fallback logo is used.
+local EMBEDDED_LOGO = "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"
 
--- Vietnamese-aware upper-casing (string.upper breaks accented letters)
-local function viUpper(s)
-    s = tostring(s or "")
-    if not utf8 or not utf8.len(s) then return string.upper(s) end
+local function decodeBase64(data)
+    local lookup = {}
+    local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    for i = 1, #alphabet do
+        lookup[alphabet:byte(i)] = i - 1
+    end
     local out = {}
-    for _, cp in utf8.codes(s) do
-        local u = cp
-        if cp >= 97 and cp <= 122 then u = cp - 32
-        elseif cp >= 0xE0 and cp <= 0xFE and cp ~= 0xF7 then u = cp - 32
-        elseif cp == 0x103 then u = 0x102
-        elseif cp == 0x111 then u = 0x110
-        elseif cp == 0x129 then u = 0x128
-        elseif cp == 0x169 then u = 0x168
-        elseif cp == 0x1A1 then u = 0x1A0
-        elseif cp == 0x1B0 then u = 0x1AF
-        elseif cp >= 0x1EA1 and cp <= 0x1EF9 and cp % 2 == 1 then u = cp - 1
+    for i = 1, #data, 4 do
+        local a, b, c, d = data:byte(i, i + 3)
+        local n = lookup[a] * 262144 + lookup[b] * 4096 + (lookup[c] or 0) * 64 + (lookup[d] or 0)
+        local x, y, z = n // 65536, n // 256 % 256, n % 256
+        if d ~= 61 then
+            out[#out + 1] = string.char(x, y, z)
+        elseif c ~= 61 then
+            out[#out + 1] = string.char(x, y)
+        else
+            out[#out + 1] = string.char(x)
         end
-        out[#out + 1] = utf8.char(u)
     end
     return table.concat(out)
 end
 
-Library._Sections = setmetatable({}, { __mode = "k" })
-do
-    local baseSetLanguage = Library.SetLanguage
-    function Library:SetLanguage(language)
-        baseSetLanguage(self, language)
-        for label, title in pairs(self._Sections) do
-            if label.Parent then
-                label.Text = viUpper(translateText(title))
-            else
-                self._Sections[label] = nil
-            end
-        end
+pcall(function()
+    if type(writefile) ~= "function" or typeof(getcustomasset) ~= "function" then
+        return
     end
+    local folder = "UZEXHubAssets"
+    if type(isfolder) == "function" and type(makefolder) == "function" and not isfolder(folder) then
+        makefolder(folder)
+    end
+    local path = folder .. "/UZEXHubLogo.png"
+    local png = decodeBase64(EMBEDDED_LOGO)
+    local fresh = type(isfile) == "function" and type(readfile) == "function" and isfile(path) and readfile(path) == png
+    if not fresh then
+        writefile(path, png)
+    end
+    local asset = getcustomasset(path)
+    if type(asset) == "string" and asset ~= "" then
+        Assets.Logo = asset
+    end
+end)
+
+local Theme = {
+    Background = Color3.fromRGB(12, 12, 13),
+    Topbar = Color3.fromRGB(17, 17, 18),
+    Sidebar = Color3.fromRGB(14, 14, 15),
+    Surface = Color3.fromRGB(22, 22, 24),
+    Surface2 = Color3.fromRGB(30, 30, 33),
+    Surface3 = Color3.fromRGB(44, 44, 48),
+    Stroke = Color3.fromRGB(52, 52, 56),
+    Accent = Color3.fromRGB(236, 236, 240),
+    AccentText = Color3.fromRGB(14, 14, 15),
+    Text = Color3.fromRGB(236, 236, 240),
+    Muted = Color3.fromRGB(190, 190, 198),
+    Error = Color3.fromRGB(240, 100, 100),
+    Warning = Color3.fromRGB(240, 176, 108),
+    Success = Color3.fromRGB(130, 215, 160),
+}
+Library.Theme = Theme
+
+local FONT = Enum.Font.GothamMedium
+local FONT_BOLD = Enum.Font.GothamBold
+
+---------------------------------------------------------------- helpers
+local function tween(obj, time, props, style, dir)
+    local t = TweenService:Create(
+        obj,
+        TweenInfo.new(time, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out),
+        props
+    )
+    t:Play()
+    return t
 end
 
--- Auto-translate every text object UZEXUI creates (same behaviour as before)
-local function registerText(inst)
-    if not (inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox")) then return end
-    if Library._TextObjects[inst] then return end
-    local record = { source = tostring(inst.Text or ""), updating = false }
-    Library._TextObjects[inst] = record
-    local first = translateText(record.source)
-    if first ~= inst.Text then
-        record.updating = true
-        inst.Text = first
-        task.defer(function() record.updating = false end)
+local function new(class, props, parent)
+    local inst = Instance.new(class)
+    for key, value in pairs(props or {}) do
+        inst[key] = value
     end
-    inst:GetPropertyChangedSignal("Text"):Connect(function()
-        if record.updating or record.dead then return end
-        record.source = tostring(inst.Text or "")
-        local translated = translateText(record.source)
-        if translated ~= inst.Text then
-            record.updating = true
-            inst.Text = translated
+    if class == "TextLabel" or class == "TextButton" or class == "TextBox" then
+        local record = { source = tostring(inst.Text or ""), updating = false }
+        Library._TextObjects[inst] = record
+        record.updating = true
+        inst.Text = translateText(record.source)
+        task.defer(function()
             record.updating = false
-        end
-    end)
+        end)
+        inst:GetPropertyChangedSignal("Text"):Connect(function()
+            if record.updating then return end
+            record.source = tostring(inst.Text or "")
+            local translated = translateText(record.source)
+            if translated ~= inst.Text then
+                record.updating = true
+                inst.Text = translated
+                record.updating = false
+            end
+        end)
+    end
+    if parent then
+        inst.Parent = parent
+    end
+    return inst
+end
+
+local function round(parent, radius)
+    return new("UICorner", { CornerRadius = UDim.new(0, radius) }, parent)
+end
+
+local function outline(parent, color, thickness, transparency)
+    return new("UIStroke", {
+        Color = color or Theme.Stroke,
+        Thickness = thickness or 1,
+        Transparency = transparency or 0,
+        ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    }, parent)
+end
+
+local function pad(parent, left, top, right, bottom)
+    return new("UIPadding", {
+        PaddingLeft = UDim.new(0, left),
+        PaddingTop = UDim.new(0, top),
+        PaddingRight = UDim.new(0, right),
+        PaddingBottom = UDim.new(0, bottom),
+    }, parent)
+end
+
+local function text(parent, props)
+    local base = {
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        Font = FONT,
+        TextSize = 13,
+        TextColor3 = Theme.Text,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+        Text = "",
+        TextStrokeColor3 = Color3.new(0, 0, 0),
+        TextStrokeTransparency = 0.45,
+    }
+    for key, value in pairs(props) do
+        base[key] = value
+    end
+    return new("TextLabel", base, parent)
+end
+
+local function hitbox(parent, size)
+    return new("TextButton", {
+        Size = size or UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 3,
+    }, parent)
+end
+
+local function safe(fn, ...)
+    if type(fn) ~= "function" then
+        return
+    end
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        warn("[UZEX Hub] callback error: " .. tostring(err))
+    end
 end
 
 local function opt(source)
-    if type(source) == "string" then return { Name = source } end
+    if type(source) == "string" then
+        return { Name = source }
+    end
     return type(source) == "table" and source or {}
 end
-local function titleOf(o) return tostring(o.Name or o.Title or o.Text or "") end
+
+local function titleOf(o)
+    return tostring(o.Name or o.Title or o.Text or "")
+end
+
 local function descOf(o)
     local d = o.Description or o.Desc
     return d ~= nil and tostring(d) or ""
 end
-local function register(o, el)
-    if o.Flag then Library.Flags[o.Flag] = el end
-    return el
-end
-local function pick(...)
-    for i = 1, select("#", ...) do
-        local v = select(i, ...)
-        if v ~= nil then return v end
+
+local function register(o, element)
+    if o.Flag then
+        Library.Flags[o.Flag] = element
     end
-    return nil
+    return element
 end
 
-local function snapshot(tab)
-    local s = {}
-    for _, c in ipairs(tab.Page:GetChildren()) do s[c] = true end
-    return s
-end
-local function newRow(tab, snap)
-    for _, c in ipairs(tab.Page:GetChildren()) do
-        if not snap[c] and c:IsA("GuiObject") then return c end
-    end
+local function isPointer(input)
+    return input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
 end
 
--- UZEXUI rows have no description line, so add one under the title
-local function addDescription(row, desc)
-    if not row or desc == "" then return end
-    local title = row:FindFirstChildWhichIsA("TextLabel")
-    row.AutomaticSize = Enum.AutomaticSize.Y
-    row.Size = UDim2.new(1, 0, 0, 52)
-    Instance.new("UIPadding", row).PaddingBottom = UDim.new(0, 8)
-    local width = title and title.Size.X or UDim.new(1, -24)
-    if title then
-        title.Position = UDim2.fromOffset(12, 7)
-        title.Size = UDim2.new(width.Scale, width.Offset, 0, 18)
-    end
-    local label = Instance.new("TextLabel")
-    label.BackgroundTransparency = 1
-    label.Font = Enum.Font.GothamMedium
-    label.TextSize = 11
-    label.TextColor3 = Color3.fromRGB(140, 140, 140)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.TextYAlignment = Enum.TextYAlignment.Top
-    label.TextWrapped = true
-    label.AutomaticSize = Enum.AutomaticSize.Y
-    label.Position = UDim2.fromOffset(12, 27)
-    label.Size = UDim2.new(width.Scale, width.Offset, 0, 14)
-    label.Text = desc
-    label.Parent = row
+local function isMove(input)
+    return input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
 end
 
-local TabMethods = {}
-
-function TabMethods:CreateSection(name)
-    local o = opt(name)
-    local title = titleOf(o)
-    local snap = snapshot(self)
-    self:AddSection(title)
-    local row = newRow(self, snap)
-    local label = row and row:FindFirstChildWhichIsA("TextLabel")
-    if label then
-        local record = Library._TextObjects[label]
-        if record then record.dead = true end
-        Library._TextObjects[label] = nil
-        Library._Sections[label] = title
-        label.Text = viUpper(translateText(title))
-    end
-    return register(o, {})
+local function attachHover(frame, button)
+    button.MouseEnter:Connect(function()
+        tween(frame, 0.15, { BackgroundColor3 = Theme.Surface2 })
+    end)
+    button.MouseLeave:Connect(function()
+        tween(frame, 0.2, { BackgroundColor3 = Theme.Surface })
+    end)
 end
 
-function TabMethods:CreateParagraph(o)
-    o = opt(o)
-    local snap = snapshot(self)
-    self:AddParagraph({
-        Title = tostring(pick(o.Title, o.Name, "")),
-        Content = tostring(pick(o.Content, o.Description, o.Desc, "")),
-    })
-    local row = newRow(self, snap)
-    local el = {}
-    function el:Set(data)
-        data = type(data) == "table" and data or { Content = tostring(data) }
-        local labels = {}
-        if row then
-            for _, c in ipairs(row:GetChildren()) do
-                if c:IsA("TextLabel") then labels[#labels + 1] = c end
-            end
-            table.sort(labels, function(a, b) return a.LayoutOrder < b.LayoutOrder end)
+local function contains(list, value)
+    for _, v in ipairs(list) do
+        if v == value then
+            return true
         end
-        if data.Title and labels[1] then labels[1].Text = tostring(data.Title) end
-        if data.Content and labels[2] then labels[2].Text = tostring(data.Content) end
     end
-    return register(o, el)
+    return false
 end
 
-function TabMethods:CreateStatGrid(o)
-    o = opt(o)
-    local obj = self:AddStatGrid({ Items = o.Items or {}, Columns = o.Columns })
-    return register(o, obj)
-end
-
-function TabMethods:CreateButton(o)
-    o = opt(o)
-    local snap = snapshot(self)
-    self:AddButton({ Name = titleOf(o), Callback = o.Callback })
-    addDescription(newRow(self, snap), descOf(o))
-    return register(o, {})
-end
-
-function TabMethods:CreateToggle(o)
-    o = opt(o)
-    local snap = snapshot(self)
-    local inner = self:AddToggle({
-        Name = titleOf(o),
-        Default = pick(o.CurrentValue, o.Default, o.Value) == true,
-        Callback = o.Callback,
-    })
-    addDescription(newRow(self, snap), descOf(o))
-    local el = {}
-    function el:Get() return inner:Get() end
-    function el:Set(value, quiet)
-        value = value == true
-        if value == inner:Get() then return end
-        inner:Set(value, not quiet)
+local function keyFrom(value)
+    if typeof(value) == "EnumItem" then
+        return value
     end
-    return register(o, el)
+    local ok, found = pcall(function()
+        return Enum.KeyCode[tostring(value)]
+    end)
+    return (ok and found) or Enum.KeyCode.Unknown
 end
 
-function TabMethods:CreateSlider(o)
-    o = opt(o)
-    local min = pick(o.Min, o.Range and o.Range[1], 0)
-    local max = pick(o.Max, o.Range and o.Range[2], 100)
-    local inner = self:AddSlider({
-        Name = titleOf(o),
-        Min = min,
-        Max = max,
-        Step = pick(o.Increment, o.Step, 1),
-        Default = tonumber(pick(o.CurrentValue, o.Default, o.Value)) or min,
-        Suffix = pick(o.Suffix, o.Unit, ""),
-        Callback = o.Callback,
-    })
-    local el = {}
-    function el:Get() return inner:Get() end
-    function el:Set(value, quiet)
-        inner:Set(tonumber(value) or inner:Get(), not quiet)
+---------------------------------------------------------------- gui root
+local gui
+
+local function getGui()
+    if gui and gui.Parent then
+        return gui
     end
-    return register(o, el)
-end
-
-function TabMethods:CreateDropdown(o)
-    o = opt(o)
-    local inner = self:AddDropdown({
-        Name = titleOf(o),
-        Options = pick(o.Options, o.Values, o.Items, {}),
-        Default = pick(o.CurrentOption, o.Default),
-        Multi = (o.MultipleOptions or o.Multi) == true,
-        Callback = o.Callback,
+    gui = new("ScreenGui", {
+        Name = "UZEXHubUI",
+        ResetOnSpawn = false,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        DisplayOrder = 9999,
+        IgnoreGuiInset = true,
     })
-    local el = {}
-    function el:Get() return inner:Get() end
-    function el:Set(value, quiet) inner:Set(value, not quiet) end
-    function el:Refresh(newOptions, keepSelection, quiet)
-        inner:Refresh(newOptions, keepSelection, not quiet)
+    pcall(function()
+        gui.Parent = (type(gethui) == "function" and gethui()) or CoreGui
+    end)
+    if not gui.Parent then
+        gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
     end
-    return register(o, el)
-end
 
-function TabMethods:CreateInput(o)
-    o = opt(o)
-    local default = pick(o.CurrentValue, o.Default, o.Value)
-    local inner = self:AddInput({
-        Name = titleOf(o),
-        Default = default ~= nil and tostring(default) or nil,
-        Placeholder = pick(o.PlaceholderText, o.Placeholder, ""),
-        Numeric = o.Numeric,
-        Finished = o.Finished,
-        Callback = o.Callback,
-    })
-    local el = {}
-    function el:Get() return inner:Get() end
-    function el:Set(value, quiet) inner:Set(value, not quiet) end
-    return register(o, el)
-end
-
-function TabMethods:CreateKeybind(o)
-    o = opt(o)
-    local inner = self:AddKeybind({
-        Name = titleOf(o),
-        Default = pick(o.CurrentKeybind, o.Default, o.Value),
-        OnChanged = o.OnChanged,
-        Callback = o.Callback,
-    })
-    local el = {}
-    function el:Get() return inner:Get() end
-    function el:Set(value) inner:Set(value) end
-    return register(o, el)
-end
-
-function TabMethods:CreateLabel(text)
-    local o = opt(text)
-    return register(o, self:AddLabel(titleOf(o)))
+    local holder = new("Frame", {
+        Name = "Thông báo",
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, -14, 0, 14),
+        Size = UDim2.fromOffset(270, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+    }, gui)
+    new("UIListLayout", {
+        Padding = UDim.new(0, 8),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        HorizontalAlignment = Enum.HorizontalAlignment.Right,
+    }, holder)
+    return gui
 end
 
 function Library:Notify(o)
-    if Library.NotificationsEnabled == false then return end
-    local window = Library._window
-    if not window or window.Destroyed then return end
-    if type(o) ~= "table" then o = { Content = tostring(o) } end
-    pcall(window.Notify, window, {
-        Title = tostring(o.Title or "Thông báo"),
-        Content = tostring(o.Content or o.Text or ""),
-        Duration = o.Duration or 3,
+    if Library.NotificationsEnabled == false then
+        return
+    end
+    o = opt(o)
+    local holder = getGui():FindFirstChild("Notifications")
+    if not holder then
+        return
+    end
+    local kind = string.lower(tostring(o.Type or ""))
+    local color = Theme.Text
+    if kind == "error" then
+        color = Theme.Error
+    elseif kind == "warning" then
+        color = Theme.Warning
+    elseif kind == "success" then
+        color = Theme.Success
+    end
+
+    local wrap = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+    }, holder)
+    local card = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        Position = UDim2.new(1.2, 0, 0, 0),
+        BackgroundColor3 = Theme.Surface,
+        BorderSizePixel = 0,
+    }, wrap)
+    round(card, 10)
+    outline(card, Theme.Stroke, 1, 0.2)
+    pad(card, 14, 10, 12, 10)
+    new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, card)
+
+    text(card, {
+        Size = UDim2.new(1, 0, 0, 16),
+        Font = FONT_BOLD,
+        TextSize = 13,
+        TextColor3 = color,
+        Text = tostring(o.Title or "UZEX Hub"),
+        LayoutOrder = 1,
     })
+    local content = tostring(o.Content or o.Text or "")
+    if content ~= "" then
+        text(card, {
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            TextSize = 12,
+            TextColor3 = Theme.Muted,
+            TextWrapped = true,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            Text = content,
+            LayoutOrder = 2,
+        })
+    end
+
+    tween(card, 0.4, { Position = UDim2.new(0, 0, 0, 0) })
+    task.delay(tonumber(o.Duration) or 4, function()
+        if card.Parent then
+            tween(card, 0.3, { Position = UDim2.new(1.2, 0, 0, 0) }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+            task.delay(0.35, function()
+                wrap:Destroy()
+            end)
+        end
+    end)
 end
 
-function Library:CreateWindow(o)
-    o = opt(o)
-    local window = UzexUI:CreateWindow({
-        Name = "UZEXHubUI",
-        Title = tostring(o.Name or o.Title or "UZEX Hub"),
-        Subtitle = tostring(o.Subtitle or ""),
-        ToggleKey = (typeof(o.ToggleUIKeybind) == "EnumItem" and o.ToggleUIKeybind)
-            or (typeof(o.ToggleKey) == "EnumItem" and o.ToggleKey) or nil,
-    })
-    Library._window = window
+---------------------------------------------------------------- tab / elements
+local Tab = {}
+Tab.__index = Tab
 
-    -- Match the old menu: 600x390 window, 150px sidebar (shrinks to fit small screens)
-    pcall(function()
-        local main = window.Main
-        local W, H, SIDE = 600, 390, 150
-        local cam = workspace.CurrentCamera
-        if cam then
-            W = math.floor(math.min(W, cam.ViewportSize.X * 0.94))
-            H = math.floor(math.min(H, cam.ViewportSize.Y * 0.88))
+function Tab:_add(frame)
+    self._n = self._n + 1
+    frame.LayoutOrder = self._n
+    frame.Parent = self.Page
+    return frame
+end
+
+function Tab:_row(height)
+    local f = new("Frame", {
+        Size = UDim2.new(1, 0, 0, height),
+        BackgroundColor3 = Theme.Surface,
+        BackgroundTransparency = (Assets.Background ~= "") and 0.8 or 0,
+        BorderSizePixel = 0,
+    })
+    round(f, 8)
+    outline(f, Theme.Stroke, 1, 0.4)
+    return self:_add(f)
+end
+
+function Tab:CreateSection(name)
+    local o = opt(name)
+    local holder = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 26),
+        BackgroundTransparency = 1,
+    })
+    text(holder, {
+        Size = UDim2.new(1, -4, 1, -2),
+        Position = UDim2.new(0, 4, 0, 4),
+        Font = FONT_BOLD,
+        TextSize = 11,
+        TextColor3 = Theme.Muted,
+        TextYAlignment = Enum.TextYAlignment.Bottom,
+        Text = string.upper(titleOf(o)),
+    })
+    self:_add(holder)
+end
+
+function Tab:CreateParagraph(o)
+    o = opt(o)
+    local f = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = Theme.Surface,
+        BackgroundTransparency = (Assets.Background ~= "") and 0.8 or 0,
+        BorderSizePixel = 0,
+    })
+    round(f, 8)
+    outline(f, Theme.Stroke, 1, 0.4)
+    pad(f, 14, 10, 14, 10)
+    new("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, f)
+    local title = tostring(o.Title or o.Name or "")
+    if title ~= "" then
+        text(f, {
+            Size = UDim2.new(1, 0, 0, 16),
+            Font = FONT_BOLD,
+            Text = title,
+            LayoutOrder = 1,
+        })
+    end
+    local content = tostring(o.Content or o.Text or descOf(o))
+    if content ~= "" then
+        text(f, {
+            Size = UDim2.new(1, 0, 0, 0),
+            AutomaticSize = Enum.AutomaticSize.Y,
+            TextSize = 12,
+            TextColor3 = Theme.Muted,
+            TextWrapped = true,
+            TextYAlignment = Enum.TextYAlignment.Top,
+            Text = content,
+            LayoutOrder = 2,
+        })
+    end
+    self:_add(f)
+    return register(o, {})
+end
+Tab.CreateLabel = Tab.CreateParagraph
+
+function Tab:CreateStatGrid(o)
+    o = opt(o)
+    local items = o.Items or {}
+    local columns = math.max(1, tonumber(o.Columns) or 3)
+    local grid = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+    })
+    new("UIGridLayout", {
+        CellSize = UDim2.new(1 / columns, -math.ceil(8 * (columns - 1) / columns), 0, 62),
+        CellPadding = UDim2.fromOffset(8, 8),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, grid)
+
+    local valueLabels = {}
+    for index, item in ipairs(items) do
+        local card = new("Frame", {
+            BackgroundColor3 = Theme.Surface,
+        BackgroundTransparency = (Assets.Background ~= "") and 0.8 or 0,
+            BorderSizePixel = 0,
+            LayoutOrder = index,
+        }, grid)
+        round(card, 10)
+        outline(card, Theme.Stroke, 1, 0.4)
+        local bar = new("Frame", {
+            Position = UDim2.new(0, 12, 0, 10),
+            Size = UDim2.fromOffset(18, 2),
+            BackgroundColor3 = item.Color or Theme.Accent,
+            BorderSizePixel = 0,
+        }, card)
+        round(bar, 1)
+        valueLabels[item.Key] = text(card, {
+            Position = UDim2.new(0, 12, 0, 18),
+            Size = UDim2.new(1, -24, 0, 22),
+            Font = FONT_BOLD,
+            TextSize = 15,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            Text = tostring(item.Value or "-"),
+        })
+        text(card, {
+            Position = UDim2.new(0, 12, 0, 40),
+            Size = UDim2.new(1, -24, 0, 14),
+            TextSize = 10,
+            TextColor3 = Theme.Muted,
+            Text = string.upper(tostring(item.Label or item.Key)),
+        })
+    end
+    self:_add(grid)
+
+    local el = {}
+    function el:Set(key, value)
+        local label = valueLabels[key]
+        if label then
+            local s = tostring(value)
+            if label.Text ~= s then
+                label.Text = s
+            end
         end
-        main.Size = UDim2.fromOffset(W, H)
-        main.Position = UDim2.new(0.5, -W // 2, 0.5, -H // 2)
-        for _, c in ipairs(main:GetChildren()) do
-            if c:IsA("ScrollingFrame") then
-                c.Size = UDim2.new(0, SIDE, 1, -86)
-            elseif c:IsA("Frame") and c.Position.X.Offset == 138 and c.Position.Y.Offset == 40 then
-                c.Position = UDim2.fromOffset(SIDE, 40)
-                c.Size = UDim2.new(1, -SIDE, 1, -40)
-            elseif c:IsA("Frame") and c.Position.Y.Scale == 1 and c.Position.Y.Offset == -46 then
-                c.Size = UDim2.fromOffset(SIDE, 46)
+    end
+    return register(o, el)
+end
+
+function Tab:CreateButton(o)
+    o = opt(o)
+    local desc = descOf(o)
+    local f = self:_row(desc ~= "" and 52 or 40)
+    text(f, {
+        Size = UDim2.new(1, -50, 0, desc ~= "" and 18 or 40),
+        Position = UDim2.new(0, 14, 0, desc ~= "" and 8 or 0),
+        Text = titleOf(o),
+    })
+    if desc ~= "" then
+        text(f, {
+            Size = UDim2.new(1, -50, 0, 16),
+            Position = UDim2.new(0, 14, 0, 27),
+            TextSize = 11,
+            TextColor3 = Theme.Muted,
+            Text = desc,
+        })
+    end
+    text(f, {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -14, 0.5, 0),
+        Size = UDim2.fromOffset(14, 20),
+        Font = FONT_BOLD,
+        TextSize = 16,
+        TextColor3 = Theme.Muted,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Text = ">",
+    })
+    local hit = hitbox(f)
+    attachHover(f, hit)
+    hit.MouseButton1Down:Connect(function()
+        tween(f, 0.08, { BackgroundColor3 = Theme.Surface3 })
+    end)
+    hit.MouseButton1Up:Connect(function()
+        tween(f, 0.2, { BackgroundColor3 = Theme.Surface2 })
+    end)
+    hit.MouseButton1Click:Connect(function()
+        safe(o.Callback)
+    end)
+    return register(o, {})
+end
+
+function Tab:CreateToggle(o)
+    o = opt(o)
+    local desc = descOf(o)
+    local f = self:_row(desc ~= "" and 52 or 42)
+    text(f, {
+        Size = UDim2.new(1, -80, 0, desc ~= "" and 18 or 42),
+        Position = UDim2.new(0, 14, 0, desc ~= "" and 8 or 0),
+        Text = titleOf(o),
+    })
+    if desc ~= "" then
+        text(f, {
+            Size = UDim2.new(1, -80, 0, 16),
+            Position = UDim2.new(0, 14, 0, 27),
+            TextSize = 11,
+            TextColor3 = Theme.Muted,
+            Text = desc,
+        })
+    end
+    local pill = new("Frame", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -14, 0.5, 0),
+        Size = UDim2.fromOffset(40, 22),
+        BackgroundColor3 = Theme.Surface3,
+        BorderSizePixel = 0,
+    }, f)
+    round(pill, 11)
+    local knob = new("Frame", {
+        Position = UDim2.new(0, 3, 0.5, -8),
+        Size = UDim2.fromOffset(16, 16),
+        BackgroundColor3 = Theme.Muted,
+        BorderSizePixel = 0,
+    }, pill)
+    round(knob, 8)
+
+    local default = (o.CurrentValue or o.Default or o.Value) == true
+    local state = default
+
+    local function paint(instant)
+        local pillColor = state and Theme.Accent or Theme.Surface3
+        local knobColor = state and Theme.AccentText or Theme.Muted
+        local knobPos = state and UDim2.new(0, 21, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
+        if instant then
+            pill.BackgroundColor3 = pillColor
+            knob.BackgroundColor3 = knobColor
+            knob.Position = knobPos
+        else
+            tween(pill, 0.2, { BackgroundColor3 = pillColor })
+            tween(knob, 0.2, { BackgroundColor3 = knobColor, Position = knobPos })
+        end
+    end
+
+    local function set(value, quiet)
+        value = value == true
+        if value == state then
+            return
+        end
+        state = value
+        paint(false)
+        if not quiet then
+            safe(o.Callback, value)
+        end
+    end
+
+    local hit = hitbox(f)
+    attachHover(f, hit)
+    hit.MouseButton1Click:Connect(function()
+        set(not state)
+    end)
+    paint(true)
+
+    local el = {}
+    function el:Get()
+        return state
+    end
+    function el:Set(value, quiet)
+        set(value, quiet)
+    end
+    register(o, el)
+    if default then
+        safe(o.Callback, true)
+    end
+    return el
+end
+
+function Tab:CreateSlider(o)
+    o = opt(o)
+    local min = o.Min or (o.Range and o.Range[1]) or 0
+    local max = o.Max or (o.Range and o.Range[2]) or 100
+    local inc = o.Increment or o.Step or 1
+    local frac = tostring(inc):match("%.(%d+)")
+    local decimals = frac and #frac or 0
+    local suffix = tostring(o.Suffix or o.Unit or "")
+    local state = math.clamp(tonumber(o.CurrentValue or o.Default or o.Value) or min, min, max)
+
+    local f = self:_row(56)
+    text(f, {
+        Size = UDim2.new(1, -110, 0, 18),
+        Position = UDim2.new(0, 14, 0, 8),
+        Text = titleOf(o),
+    })
+    local valueLabel = text(f, {
+        AnchorPoint = Vector2.new(1, 0),
+        Size = UDim2.fromOffset(90, 18),
+        Position = UDim2.new(1, -14, 0, 8),
+        TextSize = 12,
+        TextColor3 = Theme.Muted,
+        TextXAlignment = Enum.TextXAlignment.Right,
+    })
+    local track = new("Frame", {
+        Position = UDim2.new(0, 14, 0, 36),
+        Size = UDim2.new(1, -28, 0, 6),
+        BackgroundColor3 = Theme.Surface3,
+        BorderSizePixel = 0,
+    }, f)
+    round(track, 3)
+    local fill = new("Frame", {
+        Size = UDim2.new(0, 0, 1, 0),
+        BackgroundColor3 = Theme.Accent,
+        BorderSizePixel = 0,
+    }, track)
+    round(fill, 3)
+    local knob = new("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(1, 0, 0.5, 0),
+        Size = UDim2.fromOffset(12, 12),
+        BackgroundColor3 = Theme.Accent,
+        BorderSizePixel = 0,
+    }, fill)
+    round(knob, 6)
+
+    local function fmt(value)
+        local s = string.format("%." .. decimals .. "f", value)
+        return suffix ~= "" and (s .. " " .. suffix) or s
+    end
+
+    local function ratio(value)
+        if max == min then
+            return 0
+        end
+        return (value - min) / (max - min)
+    end
+
+    local function paint(animate)
+        valueLabel.Text = fmt(state)
+        local size = UDim2.new(ratio(state), 0, 1, 0)
+        if animate then
+            tween(fill, 0.15, { Size = size })
+        else
+            fill.Size = size
+        end
+    end
+
+    local function apply(value, animate, quiet)
+        value = math.clamp(math.floor(value / inc + 0.5) * inc, min, max)
+        if value == state then
+            return
+        end
+        state = value
+        paint(animate)
+        if not quiet then
+            safe(o.Callback, value)
+        end
+    end
+
+    local dragging = false
+    local hit = new("TextButton", {
+        Position = UDim2.new(0, 8, 0, 26),
+        Size = UDim2.new(1, -16, 0, 26),
+        BackgroundTransparency = 1,
+        Text = "",
+        AutoButtonColor = false,
+        ZIndex = 3,
+    }, f)
+
+    local function fromX(x)
+        local width = math.max(track.AbsoluteSize.X, 1)
+        local p = math.clamp((x - track.AbsolutePosition.X) / width, 0, 1)
+        apply(min + (max - min) * p, false)
+    end
+
+    hit.InputBegan:Connect(function(input)
+        if isPointer(input) then
+            dragging = true
+            self.Page.ScrollingEnabled = false
+            fromX(input.Position.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and isMove(input) then
+            fromX(input.Position.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if dragging and isPointer(input) then
+            dragging = false
+            self.Page.ScrollingEnabled = true
+        end
+    end)
+    paint(false)
+
+    local el = {}
+    function el:Get()
+        return state
+    end
+    function el:Set(value, quiet)
+        apply(tonumber(value) or state, true, quiet)
+    end
+    return register(o, el)
+end
+
+function Tab:_dropdown(o, multi)
+    local options = table.clone(o.Options or o.Values or o.Items or {})
+    local current = o.CurrentOption
+    if current == nil then
+        current = o.Default
+    end
+
+    local state
+    local selected = {}
+    if multi then
+        if type(current) == "table" then
+            for _, v in ipairs(current) do
+                selected[v] = true
+            end
+        end
+    else
+        if type(current) == "table" then
+            current = current[1]
+        end
+        if current == nil or not contains(options, current) then
+            current = options[1]
+        end
+        state = current
+    end
+
+    local f = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 42),
+        BackgroundColor3 = Theme.Surface,
+        BackgroundTransparency = (Assets.Background ~= "") and 0.8 or 0,
+        BorderSizePixel = 0,
+        ClipsDescendants = true,
+    })
+    round(f, 8)
+    outline(f, Theme.Stroke, 1, 0.4)
+    self:_add(f)
+
+    text(f, {
+        Size = UDim2.new(0.5, -14, 0, 42),
+        Position = UDim2.new(0, 14, 0, 0),
+        Text = titleOf(o),
+    })
+    local valueLabel = text(f, {
+        Size = UDim2.new(0.5, -44, 0, 42),
+        Position = UDim2.new(0.5, 0, 0, 0),
+        TextSize = 12,
+        TextColor3 = Theme.Muted,
+        TextXAlignment = Enum.TextXAlignment.Right,
+        TextTruncate = Enum.TextTruncate.AtEnd,
+    })
+    local chevron = text(f, {
+        AnchorPoint = Vector2.new(0.5, 0),
+        Position = UDim2.new(1, -20, 0, 0),
+        Size = UDim2.fromOffset(14, 42),
+        Font = FONT_BOLD,
+        TextSize = 15,
+        TextColor3 = Theme.Muted,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        Text = ">",
+    })
+    local header = hitbox(f, UDim2.new(1, 0, 0, 42))
+    attachHover(f, header)
+
+    local list = new("ScrollingFrame", {
+        Position = UDim2.new(0, 8, 0, 46),
+        Size = UDim2.new(1, -16, 0, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 2,
+        ScrollBarImageColor3 = Theme.Surface3,
+        CanvasSize = UDim2.new(),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    }, f)
+    new("UIListLayout", { Padding = UDim.new(0, 2), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+
+    local open = false
+    local buttons = {}
+
+    local function selectedList()
+        local result = {}
+        for _, v in ipairs(options) do
+            if selected[v] then
+                result[#result + 1] = v
+            end
+        end
+        return result
+    end
+
+    local function listHeight()
+        local n = #options
+        if n == 0 then
+            return 0
+        end
+        return math.min(n * 30 + (n - 1) * 2, 150)
+    end
+
+    local function paintHeader()
+        local shown
+        if multi then
+            local n = #selectedList()
+            shown = n > 0 and (n .. " selected") or "None"
+        else
+            shown = state ~= nil and tostring(state) or "None"
+        end
+        -- Keep the translation record in sync, otherwise SetLanguage rewrites the
+        -- header with the stale source text (e.g. stays "English" after picking Tiếng Việt).
+        local record = Library._TextObjects[valueLabel]
+        if record then
+            record.source = shown
+        end
+        valueLabel.Text = shown
+    end
+
+    local function paintOptions()
+        for option, parts in pairs(buttons) do
+            local on = multi and selected[option] or (not multi and option == state)
+            tween(parts.label, 0.15, { TextColor3 = on and Theme.Text or Theme.Muted })
+            tween(parts.button, 0.15, { BackgroundTransparency = (on and not multi) and 0.5 or 1 })
+            if parts.box then
+                tween(parts.box, 0.15, { BackgroundColor3 = on and Theme.Accent or Theme.Surface3 })
+            end
+        end
+    end
+
+    local function resize()
+        local height = listHeight()
+        list.Size = UDim2.new(1, -16, 0, height)
+        tween(f, 0.22, { Size = UDim2.new(1, 0, 0, open and (46 + height + 8) or 42) })
+        tween(chevron, 0.22, { Rotation = open and 90 or 0 })
+    end
+
+    local function rebuild()
+        for _, child in ipairs(list:GetChildren()) do
+            if child:IsA("TextButton") then
+                child:Destroy()
+            end
+        end
+        buttons = {}
+        for index, option in ipairs(options) do
+            local b = new("TextButton", {
+                Size = UDim2.new(1, 0, 0, 30),
+                BackgroundColor3 = Theme.Surface3,
+                BackgroundTransparency = 1,
+                AutoButtonColor = false,
+                Text = "",
+                LayoutOrder = index,
+            }, list)
+            round(b, 6)
+            local label = text(b, {
+                Size = UDim2.new(1, -40, 1, 0),
+                Position = UDim2.new(0, 10, 0, 0),
+                TextSize = 12,
+                TextColor3 = Theme.Muted,
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Text = tostring(option),
+            })
+            local box
+            if multi then
+                box = new("Frame", {
+                    AnchorPoint = Vector2.new(1, 0.5),
+                    Position = UDim2.new(1, -8, 0.5, 0),
+                    Size = UDim2.fromOffset(16, 16),
+                    BackgroundColor3 = Theme.Surface3,
+                    BorderSizePixel = 0,
+                }, b)
+                round(box, 4)
+            end
+            buttons[option] = { button = b, label = label, box = box }
+            b.MouseEnter:Connect(function()
+                if multi or option ~= state then
+                    tween(b, 0.12, { BackgroundTransparency = 0.6 })
+                end
+            end)
+            b.MouseLeave:Connect(function()
+                local on = multi and selected[option] or (not multi and option == state)
+                tween(b, 0.15, { BackgroundTransparency = (on and not multi) and 0.5 or 1 })
+            end)
+            b.MouseButton1Click:Connect(function()
+                if multi then
+                    selected[option] = (not selected[option]) or nil
+                    paintHeader()
+                    paintOptions()
+                    safe(o.Callback, selectedList())
+                else
+                    open = false
+                    resize()
+                    if option ~= state then
+                        state = option
+                        paintHeader()
+                        paintOptions()
+                        safe(o.Callback, option)
+                    end
+                end
+            end)
+        end
+        paintOptions()
+    end
+
+    header.MouseButton1Click:Connect(function()
+        open = not open
+        resize()
+    end)
+
+    rebuild()
+    paintHeader()
+
+    local el = {}
+    function el:Get()
+        if multi then
+            return selectedList()
+        end
+        return state
+    end
+    function el:Set(value, quiet)
+        if multi then
+            selected = {}
+            if type(value) == "table" then
+                for _, v in ipairs(value) do
+                    selected[v] = true
+                end
+            end
+            paintHeader()
+            paintOptions()
+            if not quiet then
+                safe(o.Callback, selectedList())
+            end
+        else
+            state = value
+            paintHeader()
+            paintOptions()
+            if not quiet then
+                safe(o.Callback, value)
+            end
+        end
+    end
+    function el:Refresh(newOptions, keepSelection, quiet)
+        options = table.clone(newOptions or {})
+        if multi then
+            local kept = {}
+            if keepSelection then
+                for key in pairs(selected) do
+                    if contains(options, key) then
+                        kept[key] = true
+                    end
+                end
+            end
+            selected = kept
+        elseif not (keepSelection and state ~= nil and contains(options, state)) then
+            state = options[1]
+        end
+        rebuild()
+        paintHeader()
+        if open then
+            resize()
+        end
+        if not quiet then
+            safe(o.Callback, multi and selectedList() or state)
+        end
+    end
+    return register(o, el)
+end
+
+function Tab:CreateDropdown(o)
+    o = opt(o)
+    return self:_dropdown(o, (o.MultipleOptions or o.Multi) == true)
+end
+
+function Tab:CreateInput(o)
+    o = opt(o)
+    local f = self:_row(42)
+    text(f, {
+        Size = UDim2.new(1, -170, 1, 0),
+        Position = UDim2.new(0, 14, 0, 0),
+        Text = titleOf(o),
+    })
+    local default = o.CurrentValue or o.Default or o.Value
+    local state = default ~= nil and tostring(default) or ""
+    local box = new("TextBox", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0),
+        Size = UDim2.fromOffset(140, 26),
+        BackgroundColor3 = Theme.Surface3,
+        BorderSizePixel = 0,
+        Font = FONT,
+        TextSize = 12,
+        TextColor3 = Theme.Text,
+        PlaceholderText = tostring(o.PlaceholderText or o.Placeholder or ""),
+        PlaceholderColor3 = Theme.Muted,
+        ClearTextOnFocus = false,
+        Text = state,
+    }, f)
+    round(box, 6)
+    local boxStroke = outline(box, Theme.Stroke, 1, 1)
+    box.Focused:Connect(function()
+        tween(boxStroke, 0.15, { Transparency = 0 })
+    end)
+    box.FocusLost:Connect(function()
+        tween(boxStroke, 0.2, { Transparency = 1 })
+        if o.Finished ~= false then
+            state = box.Text
+            safe(o.Callback, state)
+        end
+    end)
+    box:GetPropertyChangedSignal("Text"):Connect(function()
+        if o.Numeric == true then
+            local cleaned = box.Text:gsub("[^%d%.]", "")
+            if cleaned ~= box.Text then
+                box.Text = cleaned
+                return
+            end
+        end
+        state = box.Text
+        if o.Finished == false then
+            safe(o.Callback, state)
+        end
+    end)
+
+    local el = {}
+    function el:Get()
+        return state
+    end
+    function el:Set(value, quiet)
+        state = tostring(value)
+        box.Text = state
+        if not quiet and o.Finished ~= false then
+            safe(o.Callback, state)
+        end
+    end
+    return register(o, el)
+end
+
+function Tab:CreateKeybind(o)
+    o = opt(o)
+    local f = self:_row(42)
+    text(f, {
+        Size = UDim2.new(1, -120, 1, 0),
+        Position = UDim2.new(0, 14, 0, 0),
+        Text = titleOf(o),
+    })
+    local current = keyFrom(o.CurrentKeybind or o.Default or o.Value)
+    local listening = false
+    local lastFire = 0
+
+    local button = new("TextButton", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0),
+        Size = UDim2.fromOffset(90, 26),
+        BackgroundColor3 = Theme.Surface3,
+        BorderSizePixel = 0,
+        AutoButtonColor = false,
+        Font = FONT_BOLD,
+        TextSize = 12,
+        TextColor3 = Theme.Text,
+        Text = current == Enum.KeyCode.Unknown and "None" or current.Name,
+    }, f)
+    round(button, 6)
+
+    button.MouseButton1Click:Connect(function()
+        if listening then
+            return
+        end
+        listening = true
+        button.Text = "..."
+        tween(button, 0.15, { BackgroundColor3 = Theme.Accent, TextColor3 = Theme.AccentText })
+        local connection
+        connection = UserInputService.InputBegan:Connect(function(input)
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then
+                return
+            end
+            connection:Disconnect()
+            listening = false
+            lastFire = os.clock()
+            if input.KeyCode ~= Enum.KeyCode.Escape and input.KeyCode ~= current then
+                current = input.KeyCode
+                safe(o.OnChanged, current.Name)
+            end
+            button.Text = current == Enum.KeyCode.Unknown and "None" or current.Name
+            tween(button, 0.2, { BackgroundColor3 = Theme.Surface3, TextColor3 = Theme.Text })
+        end)
+    end)
+
+    UserInputService.InputBegan:Connect(function(input)
+        if listening or input.UserInputType ~= Enum.UserInputType.Keyboard then
+            return
+        end
+        if current ~= Enum.KeyCode.Unknown and input.KeyCode == current and not UserInputService:GetFocusedTextBox() then
+            local now = os.clock()
+            if now - lastFire > 0.15 then
+                lastFire = now
+                safe(o.Callback)
             end
         end
     end)
 
-    -- Translate everything UZEXUI builds (now and later)
-    for _, d in ipairs(window.Gui:GetDescendants()) do registerText(d) end
-    window.Gui.DescendantAdded:Connect(registerText)
+    local el = {}
+    function el:Get()
+        return current.Name
+    end
+    function el:Set(value)
+        current = keyFrom(value)
+        button.Text = current == Enum.KeyCode.Unknown and "None" or current.Name
+    end
+    return register(o, el)
+end
 
-    function window:CreateTab(t)
-        t = opt(t)
-        local tab = self:AddTab(titleOf(t))
-        for name, fn in pairs(TabMethods) do tab[name] = fn end
-        return tab
+---------------------------------------------------------------- window
+local Window = {}
+Window.__index = Window
+
+function Window:SelectTab(tab)
+    if type(tab) ~= "table" or not tab.Page then
+        return
+    end
+    local previous = self._active
+    if previous == tab then
+        return
+    end
+    self._active = tab
+    for _, other in ipairs(self._tabs) do
+        local on = other == tab
+        tween(other.Label, 0.2, { TextColor3 = on and Theme.Text or Theme.Muted })
+        tween(other.Button, 0.2, { BackgroundTransparency = on and 0.4 or 1 })
+        tween(other.Indicator, 0.2, { BackgroundTransparency = on and 0 or 1 })
+        if not on then
+            other.Page.Visible = false
+        end
+    end
+    tab.Page.Position = UDim2.new(0, 0, 0, 10)
+    tab.Page.Visible = true
+    tween(tab.Page, 0.25, { Position = UDim2.new(0, 0, 0, 0) })
+end
+
+function Window:CreateTab(o)
+    o = opt(o)
+    local title = titleOf(o)
+
+    local button = new("TextButton", {
+        Size = UDim2.new(1, 0, 0, 34),
+        BackgroundColor3 = Theme.Surface2,
+        BackgroundTransparency = 1,
+        AutoButtonColor = false,
+        Text = "",
+        LayoutOrder = #self._tabs + 1,
+    }, self._tabList)
+    round(button, 8)
+    local indicator = new("Frame", {
+        AnchorPoint = Vector2.new(0, 0.5),
+        Position = UDim2.new(0, 4, 0.5, 0),
+        Size = UDim2.fromOffset(3, 16),
+        BackgroundColor3 = Theme.Accent,
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+    }, button)
+    round(indicator, 2)
+    local label = text(button, {
+        Size = UDim2.new(1, -24, 1, 0),
+        Position = UDim2.new(0, 16, 0, 0),
+        TextColor3 = Theme.Muted,
+        Text = title,
+    })
+
+    local page = new("ScrollingFrame", {
+        Size = UDim2.fromScale(1, 1),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = Theme.Surface3,
+        CanvasSize = UDim2.new(),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        Visible = false,
+    }, self._content)
+    pad(page, 12, 10, 12, 12)
+    new("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder }, page)
+
+    local tab = setmetatable({
+        Button = button,
+        Label = label,
+        Indicator = indicator,
+        Page = page,
+        Window = self,
+        _n = 0,
+    }, Tab)
+    table.insert(self._tabs, tab)
+
+    button.MouseEnter:Connect(function()
+        if self._active ~= tab then
+            tween(button, 0.15, { BackgroundTransparency = 0.7 })
+        end
+    end)
+    button.MouseLeave:Connect(function()
+        if self._active ~= tab then
+            tween(button, 0.2, { BackgroundTransparency = 1 })
+        end
+    end)
+    button.MouseButton1Click:Connect(function()
+        self:SelectTab(tab)
+    end)
+
+    if #self._tabs == 1 then
+        self:SelectTab(tab)
+    end
+    return tab
+end
+
+function Window:Toggle(force)
+    local show = force
+    if show == nil then
+        show = not self._visible
+    end
+    self._visible = show
+    self._toggleToken = (self._toggleToken or 0) + 1
+    local token = self._toggleToken
+    local main = self._main
+    local rest = self._basePos
+
+    -- one tween at a time, so rapid toggles never jump or stutter
+    if self._toggleTween then
+        pcall(function() self._toggleTween:Cancel() end)
+        self._toggleTween = nil
+    end
+    -- older builds animated the scale; make sure it is back at its fitted size
+    local sc = main:FindFirstChildOfClass("UIScale")
+    local fitted = main:GetAttribute("FitScale")
+    if sc and fitted then
+        sc.Scale = fitted
     end
 
-    -- optional Home tab (stats grid + Discord button)
+    if show then
+        if not main.Visible then
+            main.GroupTransparency = 1
+            main.Position = rest + UDim2.fromOffset(0, 10)
+            main.Visible = true
+        end
+        -- fade and slide up in a single fast tween
+        self._toggleTween = tween(main, 0.16, { GroupTransparency = 0, Position = rest }, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+    else
+        local closing = tween(main, 0.11, { GroupTransparency = 1, Position = rest + UDim2.fromOffset(0, 6) }, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+        self._toggleTween = closing
+        closing.Completed:Connect(function(state)
+            if state == Enum.PlaybackState.Completed and token == self._toggleToken and not self._visible then
+                main.Visible = false
+                main.Position = rest
+            end
+        end)
+    end
+end
+
+function Window:SetKeybind(key)
+    if typeof(key) == "EnumItem" then
+        self._toggleKey = key
+    end
+end
+
+function Window:Destroy()
+    if self.Gui then
+        self.Gui:Destroy()
+    end
+end
+
+function Library:CreateWindow(o)
+    o = opt(o)
+    local root = getGui()
+    local width, height = 600, 390
+
+    local main = new("CanvasGroup", {
+        Name = "Main",
+        AnchorPoint = Vector2.new(0.5, 0.5),
+        Position = UDim2.new(0.5, 0, 0.5, 0),
+        Size = UDim2.fromOffset(width, height),
+        BackgroundColor3 = Theme.Background,
+        BorderSizePixel = 0,
+        GroupTransparency = 1,
+    }, root)
+    round(main, 12)
+    outline(main, Theme.Stroke, 1, 0.2)
+    local scale = new("UIScale", {}, main)
+    local function fit()
+        local camera = workspace.CurrentCamera
+        if camera then
+            local view = camera.ViewportSize
+            local fitted = math.clamp(math.min(view.X * 0.94 / width, view.Y * 0.88 / height), 0.5, 1)
+            scale.Scale = fitted
+            main:SetAttribute("FitScale", fitted)
+        end
+    end
+    fit()
+    if workspace.CurrentCamera then
+        workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
+    end
+
+    local window = setmetatable({
+        Gui = root,
+        _main = main,
+        _tabs = {},
+        _visible = false,
+        _basePos = main.Position,
+        _toggleKey = o.ToggleUIKeybind or Enum.KeyCode.LeftControl,
+    }, Window)
+
+    -- background artwork (sits behind everything, with a dark overlay for readability)
+    local hasBg = Assets.Background ~= ""
+    if hasBg then
+        new("ImageLabel", {
+            Name = "BackgroundArt",
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Image = Assets.Background,
+            ScaleType = Enum.ScaleType.Crop,
+            ZIndex = 0,
+        }, main)
+        new("Frame", {
+            Name = "BackgroundShade",
+            Size = UDim2.new(1, 0, 1, 0),
+            BackgroundColor3 = Theme.Background,
+            BackgroundTransparency = 0.6,
+            BorderSizePixel = 0,
+            ZIndex = 0,
+        }, main)
+        -- darker on the sidebar side, lets the artwork show through on the right
+        local shade = main:FindFirstChild("BackgroundShade")
+        new("UIGradient", {
+            Transparency = NumberSequence.new({
+                NumberSequenceKeypoint.new(0, 0.1),
+                NumberSequenceKeypoint.new(0.28, 0.3),
+                NumberSequenceKeypoint.new(1, 0.7),
+            }),
+        }, shade)
+    end
+
+    -- title bar
+    local top = new("Frame", {
+        Size = UDim2.new(1, 0, 0, 46),
+        BackgroundColor3 = Theme.Topbar,
+        BackgroundTransparency = hasBg and 0.8 or 0,
+        BorderSizePixel = 0,
+    }, main)
+    new("Frame", {
+        AnchorPoint = Vector2.new(0, 1),
+        Position = UDim2.new(0, 0, 1, 0),
+        Size = UDim2.new(1, 0, 0, 1),
+        BackgroundColor3 = Theme.Stroke,
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+    }, top)
+
+    local textX = 16
+    if Assets.Logo ~= "" then
+        local logo = new("ImageLabel", {
+            Position = UDim2.new(0, 12, 0.5, -14),
+            Size = UDim2.fromOffset(28, 28),
+            BackgroundTransparency = 1,
+            Image = Assets.Logo,
+            ScaleType = Enum.ScaleType.Fit,
+        }, top)
+        round(logo, 6)
+        textX = 50
+    end
+    local subtitle = tostring(o.Subtitle or "")
+    text(top, {
+        Size = UDim2.new(1, -textX - 60, 0, 18),
+        Position = UDim2.new(0, textX, 0, subtitle ~= "" and 7 or 14),
+        Font = FONT_BOLD,
+        TextSize = 15,
+        Text = tostring(o.Name or o.Title or "UZEX Hub"),
+    })
+    if subtitle ~= "" then
+        text(top, {
+            Size = UDim2.new(1, -textX - 60, 0, 14),
+            Position = UDim2.new(0, textX, 0, 25),
+            TextSize = 11,
+            TextColor3 = Theme.Muted,
+            Text = subtitle,
+        })
+    end
+
+    local close = new("TextButton", {
+        AnchorPoint = Vector2.new(1, 0.5),
+        Position = UDim2.new(1, -10, 0.5, 0),
+        Size = UDim2.fromOffset(30, 30),
+        BackgroundColor3 = Theme.Surface2,
+        BackgroundTransparency = 1,
+        AutoButtonColor = false,
+        Font = FONT_BOLD,
+        TextSize = 18,
+        TextColor3 = Theme.Muted,
+        Text = "-",
+    }, top)
+    round(close, 8)
+    close.MouseEnter:Connect(function()
+        tween(close, 0.15, { BackgroundTransparency = 0, TextColor3 = Theme.Text })
+    end)
+    close.MouseLeave:Connect(function()
+        tween(close, 0.2, { BackgroundTransparency = 1, TextColor3 = Theme.Muted })
+    end)
+    close.MouseButton1Click:Connect(function()
+        window:Toggle(false)
+        Library:Notify({
+            Title = "Đã ẩn",
+            Content = "Nhấn " .. window._toggleKey.Name .. " hoặc chạm vào logo để mở lại.",
+            Duration = 3,
+        })
+    end)
+
+    -- dragging
+    local dragging, dragStart, startPos = false, nil, nil
+    top.InputBegan:Connect(function(input)
+        if isPointer(input) then
+            dragging = true
+            dragStart = input.Position
+            startPos = main.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and isMove(input) then
+            local delta = input.Position - dragStart
+            main.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+            window._basePos = main.Position
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if dragging and isPointer(input) then
+            dragging = false
+        end
+    end)
+
+    -- sidebar + content
+    local sidebar = new("Frame", {
+        Position = UDim2.new(0, 0, 0, 46),
+        Size = UDim2.new(0, 150, 1, -46),
+        BackgroundColor3 = Theme.Sidebar,
+        BackgroundTransparency = hasBg and 0.8 or 0,
+        BorderSizePixel = 0,
+    }, main)
+    new("Frame", {
+        AnchorPoint = Vector2.new(1, 0),
+        Position = UDim2.new(1, 0, 0, 0),
+        Size = UDim2.new(0, 1, 1, 0),
+        BackgroundColor3 = Theme.Stroke,
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+    }, sidebar)
+    local tabList = new("ScrollingFrame", {
+        Size = UDim2.new(1, -1, 1, 0),
+        BackgroundTransparency = 1,
+        BorderSizePixel = 0,
+        ScrollBarThickness = 0,
+        CanvasSize = UDim2.new(),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    }, sidebar)
+    pad(tabList, 8, 10, 8, 10)
+    new("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, tabList)
+    window._tabList = tabList
+
+    local content = new("Frame", {
+        Position = UDim2.new(0, 150, 0, 46),
+        Size = UDim2.new(1, -150, 1, -46),
+        BackgroundTransparency = 1,
+        ClipsDescendants = true,
+    }, main)
+    window._content = content
+
+    -- optional Home tab
     local home = o.Home
     if type(home) == "table" then
         local tab = window:CreateTab({ Name = home.Name or "Home" })
@@ -1909,13 +1713,21 @@ function Library:CreateWindow(o)
         end
     end
 
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Keyboard
+            and input.KeyCode == window._toggleKey
+            and not UserInputService:GetFocusedTextBox() then
+            window:Toggle()
+        end
+    end)
+
+    window:Toggle(true)
     return window
 end
 Library.Window = Library.CreateWindow
 
 return Library
 end)()
-
 
 --------------------------------------------------------------------------------
 -- UZEX Hub application
@@ -1968,13 +1780,19 @@ local Config = {
     BlackTortoiseBand = 0.12,
     DumpGuyHotbarSlot = 4,
     AutoGiveFish = false,
+    AutoGiveEventFish = false,
+    AutoGiveEventFishTarget = {},
     HopAutoCheck = false,
     AutoHopGodSpirit = false,
     AutoHopMaoshan = false,
     AutoHopTaoist = false,
+    AutoHopWeather = false,
+    SelectedWeather = "Thunderstorm",
+    HopWeatherDelay = 5,
     CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
+    BossHitDelay = 15,
     BossMode = "Normal",
     AutoBoss = false,
     AutoSecretBoss = false,
@@ -2057,6 +1875,11 @@ local function LoadConfig()
 end
 
 LoadConfig()
+if type(Config.AutoGiveEventFishTarget) == "string" then
+    Config.AutoGiveEventFishTarget = Config.AutoGiveEventFishTarget ~= "" and { Config.AutoGiveEventFishTarget } or {}
+elseif type(Config.AutoGiveEventFishTarget) ~= "table" then
+    Config.AutoGiveEventFishTarget = {}
+end
 Config.AutoFarmIsland = false -- Auto Farm Fish was removed from the UI
 Library.NotificationsEnabled = Config.NotificationsEnabled ~= false
 Library.Language = (Config.Language == "Tiếng Việt") and "Tiếng Việt" or "English" -- saved language
@@ -2898,6 +2721,11 @@ local function StepPhase2MiniGame()
         table.remove(phase2BarHistory, 1)
     end
 
+    local hitDelay = (tonumber(Config.BossHitDelay) or 15) / 1000
+    if hitDelay < 0.005 then
+        hitDelay = 0.005
+    end
+
     local handledViaUpval = false
     local onClickFn = nil
 
@@ -2919,7 +2747,7 @@ local function StepPhase2MiniGame()
                     if u12 == true and type(u14) == "number" and type(u27) == "number" and type(u26) == "number" and type(u1) == "number" and type(u25) == "number" and type(u23) == "number" and type(u2) == "number" and type(u15) == "number" then
                         if math.abs(u2 - hbW) < 0.005 and math.abs(u15 - hbLeft) < 0.005 then
                             handledViaUpval = true
-                            if now - u14 >= 0.035 and now - lastPhase2HitTick >= 0.035 then
+                            if (now - u14 >= hitDelay or u14 == 0) and now - lastPhase2HitTick >= hitDelay then
                                 local v91 = (now - 0.025 - u27) % u26 * u1
                                 if u25 < v91 then
                                     v91 = u25 * 2 - v91
@@ -2940,17 +2768,9 @@ local function StepPhase2MiniGame()
     end
 
     if handledViaUpval then return end
-    if now - lastPhase2HitTick < 0.04 then return end
+    if now - lastPhase2HitTick < hitDelay then return end
 
     local evalX = barCenter
-    local targetTime = now - 0.041
-    for i = #phase2BarHistory, 1, -1 do
-        if phase2BarHistory[i].t <= targetTime then
-            evalX = phase2BarHistory[i].x
-            break
-        end
-    end
-
     local pad = hbW * 0.2
 
     local badBox = BossFightBar:FindFirstChild("HitboxBad")
@@ -2995,12 +2815,44 @@ local function StepPhase2MiniGame()
         if not clicked then
             pcall(function()
                 VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-                task.delay(0.01, function()
+                task.delay(0.005, function()
                     VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 0)
                 end)
             end)
         end
     end
+end
+
+local function IsTrapNote(gui)
+    if not gui or not gui:IsA("GuiObject") then
+        return false
+    end
+    if gui:GetAttribute("Trap") == true or gui:GetAttribute("trap") == true or gui:GetAttribute("IsTrap") == true then
+        return true
+    end
+    if string.find(string.lower(gui.Name), "trap", 1, true) then
+        return true
+    end
+    local function isRed(c)
+        return c and c.R > 0.65 and c.G < 0.45 and c.B < 0.45 and c.R > c.G * 1.8 and c.R > c.B * 1.8
+    end
+    if isRed(gui.BackgroundColor3) then
+        return true
+    end
+    if (gui:IsA("ImageLabel") or gui:IsA("ImageButton")) and isRed(gui.ImageColor3) then
+        return true
+    end
+    for _, desc in ipairs(gui:GetDescendants()) do
+        if desc:IsA("GuiObject") then
+            if isRed(desc.BackgroundColor3) then
+                return true
+            end
+            if (desc:IsA("ImageLabel") or desc:IsA("ImageButton")) and isRed(desc.ImageColor3) then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 local function StepRhythmMiniGame()
@@ -3016,17 +2868,17 @@ local function StepRhythmMiniGame()
                 local barFrame = laneFrame:FindFirstChild("BarFrame")
                 local targetY = barFrame and barFrame.Position.Y.Scale or 0.85
                 local targetNote = nil
-                local bestDist = 0.18
+                local bestDist = 999
                 for _, child in ipairs(laneFrame:GetChildren()) do
                     if child.Name == "Note_FX" and child:IsA("GuiObject") and child.Visible then
                         local dist = math.abs(child.Position.Y.Scale - targetY)
-                        if dist <= bestDist then
+                        if dist < bestDist then
                             bestDist = dist
                             targetNote = child
                         end
                     end
                 end
-                if targetNote then
+                if targetNote and not IsTrapNote(targetNote) and bestDist <= 0.18 then
                     lastRhythmLaneHit[lane] = now
                     local btn = laneFrame:FindFirstChild("Button")
                     if btn then
@@ -3055,31 +2907,28 @@ local function StepRhythmMiniGame()
     end
 end
 
-RunService.RenderStepped:Connect(function()
+local function StepFishingFrame(includeRhythm)
     if not FishingGui or not FishingGui.Visible then return end
     BindFishingBarLock()
     LockFishingBar()
     if Config.AutoMiniGame then
         StepPhase2MiniGame()
-    end
-end)
-
-RunService.Stepped:Connect(function()
-    if not FishingGui or not FishingGui.Visible then return end
-    BindFishingBarLock()
-    LockFishingBar()
-end)
-
-RunService.Heartbeat:Connect(function()
-    if not FishingGui or not FishingGui.Visible then return end
-    BindFishingBarLock()
-    LockFishingBar()
-    if Config.AutoMiniGame then
-        StepPhase2MiniGame()
-        if not UzexFilter.BTActive then
+        if includeRhythm and not UzexFilter.BTActive then
             StepRhythmMiniGame()
         end
     end
+end
+
+RunService.RenderStepped:Connect(function()
+    StepFishingFrame(false)
+end)
+
+RunService.Stepped:Connect(function()
+    StepFishingFrame(false)
+end)
+
+RunService.Heartbeat:Connect(function()
+    StepFishingFrame(true)
 end)
 
 end
@@ -4548,6 +4397,7 @@ task.spawn(function()
         local activeReel = (Config.AutoReel or Config.AutoMiniGame or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip and not secretFarmOn
         local secretFarmOn = UzexFilter.SecretFarmAllowed()
         local activeCast = (Config.AutoCast or Config.AutoFarmIsland or Config.FilterBossFish) and not secretFarmOn
+            and not (UzexFilter.HasPendingEventFish and UzexFilter.HasPendingEventFish())
         local activeSkill = (Config.AutoSkill or Config.AutoBoss or Config.AutoSecretBoss or Config.AutoFarmIsland) and not UzexFilter.Skip
 
         if not isMinigame then
@@ -6664,6 +6514,7 @@ local DISCORD_INVITE = "https://discord.gg/QPux5hHVY"
 local Window = Library:CreateWindow({
     Name = "UZEX Hub",
     Subtitle = "Heavyweigh Fishing",
+    Icon = Library.Assets.Logo,
     Size = UDim2.fromOffset(640, 460),
     MinSize = Vector2.new(480, 360),
     SidebarWidth = 170,
@@ -6709,8 +6560,146 @@ local Window = Library:CreateWindow({
     OpenButton = false
 })
 
+-- Keep the draggable UZEX Hub logo; all window visibility changes
+-- go through Uzex UI, including restoring a hidden window.
+do
+    local LogoGui = Instance.new("ScreenGui")
+    LogoGui.Name = "UZEXHubLogoGui"
+    LogoGui.ResetOnSpawn = false
+    LogoGui.DisplayOrder = 10000
+    pcall(function() LogoGui.Parent = game:GetService("CoreGui") end)
+    if not LogoGui.Parent then LogoGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    local LogoFrame = Instance.new("Frame")
+    LogoFrame.Size = UDim2.new(0, 36, 0, 36)
+    LogoFrame.Position = UDim2.new(0, 8, 0.5, -18)
+    LogoFrame.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+    LogoFrame.BorderSizePixel = 0
+    LogoFrame.Parent = LogoGui
+    Instance.new("UICorner", LogoFrame).CornerRadius = UDim.new(0.2, 0)
+
+    local logoStroke = Instance.new("UIStroke", LogoFrame)
+    logoStroke.Thickness = 1.5
+    logoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    local logoGrad = Instance.new("UIGradient", logoStroke)
+    logoGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 70, 70)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(244, 244, 244)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 70, 70)),
+    })
+    task.spawn(function() TweenService:Create(logoGrad, TweenInfo.new(3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), {Rotation = 180}):Play() end)
+
+    local LogoImg = Instance.new("ImageLabel")
+    LogoImg.Size = UDim2.new(1, -4, 1, -4)
+    LogoImg.Position = UDim2.new(0, 2, 0, 2)
+    LogoImg.BackgroundTransparency = 1
+    LogoImg.Image = Library.Assets.Logo
+    LogoImg.ScaleType = Enum.ScaleType.Fit
+    LogoImg.Parent = LogoFrame
+
+    local LogoBtn = Instance.new("TextButton")
+    LogoBtn.Size = UDim2.new(1, 0, 1, 0)
+    LogoBtn.BackgroundTransparency = 1
+    LogoBtn.Text = ""
+    LogoBtn.ZIndex = 5
+    LogoBtn.Parent = LogoFrame
+
+    local logoMoved = false -- true once the logo has been dragged, so releasing it never opens the menu
+    do
+        local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+        LogoBtn.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging, dragInput, dragStart, startPos = true, input, input.Position, LogoFrame.Position
+                logoMoved = false
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(input)
+            if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                local delta = input.Position - dragStart
+                if Vector2.new(delta.X, delta.Y).Magnitude > 8 then
+                    logoMoved = true
+                end
+                if logoMoved then
+                    LogoFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                end
+            end
+        end)
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                dragging = false
+                dragInput = nil
+            end
+        end)
+    end
+
+    local lastToggleTime = 0
+    local clickStartPos = Vector2.new()
+
+    -- press effect: the logo squeezes on press, springs back on release, and a ring pulses out
+    local logoScale = Instance.new("UIScale", LogoFrame)
+    local function pulseRing()
+        local ring = Instance.new("Frame")
+        ring.AnchorPoint = Vector2.new(0.5, 0.5)
+        ring.Position = UDim2.new(0.5, 0, 0.5, 0)
+        ring.Size = UDim2.new(1, 0, 1, 0)
+        ring.BackgroundTransparency = 1
+        ring.ZIndex = 4
+        ring.Parent = LogoFrame
+        Instance.new("UICorner", ring).CornerRadius = UDim.new(0.3, 0)
+        local ringStroke = Instance.new("UIStroke", ring)
+        ringStroke.Color = Color3.fromRGB(110, 170, 255)
+        ringStroke.Thickness = 2
+        local info = TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(ring, info, { Size = UDim2.new(1.9, 0, 1.9, 0) }):Play()
+        TweenService:Create(ringStroke, info, { Transparency = 1 }):Play()
+        task.delay(0.42, function() ring:Destroy() end)
+    end
+    -- Decide "tap" vs "drag" from the whole gesture (global input events), not from the button's own
+    -- InputEnded, which can fire early or never when the logo is dragged fast and slips out from under the finger.
+    local pressInput, maxDist = nil, 0
+    local function isPointerDown(input)
+        return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
+    end
+    local function distFromStart(input)
+        return (Vector2.new(input.Position.X, input.Position.Y) - clickStartPos).Magnitude
+    end
+    LogoBtn.InputBegan:Connect(function(input)
+        if isPointerDown(input) then
+            pressInput = input
+            clickStartPos = Vector2.new(input.Position.X, input.Position.Y)
+            maxDist = 0
+            TweenService:Create(logoScale, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { Scale = 0.82 }):Play()
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if pressInput and (input == pressInput or input.UserInputType == Enum.UserInputType.MouseMovement) then
+            local d = distFromStart(input)
+            if d > maxDist then maxDist = d end
+            if maxDist >= 10 then logoMoved = true end
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if pressInput and isPointerDown(input) and (input == pressInput or input.UserInputType == Enum.UserInputType.MouseButton1) then
+            pressInput = nil
+            local d = distFromStart(input)
+            if d > maxDist then maxDist = d end
+            local now = tick()
+            TweenService:Create(logoScale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+            if not logoMoved and maxDist < 10 and now - lastToggleTime >= 0.12 then
+                lastToggleTime = now
+                pulseRing()
+                Window:Toggle()
+            end
+        end
+    end)
+    Window.Gui.Destroying:Connect(function()
+        LogoGui:Destroy()
+    end)
+end
+
 local Tabs = {
     Main = Window:CreateTab({ Name = "Chính", Icon = "home" }),
+    LimitedEvent = Window:CreateTab({ Name = "Sự kiện giới hạn", Icon = "gift" }),
     Teleport = Window:CreateTab({ Name = "Dịch chuyển", Icon = "map-pin" }),
     Hop = Window:CreateTab({ Name = "Chuyển server", Icon = "server" }),
     Shop = Window:CreateTab({ Name = "Cửa hàng", Icon = "shopping-cart" }),
@@ -7029,6 +7018,179 @@ do
             end
         end
     end)
+
+    ---------------------------------------------------------------------------
+    -- Weather hop: keeps changing server until the chosen weather is active
+    ---------------------------------------------------------------------------
+    local function GetWeatherList()
+        local list = {}
+        pcall(function()
+            local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
+            local wScript = clientMod and clientMod:FindFirstChild("Weather")
+            local wFolder = wScript and wScript:FindFirstChild("Weather")
+            if not wFolder then return end
+            for _, child in ipairs(wFolder:GetChildren()) do
+                if child:IsA("ModuleScript") or child:IsA("Folder") then
+                    local lower = string.lower(child.Name)
+                    if lower ~= "clear" and not string.find(lower, "blood", 1, true) then
+                        table.insert(list, child.Name)
+                    end
+                end
+            end
+        end)
+        if #list == 0 then
+            list = { "Rain", "Thunderstorm", "Snow", "Fog", "Windy", "Cloudy", "Solar Eclipse" }
+        else
+            table.sort(list)
+        end
+        return list
+    end
+
+    local function CurrentWeather()
+        local w = workspace:GetAttribute("Weather")
+        if w ~= nil and tostring(w) ~= "" then
+            return tostring(w)
+        end
+        local ok, fallback = pcall(SecretFarmGetWeather)
+        if ok and type(fallback) == "string" and fallback ~= "" and string.lower(fallback) ~= "clear" then
+            return fallback
+        end
+        return ""
+    end
+
+    local function StopWeatherHop(message)
+        Config.AutoHopWeather = false
+        SaveConfig()
+        local flag = Library.Flags["AutoHopWeatherToggle"]
+        if flag and flag.Set then
+            pcall(flag.Set, flag, false, true)
+        end
+        Notify("Hop thời tiết", message, 6)
+    end
+
+    Tabs.Hop:CreateSection("Hop thời tiết")
+
+    Tabs.Hop:CreateToggle({
+        Flag = "AutoHopWeatherToggle",
+        Name = "Tự động chuyển server tìm thời tiết",
+        CurrentValue = Config.AutoHopWeather,
+        Callback = function(Value)
+            Config.AutoHopWeather = Value
+            SaveConfig()
+        end
+    })
+
+    Tabs.Hop:CreateDropdown({
+        Flag = "SelectWeatherDropdown",
+        Name = "Chọn thời tiết",
+        Options = GetWeatherList(),
+        CurrentOption = tostring(Config.SelectedWeather or "Thunderstorm"),
+        MultipleOptions = false,
+        AllowNone = false,
+        Callback = function(Value)
+            if type(Value) == "table" then Value = Value[1] end
+            Config.SelectedWeather = Value or "Thunderstorm"
+            SaveConfig()
+        end
+    })
+
+    Tabs.Hop:CreateSlider({
+        Flag = "HopWeatherDelaySlider",
+        Name = "Độ trễ chuyển server",
+        CurrentValue = math.clamp(tonumber(Config.HopWeatherDelay) or 5, 5, 20),
+        Range = {5, 20},
+        Increment = 1,
+        Callback = function(Value)
+            Config.HopWeatherDelay = math.clamp(tonumber(Value) or 5, 5, 20)
+            SaveConfig()
+        end
+    })
+
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            if Config.AutoHopWeather and not hopping and os.clock() - bootAt > 6
+                and LocalPlayer.Character and game:IsLoaded() then
+                local cur = CurrentWeather()
+                local target = tostring(Config.SelectedWeather or "")
+                if cur == "" and os.clock() - bootAt < 20 then
+                    -- weather value has not loaded yet, check again
+                elseif cur ~= "" and string.lower(cur) == string.lower(target) then
+                    StopWeatherHop("Đã tìm thấy thời tiết " .. cur .. "! Đã dừng tự động chuyển server.")
+                elseif os.clock() - lastHop > 10 then
+                    lastHop = os.clock()
+                    hopping = true
+                    local delaySec = math.clamp(tonumber(Config.HopWeatherDelay) or 5, 5, 20)
+                    Notify("Hop thời tiết", "Hiện tại: " .. (cur ~= "" and cur or "Unknown")
+                        .. ". Mục tiêu: " .. target .. ". Chuyển server sau " .. delaySec .. "s...", 5)
+                    task.spawn(function()
+                        task.wait(delaySec)
+                        if Config.AutoHopWeather then
+                            pcall(HopServer)
+                        end
+                        task.wait(8)
+                        hopping = false
+                    end)
+                end
+            end
+        end
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Join / copy Job ID
+    ---------------------------------------------------------------------------
+    Tabs.Hop:CreateSection("Job ID")
+
+    local targetJobId = ""
+
+    Tabs.Hop:CreateInput({
+        Flag = "JobIdInput",
+        Name = "Job ID",
+        Placeholder = "Nhập Job ID...",
+        Finished = false,
+        Callback = function(Value)
+            targetJobId = (tostring(Value or ""):gsub("%s+", ""))
+        end
+    })
+
+    Tabs.Hop:CreateButton({
+        Name = "Vào server theo Job ID",
+        Callback = function()
+            if targetJobId == "" then
+                Notify("Job ID", "Hãy nhập Job ID hợp lệ.", 3)
+                return
+            end
+            Notify("Job ID", "Đang vào server " .. targetJobId .. "...", 3)
+            task.wait(0.3)
+            local ok = pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, targetJobId, LocalPlayer)
+            end)
+            if not ok then
+                Notify("Job ID", "Không vào được server này.", 4)
+            end
+        end
+    })
+
+    Tabs.Hop:CreateButton({
+        Name = "Sao chép Job ID hiện tại",
+        Callback = function()
+            local jobId = tostring(game.JobId or "")
+            local copied = false
+            pcall(function()
+                if setclipboard then
+                    setclipboard(jobId)
+                    copied = true
+                elseif toclipboard then
+                    toclipboard(jobId)
+                    copied = true
+                elseif syn and syn.write_clipboard then
+                    syn.write_clipboard(jobId)
+                    copied = true
+                end
+            end)
+            Notify("Job ID", (copied and "Đã sao chép: " or "Job ID: ") .. jobId, 4)
+        end
+    })
 end
 
 
@@ -7423,6 +7585,343 @@ do
         CurrentValue = Config.AutoGiveFish,
         Callback = function(Value)
             Config.AutoGiveFish = Value
+            SaveConfig()
+        end
+    })
+end
+
+-------------------------------------------------------------------------------
+-- Limited Event tab: Auto Give Fish to Noro Derasu (ported from star.lua)
+-------------------------------------------------------------------------------
+do
+    local BOSS_FALLBACK = {
+        "Azure Carp",
+        "Jiaolong Dragonfish",
+        "Chainbound Shark",
+        "Adult Jiaolong Dragonfish",
+        "Elder Chainbound Shark",
+        "Elder Jiaolong Dragonfish",
+        "Trueform Jiaolongfish",
+        "Trueform Perch",
+        "Ascended Perch",
+        "Primordial Kunfish",
+        "Primordial Kunfish Overlord",
+        "Warbringer Shark",
+        "Dreadscale Grouper",
+        "Mutated Koid Whale",
+        "Radiant Goldfish",
+        "Serpent Fish",
+        "Dreadmare Eel",
+        "Chromatic Koi",
+        "Toxic Chromatic Koi",
+        "Crimson Bream Sovereign",
+        "Silver Bream Sovereign",
+        "Golden Guardian Fish",
+        "Colossal Tigerfish",
+        "Mountain Fish",
+        "Tiger Mirefish",
+        "Octoparasitic Fish",
+        "Dark kingfish",
+        "Golden Shark",
+        "Darkness Shark",
+        "White Heaven Kunfish",
+        "Crimson Bonefiend",
+        "Dragonfish Devourer",
+        "Yangfish Sovereign",
+        "Yangfish Empress",
+        "Yinfish Sovereign",
+        "Demon Bladefish",
+        "Apollo Swordfish",
+        "Killer Sawshark",
+        "Thunder Fish",
+        "Wind Fish",
+        "Intuitive Fish King",
+        "Aquatic Fish",
+        "Flame Fish",
+        "Verdant Alligator Gar",
+        "Verdant Grouper",
+        "Verdant Bonefang",
+        "Scarlet Fish",
+        "Mountain Dragonwhale",
+        "Flying Fish Emperor",
+        "Crimson Bonefang",
+        "Elder ScarletFish",
+        "Colossal Bull Shark",
+        "Flying Fish Empress",
+        "Draconic Koi",
+        "Tigerfang Whale",
+        "Golden Dragonfish",
+        "Crimson Electric Eel",
+        "Reborn Puffer Beast",
+        "Heavenpiercer Turtle",
+        "Sanguine Fish",
+        "Frost Kingfish",
+        "Dark Lionfish",
+        "Rainbow Dragonfish",
+        "Mirage lanternfish",
+        "Nameless Octoparasite",
+        "Frost QueenFish",
+        "Thunder Bull Shark",
+        "Black Tortoise Bloodline",
+        "Vermilion Birdblood"
+    }
+
+    local function trim(s)
+        return (tostring(s or ""):gsub("^%s*(.-)%s*$", "%1"))
+    end
+
+    local function GetFishNameFromItem(itemName)
+        if not itemName or itemName == "" then return "" end
+        local clean = string.split(tostring(itemName), "| Favorite")[1]
+        clean = string.split(clean, "|")[1]
+        clean = trim(clean)
+        local clientMod = ReplicatedStorage:FindFirstChild("ClientModule")
+        local gs = clientMod and clientMod:FindFirstChild("GameService")
+        if gs then
+            local ok, res = pcall(function()
+                local mod = require(gs)
+                return mod and mod.DestringFish and mod.DestringFish(clean)
+            end)
+            if ok and res and res.FishName then
+                return res.FishName
+            end
+        end
+        local parts = string.split(clean, ",")
+        if #parts >= 1 and parts[1] ~= "" then
+            return parts[1]
+        end
+        return clean
+    end
+
+    local function GetEventBossList()
+        local list, seen = {}, {}
+        pcall(function()
+            local inventory = Info:FindFirstChild("Inventory")
+            if not inventory then return end
+            for _, child in ipairs(inventory:GetChildren()) do
+                if not seen[child.Name] then
+                    local data = GetModuleData(child)
+                    if data and data.Boss == true then
+                        seen[child.Name] = true
+                        table.insert(list, child.Name)
+                    end
+                end
+            end
+        end)
+        if #list == 0 then
+            for _, name in ipairs(BOSS_FALLBACK) do
+                if not seen[name] then
+                    seen[name] = true
+                    table.insert(list, name)
+                end
+            end
+        end
+        table.sort(list)
+        return list
+    end
+
+    local bossListItems = GetEventBossList()
+
+    local function ExtractSelected(raw)
+        local selected = {}
+        if type(raw) == "table" then
+            for k, v in pairs(raw) do
+                local name
+                if type(k) == "string" and v == true then
+                    name = k
+                elseif type(v) == "string" and v ~= "" then
+                    name = v
+                end
+                if name and table.find(bossListItems, name) and not table.find(selected, name) then
+                    table.insert(selected, name)
+                end
+            end
+        elseif type(raw) == "string" and table.find(bossListItems, raw) then
+            table.insert(selected, raw)
+        end
+        return selected
+    end
+    Config.AutoGiveEventFishTarget = ExtractSelected(Config.AutoGiveEventFishTarget)
+
+    local function GetTargetSet()
+        local set, hasAny = {}, false
+        local raw = Config.AutoGiveEventFishTarget
+        if type(raw) == "table" then
+            for k, v in pairs(raw) do
+                local name
+                if type(k) == "string" and v == true then
+                    name = k
+                elseif type(v) == "string" and v ~= "" then
+                    name = v
+                end
+                if name then
+                    local clean = string.lower(trim(name))
+                    if clean ~= "" then
+                        set[clean] = true
+                        hasAny = true
+                    end
+                end
+            end
+        end
+        return set, hasAny
+    end
+
+    -- Noro Derasu NPC (cached; the slow recursive search is throttled)
+    local noroCache, lastNoroSearch = nil, 0
+    local function GetNoro()
+        if noroCache and noroCache.Parent then
+            return noroCache
+        end
+        noroCache = nil
+        local npc = workspace:FindFirstChild("NPC")
+        local fn = npc and npc:FindFirstChild("Function")
+        local noro = fn and fn:FindFirstChild("Noro Derasu")
+        if not noro and os.clock() - lastNoroSearch > 5 then
+            lastNoroSearch = os.clock()
+            noro = workspace:FindFirstChild("Noro Derasu", true)
+        end
+        noroCache = noro
+        return noro
+    end
+
+    local function MatchesEventFish(itemName, targets)
+        if not itemName or itemName == "" then return false end
+        if string.find(itemName, "Favorite", 1, true) or string.find(itemName, "Lock", 1, true) then
+            return false
+        end
+        local lower = string.lower(itemName)
+        if string.find(lower, "bait", 1, true) or string.find(lower, "rod", 1, true) then
+            return false
+        end
+        if not targets or next(targets) == nil then return false end
+        local clean = string.lower(trim(GetFishNameFromItem(itemName)))
+        if clean ~= "" and targets[clean] then return true end
+        local stripped = trim(string.gsub(clean, "%s*[%(%[].-$", ""))
+        return stripped ~= "" and targets[stripped] == true
+    end
+
+    local function FindFreeHotbarSlot()
+        local hotbar = PlayerData:FindFirstChild("Hotbar")
+        if not hotbar then return "4" end
+        for i = 4, 10 do
+            local slot = hotbar:FindFirstChild(tostring(i))
+            if slot then
+                local valName = slot:FindFirstChild("ValueName")
+                local qty = slot:FindFirstChild("Quantity")
+                if (not valName or valName.Value == "") or (qty and qty.Value <= 0) then
+                    return tostring(i)
+                end
+            end
+        end
+        return "4"
+    end
+
+    local function FindEventFishHotbarSlot(targets)
+        local hotbar = PlayerData:FindFirstChild("Hotbar")
+        if not hotbar then return nil end
+        for i = 2, 10 do
+            local slot = hotbar:FindFirstChild(tostring(i))
+            local valName = slot and slot:FindFirstChild("ValueName")
+            local qty = slot and slot:FindFirstChild("Quantity")
+            if valName and valName.Value ~= "" and (not qty or qty.Value > 0)
+                and MatchesEventFish(valName.Value, targets) then
+                return tostring(i)
+            end
+        end
+        return nil
+    end
+
+    local function FindEventFishInventoryItem(targets)
+        local inv = PlayerData:FindFirstChild("Inventory")
+        if not inv then return nil end
+        for _, child in ipairs(inv:GetChildren()) do
+            if child.Name ~= "" and (not child:IsA("ValueBase") or child.Value > 0)
+                and MatchesEventFish(child.Name, targets) then
+                return child
+            end
+        end
+        return nil
+    end
+
+    -- Used by the auto-cast loop to stop casting while a fish is waiting to be handed in.
+    local pendingCache, pendingAt = false, 0
+    function UzexFilter.HasPendingEventFish()
+        if not Config.AutoGiveEventFish then return false end
+        local now = os.clock()
+        if now - pendingAt < 0.5 then return pendingCache end
+        pendingAt = now
+        pendingCache = false
+        local targets, hasAny = GetTargetSet()
+        if hasAny and GetNoro() then
+            pendingCache = (FindEventFishHotbarSlot(targets) or FindEventFishInventoryItem(targets)) ~= nil
+        end
+        return pendingCache
+    end
+
+    local lastGiveTick = 0
+    local function StepAutoGiveEventFish()
+        if not Config.AutoGiveEventFish then return end
+        if os.clock() - lastGiveTick < 1.2 then return end
+        local targets, hasAny = GetTargetSet()
+        if not hasAny then return end
+        local noro = GetNoro()
+        if not noro then return end
+
+        local slot = FindEventFishHotbarSlot(targets)
+        if not slot then
+            local item = FindEventFishInventoryItem(targets)
+            if item then
+                local free = FindFreeHotbarSlot()
+                local moveItems = Events:FindFirstChild("MoveItems")
+                if moveItems then
+                    pcall(function()
+                        moveItems:FireServer("Inventory", item.Name, free)
+                    end)
+                    task.wait(0.25)
+                end
+                slot = free
+            end
+        end
+        if not slot then return end
+
+        lastGiveTick = os.clock()
+        pcall(function()
+            ToggleHotbar:InvokeServer(slot)
+        end)
+        task.wait(0.2)
+        pcall(function()
+            ChooseDialogueOption:FireServer("Noro Derasu", 1, "GiveFish", { noro })
+        end)
+    end
+
+    task.spawn(function()
+        while task.wait(0.25) do
+            if Config.AutoGiveEventFish then
+                pcall(StepAutoGiveEventFish)
+            end
+        end
+    end)
+
+    Tabs.LimitedEvent:CreateSection("Tự động đưa cá")
+
+    Tabs.LimitedEvent:CreateToggle({
+        Flag = "AutoGiveEventFishToggle",
+        Name = "Tự động đưa cá",
+        CurrentValue = Config.AutoGiveEventFish,
+        Callback = function(Value)
+            Config.AutoGiveEventFish = Value
+            SaveConfig()
+        end
+    })
+
+    Tabs.LimitedEvent:CreateDropdown({
+        Flag = "AutoGiveEventFishDropdown",
+        Name = "Chọn cá boss",
+        Options = bossListItems,
+        CurrentOption = table.clone(Config.AutoGiveEventFishTarget),
+        MultipleOptions = true,
+        Callback = function(Value)
+            Config.AutoGiveEventFishTarget = ExtractSelected(Value)
             SaveConfig()
         end
     })
