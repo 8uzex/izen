@@ -299,6 +299,9 @@ function Library:SetLanguage(language)
     end
 end
 
+EN_TRANSLATIONS["Chạy"] = "Run"
+EN_TRANSLATIONS["Chọn..."] = EN_TRANSLATIONS["Chọn..."] or "Select..."
+
 
 local function RegText(o)
     local t = o.Text
@@ -714,7 +717,7 @@ function UzexUI:CreateWindow(opts)
 
     local Main = New("Frame", {
         Name = "Main", Size = UDim2.fromOffset(560, 340),
-        Position = UDim2.new(0.5, -280, 0.5, -170),
+        AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 0),
         BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
         ClipsDescendants = true, Parent = Gui,
     })
@@ -732,14 +735,29 @@ function UzexUI:CreateWindow(opts)
         }),
         Parent = mainStroke,
     })
-    local introScale = New("UIScale", { Scale = 0.92, Parent = Main })
+    -- Tự co menu cho vừa màn hình (điện thoại màn nhỏ sẽ nhỏ lại, PC giữ 100%)
+    local function FitScale()
+        local cam = workspace.CurrentCamera
+        if not cam then return 1 end
+        local v = cam.ViewportSize
+        return math.clamp(math.min(v.X * 0.92 / 560, v.Y * 0.72 / 340), 0.5, 1)
+    end
+    local introScale = New("UIScale", { Scale = 0.92 * FitScale(), Parent = Main })
     -- Lớp phủ mờ dùng cho hiệu ứng đóng/mở (chỉ hiện trong lúc chạy hiệu ứng)
     local fade = New("Frame", {
         Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(0, 0, 0),
         BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 100, Visible = false, Parent = Main,
     })
     Corner(fade, 14)
-    Tween(introScale, { Scale = 1 }, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
+    do
+        local cam = workspace.CurrentCamera
+        if cam then
+            cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+                if Main.Visible and not fade.Visible then introScale.Scale = FitScale() end
+            end)
+        end
+    end
+    Tween(introScale, { Scale = FitScale() }, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
 
     -- Ảnh nền (tạo trước để nằm dưới mọi thứ khác)
     HasBg = false
@@ -811,7 +829,7 @@ function UzexUI:CreateWindow(opts)
         ScrollBarThickness = 0, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
         Parent = Main,
     })
-    New("UIListLayout", { Padding = UDim.new(0, 4), Parent = Side })
+    New("UIListLayout", { Padding = UDim.new(0, 6), Parent = Side })
     New("UIPadding", {
         PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8),
         PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), Parent = Side,
@@ -827,13 +845,21 @@ function UzexUI:CreateWindow(opts)
         Position = UDim2.new(0, 0, 1, -46), Size = UDim2.fromOffset(138, 46),
         BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = Main,
     })
+    Corner(Footer, 14)
+    New("Frame", { -- che góc bo phía trên
+        Size = UDim2.new(1, 0, 0, 16), BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = Footer,
+    })
+    New("Frame", { -- che góc bo phía phải
+        Size = UDim2.new(0, 16, 1, 0), Position = UDim2.new(1, -16, 0, 0),
+        BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = Footer,
+    })
     New("Frame", {
         Size = UDim2.new(1, -16, 0, 1), Position = UDim2.fromOffset(8, 0),
         BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = Footer,
     })
     local lp = Players.LocalPlayer
     local avatar = New("ImageLabel", {
-        Size = UDim2.fromOffset(32, 32), Position = UDim2.fromOffset(10, 8),
+        Size = UDim2.fromOffset(32, 32), AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 12, 0.5, 1),
         BackgroundColor3 = Theme.Element, BorderSizePixel = 0, Parent = Footer,
     })
     Corner(avatar, 16)
@@ -951,19 +977,20 @@ function UzexUI:CreateWindow(opts)
             -- MỞ: phóng to bật nhẹ + mờ dần
             if Window.Fab then Window.Fab.Visible = false end
             Main.Visible = true
-            introScale.Scale = 0.8
+            introScale.Scale = 0.8 * FitScale()
             fade.BackgroundTransparency = 0.4
             fade.Visible = true
-            Tween(introScale, { Scale = 1 }, EASE_OUT)
+            Tween(introScale, { Scale = FitScale() }, EASE_OUT)
             Tween(fade, { BackgroundTransparency = 1 }, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out))
             task.delay(0.22, function()
                 if toggleId == id and not Window.Destroyed then fade.Visible = false end
             end)
         else
             -- ĐÓNG: thu nhỏ nhanh + tối dần, rồi hiện nút logo (bật ra)
+            if Window.OpenDD then Window.OpenDD(true) end
             fade.BackgroundTransparency = 1
             fade.Visible = true
-            Tween(introScale, { Scale = 0.8 }, EASE_IN)
+            Tween(introScale, { Scale = 0.8 * FitScale() }, EASE_IN)
             Tween(fade, { BackgroundTransparency = 0.35 }, EASE_IN)
             task.delay(0.14, function()
                 if toggleId ~= id or Window.Destroyed then return end
@@ -982,7 +1009,7 @@ function UzexUI:CreateWindow(opts)
         if Window.Destroyed then return end
         fade.BackgroundTransparency = 1
         fade.Visible = true
-        Tween(introScale, { Scale = 0.8 }, EASE_IN)
+        Tween(introScale, { Scale = 0.8 * FitScale() }, EASE_IN)
         Tween(fade, { BackgroundTransparency = 0.35 }, EASE_IN)
         task.delay(0.14, function() Window:Destroy() end)
     end)
@@ -1061,18 +1088,12 @@ function UzexUI:CreateWindow(opts)
 
         local btn = New("TextButton", {
             Size = UDim2.new(1, 0, 0, 32), BackgroundColor3 = Theme.Element,
-            BackgroundTransparency = 1, Text = "", AutoButtonColor = false, Parent = Side,
+            Text = "", AutoButtonColor = false, Parent = Side,
         })
         Corner(btn, 8)
-        local bar = New("Frame", {
-            Size = UDim2.fromOffset(3, 14), Position = UDim2.new(0, 4, 0.5, -7),
-            BackgroundColor3 = Theme.Accent, BackgroundTransparency = 1,
-            BorderSizePixel = 0, Parent = btn,
-        })
-        Corner(bar, 2)
         local txt = Label({
-            Text = name, TextColor3 = Theme.SubText,
-            Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -20, 1, 0), Parent = btn,
+            Text = name, TextColor3 = Color3.fromRGB(140, 140, 140),
+            Position = UDim2.fromOffset(12, 0), Size = UDim2.new(1, -16, 1, 0), Parent = btn,
         })
 
         local Page = New("ScrollingFrame", {
@@ -1093,9 +1114,10 @@ function UzexUI:CreateWindow(opts)
 
         local function setActive(on)
             Page.Visible = on
-            Tween(btn, { BackgroundTransparency = on and (HasBg and 0.25 or 0) or 1 })
-            Tween(bar, { BackgroundTransparency = on and 0 or 1 })
-            Tween(txt, { TextColor3 = on and Theme.Text or Theme.SubText })
+            if not on and Window.OpenDD then Window.OpenDD(true) end
+            Tween(btn, { BackgroundColor3 = on and Theme.Accent or Theme.Element })
+            Tween(txt, { TextColor3 = on and Theme.OnAccent or Color3.fromRGB(140, 140, 140) })
+            txt.Font = on and Enum.Font.GothamBold or Enum.Font.GothamMedium
         end
         Tab.SetActive = setActive
 
@@ -1106,10 +1128,10 @@ function UzexUI:CreateWindow(opts)
             setActive(true)
         end)
         btn.MouseEnter:Connect(function()
-            if Window.Active ~= Tab then Tween(btn, { BackgroundTransparency = 0.55 }) end
+            if Window.Active ~= Tab then Tween(btn, { BackgroundColor3 = Theme.ElementHover }) end
         end)
         btn.MouseLeave:Connect(function()
-            if Window.Active ~= Tab then Tween(btn, { BackgroundTransparency = 1 }) end
+            if Window.Active ~= Tab then Tween(btn, { BackgroundColor3 = Theme.Element }) end
         end)
         if not Window.Active then
             Window.Active = Tab
@@ -1156,13 +1178,25 @@ function UzexUI:CreateWindow(opts)
             Card(b)
             Label({
                 Text = o.Name, Position = UDim2.fromOffset(12, 0),
-                Size = UDim2.new(1, -24, 1, 0), Parent = b,
+                Size = UDim2.new(1, -86, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = b,
+            })
+            local pill = New("Frame", {
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
+                Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X,
+                BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, Parent = b,
+            })
+            Corner(pill, 6)
+            New("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 12), Parent = pill })
+            Label({
+                Text = "Chạy", Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = Theme.OnAccent,
+                Size = UDim2.fromOffset(0, 24), AutomaticSize = Enum.AutomaticSize.X,
+                TextXAlignment = Enum.TextXAlignment.Center, Parent = pill,
             })
             b.MouseEnter:Connect(function() Tween(b, { BackgroundColor3 = Theme.ElementHover }) end)
             b.MouseLeave:Connect(function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
             b.MouseButton1Click:Connect(function()
-                Tween(b, { BackgroundColor3 = Theme.Stroke })
-                task.delay(0.12, function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
+                Tween(pill, { BackgroundColor3 = Color3.fromRGB(190, 190, 190) })
+                task.delay(0.12, function() Tween(pill, { BackgroundColor3 = Theme.Accent }) end)
                 if o.Callback then task.spawn(o.Callback) end
             end)
         end
@@ -1227,19 +1261,20 @@ function UzexUI:CreateWindow(opts)
                 local t = tostring(math.floor(v * 1000 + 0.5) / 1000)
                 return suffix ~= "" and (t .. " " .. suffix) or t
             end
-            local r = Row(48)
+            local r = Row(36)
             Label({
-                Text = o.Name, Position = UDim2.fromOffset(12, 6),
-                Size = UDim2.new(1, -120, 0, 16), Parent = r,
+                Text = o.Name, Position = UDim2.fromOffset(12, 0),
+                Size = UDim2.new(1, -216, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = r,
             })
             local valLbl = Label({
                 Text = fmt(value), TextColor3 = Theme.SubText, TextSize = 12,
                 TextXAlignment = Enum.TextXAlignment.Right,
-                Position = UDim2.new(1, -112, 0, 6), Size = UDim2.fromOffset(100, 16), Parent = r,
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -144, 0.5, 0),
+                Size = UDim2.fromOffset(60, 16), Parent = r,
             })
             local track = New("Frame", {
-                Position = UDim2.new(0, 12, 1, -16), Size = UDim2.new(1, -24, 0, 6),
-                BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = r,
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0),
+                Size = UDim2.fromOffset(120, 6), BackgroundColor3 = Theme.Stroke, BorderSizePixel = 0, Parent = r,
             })
             Corner(track, 3)
             local fill = New("Frame", {
@@ -1247,17 +1282,7 @@ function UzexUI:CreateWindow(opts)
                 BackgroundColor3 = Theme.Accent, BorderSizePixel = 0, Parent = track,
             })
             Corner(fill, 3)
-            New("UIGradient", {
-                Color = ColorSequence.new(Color3.fromRGB(150, 150, 150), Color3.fromRGB(255, 255, 255)),
-                Parent = fill,
-            })
-            local knob = New("Frame", {
-                AnchorPoint = Vector2.new(0.5, 0.5),
-                Position = UDim2.new((value - min) / (max - min), 0, 0.5, 0),
-                Size = UDim2.fromOffset(12, 12), BackgroundColor3 = Theme.Text,
-                BorderSizePixel = 0, ZIndex = 2, Parent = track,
-            })
-            Corner(knob, 6)
+            local knob = New("Frame", { Visible = false, Size = UDim2.fromOffset(0, 0), Parent = track })
 
             local obj = {}
             function obj:Set(v, fire)
@@ -1276,7 +1301,11 @@ function UzexUI:CreateWindow(opts)
                 local a = math.clamp((x - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
                 obj:Set(min + (max - min) * a)
             end
-            r.InputBegan:Connect(function(i)
+            local hit = New("Frame", {
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, 0),
+                Size = UDim2.fromOffset(132, 30), BackgroundTransparency = 1, Parent = r,
+            })
+            hit.InputBegan:Connect(function(i)
                 if IsPress(i) then
                     dragging = true
                     update(i.Position.X)
@@ -1291,12 +1320,12 @@ function UzexUI:CreateWindow(opts)
             return obj
         end
 
-        -- Dropdown: chọn 1 hoặc nhiều (Multi = true), có cuộn khi nhiều mục, Refresh đổi danh sách
+        -- Dropdown: ô giá trị + mũi tên, bấm mở bảng nổi (chọn 1 hoặc nhiều bằng Multi = true)
         function Tab:AddDropdown(o)
             local options = table.clone(o.Options or {})
             local multi = o.Multi == true
-            local ITEM_H, MAX_VIS = 28, 6
-            local open = false
+            local ITEM_H, GAP, MAX_VIS, PW = 30, 4, 5, 190
+            local open, openId = false, 0
             local selected, current = {}, nil
 
             local function has(list, v)
@@ -1333,59 +1362,146 @@ function UzexUI:CreateWindow(opts)
                 return current ~= nil and tostring(current) or "Chọn..."
             end
 
-            local holder = New("Frame", {
-                Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Element,
-                BorderSizePixel = 0, ClipsDescendants = true, Parent = Page,
-            })
-            Card(holder)
-            local head = New("TextButton", {
-                Size = UDim2.new(1, 0, 0, 36), BackgroundTransparency = 1,
-                Text = "", Parent = holder,
-            })
+            local row = Row(36)
             Label({
                 Text = o.Name, Position = UDim2.fromOffset(12, 0),
-                Size = UDim2.new(0.45, -12, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = head,
+                Size = UDim2.new(1, -176, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = row,
             })
+            local box = New("TextButton", {
+                AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -10, 0.5, 0),
+                Size = UDim2.fromOffset(150, 26), BackgroundColor3 = Color3.new(1, 1, 1),
+                BackgroundTransparency = 0.93, Text = "", AutoButtonColor = false, Parent = row,
+            })
+            Corner(box, 8)
+            Stroke(box, Color3.new(1, 1, 1)).Transparency = 0.88
             local valLbl = Label({
-                Text = headText(), TextColor3 = Theme.SubText, TextSize = 12,
-                TextXAlignment = Enum.TextXAlignment.Right, TextTruncate = Enum.TextTruncate.AtEnd,
-                Position = UDim2.new(0.45, 0, 0, 0), Size = UDim2.new(0.55, -28, 1, 0), Parent = head,
+                Text = headText(), TextSize = 12, TextColor3 = Color3.fromRGB(232, 232, 232),
+                TextTruncate = Enum.TextTruncate.AtEnd,
+                Position = UDim2.fromOffset(10, 0), Size = UDim2.new(1, -32, 1, 0), Parent = box,
             })
-            local arrow = Label({
-                Text = "▾", TextColor3 = Theme.SubText, TextSize = 14,
-                TextXAlignment = Enum.TextXAlignment.Center,
-                Position = UDim2.new(1, -24, 0, 0), Size = UDim2.fromOffset(20, 36), Parent = head,
+            -- Mũi tên ⌄ / ⌃ vẽ bằng 2 thanh (không dùng ký tự nên không bị ô vuông lỗi font)
+            local arrow = New("Frame", {
+                AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(1, -14, 0.5, 0),
+                Size = UDim2.fromOffset(14, 14), BackgroundTransparency = 1, Parent = box,
             })
-            local list = New("ScrollingFrame", {
-                Position = UDim2.fromOffset(0, 36), Size = UDim2.new(1, 0, 0, 0),
-                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
-                ScrollBarImageColor3 = Theme.Accent, ScrollBarImageTransparency = 0.6,
-                CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = holder,
-            })
-            New("UIListLayout", { SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
-
-            local function listHeight() return math.min(#options, MAX_VIS) * ITEM_H end
-            local function resize()
-                list.Size = UDim2.new(1, 0, 0, listHeight())
-                Tween(holder, { Size = UDim2.new(1, 0, 0, open and (36 + listHeight() + 4) or 36) })
-                Tween(arrow, { Rotation = open and 180 or 0 })
+            for _, sd in ipairs({ { 4.2, 45 }, { 9.8, -45 } }) do
+                local bar = New("Frame", {
+                    AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(sd[1], 6.3),
+                    Size = UDim2.fromOffset(8, 2), Rotation = sd[2],
+                    BackgroundColor3 = Color3.fromRGB(190, 190, 190), BorderSizePixel = 0, Parent = arrow,
+                })
+                Corner(bar, 1)
             end
 
+            -- Bảng nổi (nằm trên cùng cửa sổ nên không bị cuộn/cắt theo trang)
+            local blocker = New("TextButton", {
+                Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "",
+                AutoButtonColor = false, ZIndex = 49, Visible = false, Parent = Main,
+            })
+            local panel = New("Frame", {
+                AnchorPoint = Vector2.new(1, 0), Size = UDim2.fromOffset(PW, 100),
+                BackgroundColor3 = Color3.fromRGB(15, 15, 15), BorderSizePixel = 0,
+                ZIndex = 50, Visible = false, Parent = Main,
+            })
+            Corner(panel, 12)
+            local pStroke = Stroke(panel, Color3.fromRGB(42, 42, 42))
+            local pScale = New("UIScale", { Scale = 1, Parent = panel })
+            local list = New("ScrollingFrame", {
+                Position = UDim2.fromOffset(5, 5), Size = UDim2.new(1, -10, 1, -10),
+                BackgroundTransparency = 1, BorderSizePixel = 0, ScrollBarThickness = 3,
+                ScrollBarImageColor3 = Theme.Accent, ScrollBarImageTransparency = 0.6,
+                CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y, Parent = panel,
+            })
+            New("UIListLayout", { Padding = UDim.new(0, GAP), SortOrder = Enum.SortOrder.LayoutOrder, Parent = list })
+
             local items = {}
+            local function itemOn(i)
+                local opt = options[i]
+                return (multi and selected[opt] == true) or (not multi and opt == current)
+            end
             local function paint()
                 valLbl.Text = headText()
                 for i, it in pairs(items) do
-                    local opt = options[i]
-                    local on = multi and selected[opt] == true or (not multi and opt == current)
-                    it.bar.BackgroundTransparency = on and 0 or 1
-                    it.label.TextColor3 = on and Theme.Text or Theme.SubText
+                    it.bar.BackgroundTransparency = itemOn(i) and 0 or 1
                 end
+            end
+
+            local function place()
+                local n = math.max(1, math.min(#options, MAX_VIS))
+                local h = n * ITEM_H + (n - 1) * GAP + 10
+                local sc = introScale.Scale
+                if sc <= 0 then sc = 1 end
+                local mp = Main.AbsolutePosition
+                local bp, bs = box.AbsolutePosition, box.AbsoluteSize
+                local x = math.clamp((bp.X + bs.X - mp.X) / sc, PW + 8, 552)
+                local y = (bp.Y + bs.Y - mp.Y) / sc + 6
+                if y + h > 336 then y = (bp.Y - mp.Y) / sc - h - 6 end
+                panel.Size = UDim2.fromOffset(PW, h)
+                panel.Position = UDim2.fromOffset(x, math.max(4, y))
             end
 
             local obj = {}
             local function fireCb()
                 if o.Callback then
                     task.spawn(o.Callback, multi and selectedList() or current)
+                end
+            end
+
+            local setOpen
+            local function closeSelf(instant) setOpen(false, instant) end
+            setOpen = function(v, instant)
+                if v == open then return end
+                open = v
+                openId = openId + 1
+                local id = openId
+                Tween(arrow, { Rotation = v and 180 or 0 }, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
+                if v then
+                    if Window.OpenDD and Window.OpenDD ~= closeSelf then Window.OpenDD() end
+                    Window.OpenDD = closeSelf
+                    place()
+                    blocker.Visible = true
+                    panel.Visible = true
+                    panel.BackgroundTransparency = 1
+                    pStroke.Transparency = 1
+                    pScale.Scale = 0.9
+                    Tween(panel, { BackgroundTransparency = 0 }, TweenInfo.new(0.15))
+                    Tween(pStroke, { Transparency = 0 }, TweenInfo.new(0.15))
+                    Tween(pScale, { Scale = 1 }, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
+                    for i, it in ipairs(items) do
+                        it.btn.BackgroundTransparency = 1
+                        it.lbl.TextTransparency = 1
+                        it.bar.BackgroundTransparency = 1
+                        task.delay(math.min(i - 1, 6) * 0.03, function()
+                            if openId ~= id then return end
+                            Tween(it.btn, { BackgroundTransparency = 0 }, TweenInfo.new(0.18))
+                            Tween(it.lbl, { TextTransparency = 0 }, TweenInfo.new(0.18))
+                            Tween(it.bar, { BackgroundTransparency = itemOn(i) and 0 or 1 }, TweenInfo.new(0.18))
+                        end)
+                    end
+                else
+                    if Window.OpenDD == closeSelf then Window.OpenDD = nil end
+                    blocker.Visible = false
+                    if instant then
+                        panel.Visible = false
+                        return
+                    end
+                    -- bước 1: thẻ mờ đi, chỉ còn chữ; bước 2: cả bảng mờ rồi ẩn
+                    for _, it in ipairs(items) do
+                        Tween(it.btn, { BackgroundTransparency = 1 }, TweenInfo.new(0.11))
+                        Tween(it.bar, { BackgroundTransparency = 1 }, TweenInfo.new(0.11))
+                    end
+                    task.delay(0.11, function()
+                        if openId ~= id then return end
+                        Tween(panel, { BackgroundTransparency = 1 }, TweenInfo.new(0.13))
+                        Tween(pStroke, { Transparency = 1 }, TweenInfo.new(0.13))
+                        Tween(pScale, { Scale = 0.95 }, TweenInfo.new(0.13))
+                        for _, it in ipairs(items) do
+                            Tween(it.lbl, { TextTransparency = 1 }, TweenInfo.new(0.13))
+                        end
+                        task.delay(0.13, function()
+                            if openId == id then panel.Visible = false end
+                        end)
+                    end)
                 end
             end
 
@@ -1396,32 +1512,31 @@ function UzexUI:CreateWindow(opts)
                 table.clear(items)
                 for i, opt in ipairs(options) do
                     local ob = New("TextButton", {
-                        Size = UDim2.new(1, 0, 0, ITEM_H), BackgroundColor3 = Theme.ElementHover,
-                        BackgroundTransparency = 1, Text = "", AutoButtonColor = false,
-                        LayoutOrder = i, Parent = list,
+                        Size = UDim2.new(1, 0, 0, ITEM_H), BackgroundColor3 = Color3.fromRGB(28, 28, 28),
+                        Text = "", AutoButtonColor = false, LayoutOrder = i, Parent = list,
                     })
+                    Corner(ob, 8)
                     local bar = New("Frame", {
-                        Size = UDim2.fromOffset(3, 14), Position = UDim2.new(0, 4, 0.5, -7),
+                        Size = UDim2.fromOffset(3, 16), Position = UDim2.new(0, 0, 0.5, -8),
                         BackgroundColor3 = Theme.Accent, BackgroundTransparency = 1,
                         BorderSizePixel = 0, Parent = ob,
                     })
                     Corner(bar, 2)
                     local lbl = Label({
-                        Text = tostring(opt), TextSize = 12, TextColor3 = Theme.SubText,
+                        Text = tostring(opt), TextSize = 13, TextColor3 = Color3.new(1, 1, 1),
                         TextTruncate = Enum.TextTruncate.AtEnd,
                         Position = UDim2.fromOffset(16, 0), Size = UDim2.new(1, -24, 1, 0), Parent = ob,
                     })
-                    items[i] = { bar = bar, label = lbl }
-                    ob.MouseEnter:Connect(function() Tween(ob, { BackgroundTransparency = 0.4 }) end)
-                    ob.MouseLeave:Connect(function() Tween(ob, { BackgroundTransparency = 1 }) end)
+                    items[i] = { btn = ob, bar = bar, lbl = lbl }
+                    ob.MouseEnter:Connect(function() Tween(ob, { BackgroundColor3 = Color3.fromRGB(40, 40, 40) }) end)
+                    ob.MouseLeave:Connect(function() Tween(ob, { BackgroundColor3 = Color3.fromRGB(28, 28, 28) }) end)
                     ob.MouseButton1Click:Connect(function()
                         if multi then
                             selected[opt] = (not selected[opt]) or nil
                             paint()
                             fireCb()
                         else
-                            open = false
-                            resize()
+                            setOpen(false)
                             if opt ~= current then
                                 current = opt
                                 paint()
@@ -1464,14 +1579,14 @@ function UzexUI:CreateWindow(opts)
                     current = options[1]
                 end
                 rebuild()
-                if open then resize() end
+                if open then place() end
                 if fire ~= false then fireCb() end
             end
 
-            head.MouseButton1Click:Connect(function()
-                open = not open
-                resize()
-            end)
+            box.MouseButton1Click:Connect(function() setOpen(not open) end)
+            blocker.MouseButton1Click:Connect(function() setOpen(false) end)
+            box.MouseEnter:Connect(function() Tween(box, { BackgroundTransparency = 0.88 }) end)
+            box.MouseLeave:Connect(function() Tween(box, { BackgroundTransparency = 0.93 }) end)
             return obj
         end
 
