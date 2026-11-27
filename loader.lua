@@ -194,6 +194,14 @@ local EXTRA_EN_TRANSLATIONS = {
     ["Mất kết nối"] = "Disconnected",
     ["Báo cáo trạng thái (phút, 0 = tắt)"] = "Status Report (minutes, 0 = off)",
     ["Thông báo mỗi lần câu được cá"] = "Notify on Every Catch",
+    ["Danh sách Server Hop"] = "List Server Hop",
+    ["Loại sự kiện"] = "Event Type",
+    ["Mục tiêu thời tiết"] = "Weather Target",
+    ["Tự động hop server sự kiện đã xác nhận"] = "Auto Hop Confirmed Events",
+    ["Làm mới danh sách server"] = "Refresh Server List",
+    ["Chia sẻ sự kiện server của bạn"] = "Share Your Server Events",
+    ["Đường dẫn Feed"] = "Feed URL",
+    ["Dán đường dẫn Feed..."] = "Paste Feed URL...",
 }
 for vi, en in pairs(EXTRA_EN_TRANSLATIONS) do
     if EN_TRANSLATIONS[vi] == nil then EN_TRANSLATIONS[vi] = en end
@@ -1756,6 +1764,67 @@ function UzexUI:CreateWindow(opts)
             return obj
         end
 
+        -- Danh sách động (List Server Hop): pool hàng cố định, chỉ bật/tắt Visible
+        function Tab:AddServerList(o)
+            o = o or {}
+            local MAX = math.max(1, tonumber(o.Max) or 12)
+            local holder = New("Frame", {
+                Size = UDim2.new(1, 0, 0, 0), AutomaticSize = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1, Parent = Page,
+            })
+            New("UIListLayout", { Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder, Parent = holder })
+            local rows, calls = {}, {}
+            for i = 1, MAX do
+                local b = New("TextButton", {
+                    Size = UDim2.new(1, 0, 0, 36), BackgroundColor3 = Theme.Element,
+                    Text = "", AutoButtonColor = false, Visible = false, LayoutOrder = i, Parent = holder,
+                })
+                Card(b)
+                local t = Label({
+                    Text = "", Font = Enum.Font.GothamBold, Position = UDim2.fromOffset(12, 0),
+                    Size = UDim2.new(1, -36, 1, 0), TextTruncate = Enum.TextTruncate.AtEnd, Parent = b,
+                })
+                local arrow = Label({
+                    Text = ">", TextColor3 = Theme.SubText, TextXAlignment = Enum.TextXAlignment.Center,
+                    Position = UDim2.new(1, -26, 0, 0), Size = UDim2.fromOffset(18, 36), Parent = b,
+                })
+                b.MouseEnter:Connect(function()
+                    if calls[i] then Tween(b, { BackgroundColor3 = Theme.ElementHover }) end
+                end)
+                b.MouseLeave:Connect(function() Tween(b, { BackgroundColor3 = Theme.Element }) end)
+                b.MouseButton1Click:Connect(function()
+                    local cb = calls[i]
+                    if cb then task.spawn(cb) end
+                end)
+                rows[i] = { btn = b, text = t, arrow = arrow }
+            end
+            local obj = {}
+            -- items = { {Text = "...", Callback = fn}, ... }; emptyText hiện khi danh sách trống
+            function obj:Set(items, emptyText)
+                items = items or {}
+                for i = 1, MAX do
+                    local r, it = rows[i], items[i]
+                    if it then
+                        r.text.Text = tostring(it.Text or "")
+                        r.text.TextColor3 = Theme.Text
+                        r.arrow.Visible = true
+                        calls[i] = it.Callback
+                        r.btn.Visible = true
+                    elseif i == 1 and #items == 0 and emptyText then
+                        r.text.Text = tostring(emptyText)
+                        r.text.TextColor3 = Theme.SubText
+                        r.arrow.Visible = false
+                        calls[i] = nil
+                        r.btn.Visible = true
+                    else
+                        calls[i] = nil
+                        r.btn.Visible = false
+                    end
+                end
+            end
+            return obj
+        end
+
         return Tab
     end
 
@@ -1856,6 +1925,9 @@ local function WrapTab(tab)
         function w:Get() return el:Get() end
         function w:Set(v, quiet) el:Set(v, not quiet) end
         return RegFlag(o, w)
+    end
+    function tab:CreateServerList(o)
+        return tab:AddServerList(o or {})
     end
     function tab:CreateKeybind(o)
         o = AsOpt(o)
@@ -1981,10 +2053,17 @@ local Config = {
     AutoHopGodSpirit = false,
     AutoHopMaoshan = false,
     AutoHopTaoist = false,
+    AutoHopVermilion = false,
+    AutoHopTortoise = false,
     AutoHopWeather = false,
     SelectedWeather = "Thunderstorm",
     HopWeatherDelay = 5,
     HopWeatherResumeAt = 0,
+    HopListEvent = "Taoist",
+    HopListWeather = "Thunderstorm",
+    AutoHopConfirmed = false,
+    HopFeedReport = true,
+    HopFeedUrl = "http://78.154.103.15:17017",
     CastDelay = 1,
     AutoReel = false,
     AutoMiniGame = false,
@@ -7091,22 +7170,29 @@ do
         return count
     end
 
+    local BloodlineActive -- gán ở phần thời tiết bên dưới
     local Checks = {
         ["God Spirit"] = function() return GodSpiritCount() > 0 end,
         ["Maoshan"] = function() return FindTracker("maoshan") ~= nil end,
         ["Taoist"] = function() return FindTracker("taoist") ~= nil end,
+        ["Vermilion Birdblood"] = function() return BloodlineActive("vermilion") end,
+        ["Black Tortoise Bloodline"] = function() return BloodlineActive("tortoise") end,
     }
     local ConfigKey = {
         ["God Spirit"] = "AutoHopGodSpirit",
         ["Maoshan"] = "AutoHopMaoshan",
         ["Taoist"] = "AutoHopTaoist",
+        ["Vermilion Birdblood"] = "AutoHopVermilion",
+        ["Black Tortoise Bloodline"] = "AutoHopTortoise",
     }
     local FlagName = {
         ["God Spirit"] = "AutoHopGodSpiritToggle",
         ["Maoshan"] = "AutoHopMaoshanToggle",
         ["Taoist"] = "AutoHopTaoistToggle",
+        ["Vermilion Birdblood"] = "AutoHopVermilionToggle",
+        ["Black Tortoise Bloodline"] = "AutoHopTortoiseToggle",
     }
-    local Order = { "God Spirit", "Maoshan", "Taoist" }
+    local Order = { "God Spirit", "Maoshan", "Taoist", "Vermilion Birdblood", "Black Tortoise Bloodline" }
 
     ---------------------------------------------------------------------------
     -- hop to a fresh public server (never the same one twice within the hour)
@@ -7187,6 +7273,8 @@ do
             { Key = "God Spirit", Label = "God Spirit", Value = "-" },
             { Key = "Maoshan", Label = "Maoshan", Value = "-" },
             { Key = "Taoist", Label = "Taoist", Value = "-" },
+            { Key = "Vermilion Birdblood", Label = "Vermilion Birdblood", Value = "-" },
+            { Key = "Black Tortoise Bloodline", Label = "Black Tortoise", Value = "-" },
         },
     })
 
@@ -7542,6 +7630,344 @@ do
                     end)
                 end
             end
+        end
+    end)
+
+    ---------------------------------------------------------------------------
+    -- List Server Hop: servers whose event was CONFIRMED by a player standing in
+    -- them. Every player running the hub reports the events of his own server to
+    -- the feed (POST /hop/report) and reads the list back (GET /hop/list).
+    ---------------------------------------------------------------------------
+    local function L(vi, en)
+        return (Library.Language == "English") and en or vi
+    end
+
+    local LIST_EVENTS = { "Taoist", "Maoshan", "Spirit", "Weather", "Vermilion Birdblood", "Black Tortoise Bloodline" }
+    local function IsListEvent(name)
+        return table.find(LIST_EVENTS, name) ~= nil
+    end
+    -- move old saved ngrok feed link to the Wispbyte feed
+    if string.find(tostring(Config.HopFeedUrl or ""), "ngrok", 1, true) then
+        Config.HopFeedUrl = "http://78.154.103.15:17017"
+        SaveConfig()
+    end
+    if not IsListEvent(Config.HopListEvent) then
+        Config.HopListEvent = "Taoist"
+    end
+
+    local weatherPretty = {}
+    for _, n in ipairs(weatherNames) do
+        weatherPretty[(WordsOf(n):gsub("%s+", ""))] = n
+    end
+
+    local function RequestFn()
+        return (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+    end
+
+    local function FeedBase()
+        local url = (tostring(Config.HopFeedUrl or ""):gsub("%s+", ""))
+        url = (url:gsub("/+$", ""))
+        if not url:match("^https?://") then return nil end
+        return url
+    end
+
+    local function FeedCall(method, path, body)
+        local base, fn = FeedBase(), RequestFn()
+        if not base or not fn then return nil end
+        local ok, res = pcall(fn, {
+            Url = base .. path,
+            Method = method,
+            Headers = { ["Content-Type"] = "application/json", ["ngrok-skip-browser-warning"] = "1" },
+            Body = body and HttpService:JSONEncode(body) or nil,
+        })
+        if not ok or type(res) ~= "table" then return nil end
+        local code = tonumber(res.StatusCode or res.Status)
+        if code and (code < 200 or code >= 300) then return nil end
+        local data
+        pcall(function() data = HttpService:JSONDecode(res.Body) end)
+        return type(data) == "table" and data or nil
+    end
+
+    local function Try(fn)
+        local ok, res = pcall(fn)
+        return ok and res or false
+    end
+
+    -- true when every weather source shows a weather containing `word` (vermilion / tortoise)
+    BloodlineActive = function(word)
+        local any = false
+        for _, src in ipairs(ReadWeatherSources()) do
+            local key = CanonicalWeather(src)
+            if key ~= "" then
+                if not string.find(key, word, 1, true) then return false end
+                any = true
+            end
+        end
+        return any
+    end
+
+    -- every event that is active in THIS server right now
+    local function CurrentEvents()
+        local events = {}
+        if Try(Checks["Taoist"]) then table.insert(events, { event = "Taoist" }) end
+        if Try(Checks["Maoshan"]) then table.insert(events, { event = "Maoshan" }) end
+        if Try(Checks["God Spirit"]) then table.insert(events, { event = "Spirit" }) end
+
+        -- weather / bloodline weathers: only when every weather source shows the same thing
+        local agreed, same = nil, true
+        for _, src in ipairs(ReadWeatherSources()) do
+            local key = CanonicalWeather(src)
+            if key ~= "" then
+                if agreed == nil then
+                    agreed = key
+                elseif agreed ~= key then
+                    same = false
+                end
+            end
+        end
+        if agreed and same then
+            if string.find(agreed, "vermilion", 1, true) then
+                table.insert(events, { event = "Vermilion Birdblood" })
+            elseif string.find(agreed, "tortoise", 1, true) then
+                table.insert(events, { event = "Black Tortoise Bloodline" })
+            elseif agreed ~= "clear" and #agreed >= 3 then
+                table.insert(events, { event = "Weather", detail = weatherPretty[agreed] or agreed })
+            end
+        end
+        return events
+    end
+
+    local function EventPresent(eventName, weatherTarget)
+        for _, e in ipairs(CurrentEvents()) do
+            if e.event == eventName then
+                if eventName ~= "Weather" then return true end
+                return CanonicalWeather(e.detail) == CanonicalWeather(weatherTarget)
+            end
+        end
+        return false
+    end
+
+    local function FetchList(eventName)
+        local data = FeedCall("GET", "/hop/list?place=" .. tostring(game.PlaceId)
+            .. "&event=" .. HttpService:UrlEncode(eventName))
+        if not data or type(data.servers) ~= "table" then return nil end
+        return data.servers
+    end
+
+    local function FilterServers(servers, eventName, weatherTarget)
+        local out = {}
+        for _, s in ipairs(servers) do
+            if type(s) == "table" and tostring(s.event) == eventName and tostring(s.job or "") ~= "" then
+                if eventName ~= "Weather" or CanonicalWeather(s.detail) == CanonicalWeather(weatherTarget) then
+                    table.insert(out, s)
+                end
+            end
+        end
+        table.sort(out, function(a, b)
+            local pa, pb = tonumber(a.players) or 0, tonumber(b.players) or 0
+            if pa ~= pb then return pa < pb end
+            return (tonumber(a.age) or 0) < (tonumber(b.age) or 0)
+        end)
+        return out
+    end
+
+    local function JoinJob(job)
+        job = tostring(job)
+        if job == tostring(game.JobId) then
+            Notify("Server Hop", L("Bạn đang ở server này rồi.", "You are already in this server."), 3)
+            return
+        end
+        Notify("Server Hop", L("Đang vào server ", "Joining server ") .. string.sub(job, 1, 8) .. "...", 3)
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, job, LocalPlayer)
+        end)
+        if not ok then
+            Notify("Server Hop", L("Không vào được server này.", "Could not join this server."), 4)
+        end
+    end
+
+    local listStatus, serverList
+    local refreshing = false
+
+    local function RefreshList()
+        if refreshing then return end
+        refreshing = true
+        task.spawn(function()
+            local eventName = Config.HopListEvent
+            local target = Config.HopListWeather
+            local servers = FetchList(eventName)
+            refreshing = false
+            if not (serverList and listStatus) then return end
+            if servers == nil then
+                listStatus:Set(L("Trạng thái: feed lỗi | ", "Status: feed offline | ") .. eventName)
+                serverList:Set({}, L("Không kết nối được feed danh sách server. Kiểm tra Feed URL.",
+                    "Could not reach the server list feed. Check the Feed URL."))
+                return
+            end
+            local found = FilterServers(servers, eventName, target)
+            local items = {}
+            for _, s in ipairs(found) do
+                local job = tostring(s.job)
+                local label = (eventName == "Weather") and ("Weather: " .. tostring(s.detail or target)) or eventName
+                table.insert(items, {
+                    Text = string.format("%s | %d/%d | %s", label, tonumber(s.players) or 0,
+                        tonumber(s.max) or 0, string.sub(job, 1, 8)),
+                    Callback = function() JoinJob(job) end,
+                })
+            end
+            listStatus:Set(string.format(L("Trạng thái: %d server | %s", "Status: %d server(s) | %s"), #found, eventName))
+            serverList:Set(items, string.format(L("%s chưa có server nào. Bấm Làm mới.",
+                "%s has no active server. Press Refresh."), eventName))
+        end)
+    end
+
+    Tabs.Hop:CreateSection("Danh sách Server Hop")
+
+    Tabs.Hop:CreateDropdown({
+        Flag = "HopListEventDropdown",
+        Name = "Loại sự kiện",
+        Options = LIST_EVENTS,
+        CurrentOption = Config.HopListEvent,
+        MultipleOptions = false,
+        AllowNone = false,
+        Callback = function(Value)
+            if type(Value) == "table" then Value = Value[1] end
+            if not IsListEvent(Value) or Value == Config.HopListEvent then return end
+            Config.HopListEvent = Value
+            SaveConfig()
+            RefreshList()
+        end
+    })
+
+    Tabs.Hop:CreateDropdown({
+        Flag = "HopListWeatherDropdown",
+        Name = "Mục tiêu thời tiết",
+        Options = weatherNames,
+        CurrentOption = tostring(Config.HopListWeather or "Thunderstorm"),
+        MultipleOptions = false,
+        AllowNone = false,
+        Callback = function(Value)
+            if type(Value) == "table" then Value = Value[1] end
+            if not Value or Value == Config.HopListWeather then return end
+            Config.HopListWeather = Value
+            SaveConfig()
+            if Config.HopListEvent == "Weather" then RefreshList() end
+        end
+    })
+
+    listStatus = Tabs.Hop:AddLabel(L("Trạng thái: chưa làm mới | ", "Status: not refreshed | ") .. Config.HopListEvent)
+
+    Tabs.Hop:CreateToggle({
+        Flag = "AutoHopConfirmedToggle",
+        Name = "Tự động hop server sự kiện đã xác nhận",
+        CurrentValue = Config.AutoHopConfirmed,
+        Callback = function(Value)
+            Config.AutoHopConfirmed = Value
+            SaveConfig()
+        end
+    })
+
+    Tabs.Hop:CreateButton({
+        Name = "Làm mới danh sách server",
+        Callback = RefreshList
+    })
+
+    serverList = Tabs.Hop:AddServerList({ Max = 12 })
+    serverList:Set({}, L("Bấm Làm mới để tải danh sách server.", "Press Refresh to load the server list."))
+
+    Tabs.Hop:CreateToggle({
+        Flag = "HopFeedReportToggle",
+        Name = "Chia sẻ sự kiện server của bạn",
+        CurrentValue = Config.HopFeedReport,
+        Callback = function(Value)
+            Config.HopFeedReport = Value
+            SaveConfig()
+        end
+    })
+
+    Tabs.Hop:CreateInput({
+        Flag = "HopFeedUrlInput",
+        Name = "Đường dẫn Feed",
+        Placeholder = "Dán đường dẫn Feed...",
+        CurrentValue = tostring(Config.HopFeedUrl or ""),
+        Finished = true,
+        Callback = function(Value)
+            Config.HopFeedUrl = (tostring(Value or ""):gsub("%s+", ""))
+            SaveConfig()
+        end
+    })
+
+    -- Auto Hop Confirmed Events: join a confirmed server, verify the event is really
+    -- there, stop when it is, otherwise move to the next one (visited ones are skipped
+    -- for the hour, same file as the other hops).
+    local lastListFetch, lastWaitNote = 0, 0
+    task.spawn(function()
+        while true do
+            task.wait(3)
+            if Config.AutoHopConfirmed and not hopping and os.clock() - bootAt > 20
+                and LocalPlayer.Character and game:IsLoaded() then
+                local eventName, target = Config.HopListEvent, Config.HopListWeather
+                if EventPresent(eventName, target) then
+                    Config.AutoHopConfirmed = false
+                    SaveConfig()
+                    local flag = Library.Flags["AutoHopConfirmedToggle"]
+                    if flag and flag.Set then
+                        pcall(flag.Set, flag, false, true)
+                    end
+                    Notify(eventName .. " Found!", L("Đã dừng tự động hop - ", "Auto hop stopped - ")
+                        .. eventName .. L(" đang ở đây!", " is here!"), 6)
+                elseif os.clock() - lastListFetch > 8 then
+                    lastListFetch = os.clock()
+                    local servers = FetchList(eventName)
+                    local visited = LoadVisited()
+                    local seen = {}
+                    for _, id in ipairs(visited.ids) do seen[tostring(id)] = true end
+                    local pick
+                    for _, s in ipairs(servers and FilterServers(servers, eventName, target) or {}) do
+                        local job = tostring(s.job)
+                        if job ~= tostring(game.JobId) and not seen[job] then
+                            pick = job
+                            break
+                        end
+                    end
+                    if pick then
+                        table.insert(visited.ids, pick)
+                        SaveVisited(visited)
+                        hopping = true
+                        Notify("Server Hop", L("Đang vào server ", "Joining server ") .. string.sub(pick, 1, 8) .. "...", 3)
+                        pcall(function()
+                            TeleportService:TeleportToPlaceInstance(game.PlaceId, pick, LocalPlayer)
+                        end)
+                        task.wait(8)
+                        hopping = false
+                    elseif os.clock() - lastWaitNote > 30 then
+                        lastWaitNote = os.clock()
+                        Notify("Server Hop", L("Chưa có server xác nhận cho ", "No confirmed server yet for ")
+                            .. eventName .. L(", đang chờ...", ", waiting..."), 4)
+                    end
+                end
+            end
+        end
+    end)
+
+    -- Report the events of the server you are standing in (public servers only)
+    task.spawn(function()
+        task.wait(25)
+        while true do
+            if Config.HopFeedReport and LocalPlayer.Character and game:IsLoaded()
+                and game.PrivateServerId == "" and tostring(game.JobId) ~= "" then
+                local okE, events = pcall(CurrentEvents)
+                if okE and #events > 0 then
+                    FeedCall("POST", "/hop/report", {
+                        place = tostring(game.PlaceId),
+                        job = tostring(game.JobId),
+                        events = events,
+                        players = #Players:GetPlayers(),
+                        max = Players.MaxPlayers,
+                    })
+                end
+            end
+            task.wait(45)
         end
     end)
 
