@@ -390,9 +390,12 @@ end
 
 local function MakeDraggable(handle, target)
     local dragging, startInput, startPos
+    -- state.moved: đã kéo quá ngưỡng trong lần nhấn hiện tại (dùng để chặn click sau khi kéo)
+    local state = { moved = false }
     handle.InputBegan:Connect(function(i)
         if IsPress(i) then
             dragging, startInput, startPos = true, i.Position, target.Position
+            state.moved = false
             i.Changed:Connect(function()
                 if i.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
@@ -401,12 +404,14 @@ local function MakeDraggable(handle, target)
     UIS(UserInputService.InputChanged, function(i)
         if dragging and IsMove(i) then
             local d = i.Position - startInput
+            if d.Magnitude > 4 then state.moved = true end
             target.Position = UDim2.new(
                 startPos.X.Scale, startPos.X.Offset + d.X,
                 startPos.Y.Scale, startPos.Y.Offset + d.Y
             )
         end
     end)
+    return state
 end
 
 local function GetGuiParent()
@@ -1049,7 +1054,7 @@ function UzexUI:CreateWindow(opts)
             Corner(fab, 20)
         end
         Window.Fab = fab
-        MakeDraggable(fab, fab)
+        local fabDrag = MakeDraggable(fab, fab)
 
         -- Hiệu ứng logo: viền sáng nhấp nháy, bật ra khi hiện, phóng nhẹ khi rê chuột, nhấn thì co lại
         local fabScale = New("UIScale", { Scale = 1, Parent = fab })
@@ -1074,7 +1079,8 @@ function UzexUI:CreateWindow(opts)
         fab.InputEnded:Connect(function(i)
             if IsPress(i) then
                 Tween(fabScale, { Scale = 1 }, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
-                if downPos and (i.Position - downPos).Magnitude < 6 then
+                -- Chỉ mở menu khi là cú chạm thật: không kéo (cả theo cờ moved lẫn khoảng cách nhả)
+                if downPos and not fabDrag.moved and (i.Position - downPos).Magnitude < 6 then
                     Window:Toggle(true)
                 end
             end
