@@ -7631,19 +7631,10 @@ do
     serverList = Tabs.Hop:AddServerList({ Max = 12 })
     serverList:Set({}, L("Bấm Làm mới để tải danh sách server.", "Press Refresh to load the server list."))
 
-    Tabs.Hop:CreateToggle({
-        Flag = "HopFeedReportToggle",
-        Name = "Chia sẻ sự kiện server của bạn",
-        CurrentValue = Config.HopFeedReport,
-        Callback = function(Value)
-            Config.HopFeedReport = Value
-            SaveConfig()
-        end
-    })
-
     -- Auto Hop Confirmed Events: join a confirmed server, verify the event is really
     -- there, stop when it is, otherwise move to the next one (visited ones are skipped
     -- for the hour, same file as the other hops).
+    Config.HopFeedReport = true -- toggle hidden: always share (so the list has data)
     local lastListFetch, lastWaitNote = 0, 0
     task.spawn(function()
         while true do
