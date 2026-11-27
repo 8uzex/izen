@@ -980,7 +980,6 @@ function UzexUI:CreateWindow(opts)
         local id = toggleId
         if v then
             -- MỞ: phóng to bật nhẹ + mờ dần
-            if Window.Fab then Window.Fab.Visible = false end
             Main.Visible = true
             introScale.Scale = 0.8 * FitScale()
             fade.BackgroundTransparency = 0.4
@@ -1041,7 +1040,7 @@ function UzexUI:CreateWindow(opts)
             fab = New("ImageButton", {
                 Size = UDim2.fromOffset(34, 34), Position = UDim2.new(0, 14, 0.5, -17),
                 BackgroundTransparency = 1, Image = logoAsset, AutoButtonColor = false,
-                Visible = false, Parent = Gui,
+                Visible = true, Parent = Gui,
             })
             Corner(fab, 9)
         else
@@ -1049,7 +1048,7 @@ function UzexUI:CreateWindow(opts)
                 Text = "U", Font = Enum.Font.GothamBold, TextSize = 18, TextColor3 = Theme.OnAccent,
                 Size = UDim2.fromOffset(40, 40), Position = UDim2.new(0, 14, 0.5, -20),
                 BackgroundColor3 = Theme.Accent, AutoButtonColor = false,
-                Visible = false, Parent = Gui,
+                Visible = true, Parent = Gui,
             })
             Corner(fab, 20)
         end
@@ -1081,7 +1080,7 @@ function UzexUI:CreateWindow(opts)
                 Tween(fabScale, { Scale = 1 }, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
                 -- Chỉ mở menu khi là cú chạm thật: không kéo (cả theo cờ moved lẫn khoảng cách nhả)
                 if downPos and not fabDrag.moved and (i.Position - downPos).Magnitude < 6 then
-                    Window:Toggle(true)
+                    Window:Toggle() -- logo luôn hiện: bấm để mở / đóng menu
                 end
             end
             downPos = nil
