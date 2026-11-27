@@ -716,7 +716,7 @@ function UzexUI:CreateWindow(opts)
     })
 
     local Main = New("Frame", {
-        Name = "Main", Size = UDim2.fromOffset(560, 340),
+        Name = "Main", Size = UDim2.fromOffset(600, 390),
         AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0.5, 0, 0.5, 0),
         BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0,
         ClipsDescendants = true, Parent = Gui,
@@ -740,7 +740,7 @@ function UzexUI:CreateWindow(opts)
         local cam = workspace.CurrentCamera
         if not cam then return 1 end
         local v = cam.ViewportSize
-        return math.clamp(math.min(v.X * 0.92 / 560, v.Y * 0.72 / 340), 0.5, 1)
+        return math.clamp(math.min(v.X * 0.94 / 600, v.Y * 0.88 / 390), 0.5, 1)
     end
     local introScale = New("UIScale", { Scale = 0.92 * FitScale(), Parent = Main })
     -- Lớp phủ mờ dùng cho hiệu ứng đóng/mở (chỉ hiện trong lúc chạy hiệu ứng)
@@ -778,7 +778,7 @@ function UzexUI:CreateWindow(opts)
     end
 
     local Top = New("Frame", {
-        Size = UDim2.new(1, 0, 0, 40), BackgroundColor3 = Theme.Sidebar,
+        Size = UDim2.new(1, 0, 0, 46), BackgroundColor3 = Theme.Sidebar,
         BorderSizePixel = 0, Parent = Main,
     })
     Corner(Top, 12)
@@ -824,7 +824,7 @@ function UzexUI:CreateWindow(opts)
 
     -- Sidebar + content
     local Side = New("ScrollingFrame", {
-        Position = UDim2.fromOffset(0, 40), Size = UDim2.new(0, 138, 1, -86),
+        Position = UDim2.fromOffset(0, 46), Size = UDim2.new(0, 150, 1, -92),
         BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0,
         ScrollBarThickness = 0, CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
         Parent = Main,
@@ -836,13 +836,13 @@ function UzexUI:CreateWindow(opts)
     })
 
     local Content = New("Frame", {
-        Position = UDim2.fromOffset(138, 40), Size = UDim2.new(1, -138, 1, -40),
+        Position = UDim2.fromOffset(150, 46), Size = UDim2.new(1, -150, 1, -46),
         BackgroundTransparency = 1, Parent = Main,
     })
 
     -- Footer (chỉ avatar)
     local Footer = New("Frame", {
-        Position = UDim2.new(0, 0, 1, -46), Size = UDim2.fromOffset(138, 46),
+        Position = UDim2.new(0, 0, 1, -46), Size = UDim2.fromOffset(150, 46),
         BackgroundColor3 = Theme.Sidebar, BorderSizePixel = 0, Parent = Main,
     })
     Corner(Footer, 14)
@@ -1433,9 +1433,9 @@ function UzexUI:CreateWindow(opts)
                 if sc <= 0 then sc = 1 end
                 local mp = Main.AbsolutePosition
                 local bp, bs = box.AbsolutePosition, box.AbsoluteSize
-                local x = math.clamp((bp.X + bs.X - mp.X) / sc, PW + 8, 552)
+                local x = math.clamp((bp.X + bs.X - mp.X) / sc, PW + 8, 592)
                 local y = (bp.Y + bs.Y - mp.Y) / sc + 6
-                if y + h > 336 then y = (bp.Y - mp.Y) / sc - h - 6 end
+                if y + h > 386 then y = (bp.Y - mp.Y) / sc - h - 6 end
                 panel.Size = UDim2.fromOffset(PW, h)
                 panel.Position = UDim2.fromOffset(x, math.max(4, y))
             end
